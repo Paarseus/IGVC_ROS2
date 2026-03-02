@@ -1,35 +1,60 @@
 <!--
-  Navigation BT for AVROS (Humble-compatible, BehaviorTree.CPP v3).
+  Navigation BT for AVROS (Humble, BehaviorTree.CPP v3).
 
-  Fallback planner order:
-    1. ComputeRoute   — graph-based road path via nav2_route (fast, follows campus roads)
-    2. ComputePathToPose — freespace Dubin path via SmacPlannerHybrid (works anywhere)
+  Planning: ComputeRoute (road graph) + SmoothPath, with ComputePathToPose fallback.
+  Recovery: ClearCostmaps, Wait, BackUp (no Spin — Ackermann vehicle).
 
-  ComputeRoute plans along the pre-built campus road graph (551 nodes, 1392 edges).
-  If the robot is too far from the graph or no route exists, ComputePathToPose
-  provides a freespace fallback.
-
-  No spin recovery — Ackermann vehicle cannot rotate in place.
+  Three recovery layers (matches official Nav2 route BT pattern):
+    1. Outer RecoveryNode (6 retries): ClearCostmaps → Wait → BackUp
+    2. Inner RecoveryNode around planning (1 retry): ClearGlobalCostmap
+    3. Inner RecoveryNode around FollowPath (1 retry): ClearLocalCostmap
 -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
-    <PipelineSequence name="NavigateWithReplanning">
-      <RateController hz="0.5">
-        <Fallback>
-          <!-- Skip replanning if goal unchanged and current path is still valid -->
-          <ReactiveSequence>
-            <Inverter>
-              <GlobalUpdatedGoal/>
-            </Inverter>
-            <IsPathValid path="{path}"/>
-          </ReactiveSequence>
-          <!-- Primary: road-graph path (starts at nearest graph node) -->
-          <ComputeRoute goal="{goal}" path="{path}" use_poses="true"/>
-          <!-- Fallback: freespace path (starts at robot, works anywhere) -->
-          <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
-        </Fallback>
-      </RateController>
-      <FollowPath path="{path}" controller_id="FollowPath"/>
-    </PipelineSequence>
+    <RecoveryNode number_of_retries="6" name="NavigateRecovery">
+      <PipelineSequence name="NavigateWithReplanning">
+        <RateController hz="0.5">
+          <RecoveryNode number_of_retries="1" name="ComputeRoute">
+            <Fallback>
+              <!-- Skip replanning if goal unchanged and current path is still valid -->
+              <ReactiveSequence>
+                <Inverter>
+                  <GlobalUpdatedGoal/>
+                </Inverter>
+                <IsPathValid path="{path}"/>
+              </ReactiveSequence>
+              <!-- Primary: road-graph path + smoothing for sharp graph corners -->
+              <Sequence name="ComputeAndSmooth">
+                <ComputeRoute goal="{goal}" path="{path}" use_poses="true"/>
+                <SmoothPath unsmoothed_path="{path}" smoothed_path="{path}"
+                            smoother_id="simple_smoother"/>
+              </Sequence>
+              <!-- Fallback: freespace Dubin path (works anywhere, ignores road graph) -->
+              <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+            </Fallback>
+            <ClearEntireCostmap name="ClearGlobalCostmap"
+                                service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+        <RecoveryNode number_of_retries="1" name="FollowPath">
+          <FollowPath path="{path}" controller_id="FollowPath"/>
+          <ClearEntireCostmap name="ClearLocalCostmap"
+                              service_name="local_costmap/clear_entirely_local_costmap"/>
+        </RecoveryNode>
+      </PipelineSequence>
+      <ReactiveFallback name="RecoveryFallback">
+        <GoalUpdated/>
+        <RoundRobin name="RecoveryActions">
+          <Sequence name="ClearingActions">
+            <ClearEntireCostmap name="ClearLocalCostmap-Subtree"
+                                service_name="local_costmap/clear_entirely_local_costmap"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Subtree"
+                                service_name="global_costmap/clear_entirely_global_costmap"/>
+          </Sequence>
+          <Wait wait_duration="5.0"/>
+          <BackUp backup_dist="0.30" backup_speed="0.15"/>
+        </RoundRobin>
+      </ReactiveFallback>
+    </RecoveryNode>
   </BehaviorTree>
 </root>

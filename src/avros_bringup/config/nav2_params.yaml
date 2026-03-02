@@ -17,46 +17,22 @@ bt_navigator:
     navigate_through_poses:
       plugin: "nav2_bt_navigator::NavigateThroughPosesNavigator"
     # Humble requires explicit plugin list (Jazzy auto-discovers)
+    # Only plugins used by navigate_route_graph.xml are loaded
     plugin_lib_names:
       - nav2_compute_path_to_pose_action_bt_node
-      - nav2_compute_path_through_poses_action_bt_node
       - nav2_smooth_path_action_bt_node
       - nav2_follow_path_action_bt_node
       - nav2_back_up_action_bt_node
-      - nav2_drive_on_heading_bt_node
       - nav2_wait_action_bt_node
       - nav2_clear_costmap_service_bt_node
-      - nav2_is_stuck_condition_bt_node
-      - nav2_goal_reached_condition_bt_node
       - nav2_goal_updated_condition_bt_node
       - nav2_globally_updated_goal_condition_bt_node
       - nav2_is_path_valid_condition_bt_node
       - nav2_rate_controller_bt_node
-      - nav2_distance_controller_bt_node
-      - nav2_speed_controller_bt_node
-      - nav2_truncate_path_action_bt_node
-      - nav2_goal_updater_node_bt_node
       - nav2_recovery_node_bt_node
       - nav2_pipeline_sequence_bt_node
       - nav2_round_robin_node_bt_node
-      - nav2_transform_available_condition_bt_node
-      - nav2_time_expired_condition_bt_node
-      - nav2_distance_traveled_condition_bt_node
-      - nav2_single_trigger_bt_node
-      - nav2_navigate_to_pose_action_bt_node
-      - nav2_navigate_through_poses_action_bt_node
-      - nav2_remove_passed_goals_action_bt_node
-      - nav2_planner_selector_bt_node
-      - nav2_controller_selector_bt_node
-      - nav2_goal_checker_selector_bt_node
-      - nav2_controller_cancel_bt_node
-      - nav2_back_up_cancel_bt_node
-      - nav2_wait_cancel_bt_node
-      - nav2_spin_action_bt_node
-      - nav2_spin_cancel_bt_node
-      - nav2_initial_pose_received_condition_bt_node
       - nav2_compute_route_bt_node
-      - nav2_get_pose_from_path_action_bt_node
 
 controller_server:
   ros__parameters:
@@ -89,7 +65,7 @@ controller_server:
       rotate_to_heading_angular_vel: 0.5
       use_velocity_scaled_lookahead_dist: true
       min_approach_linear_velocity: 0.3
-      approach_velocity_scaling_dist: 1.0
+      approach_velocity_scaling_dist: 3.0      # must be > xy_goal_tolerance for deceleration to work
       use_collision_detection: true
       max_allowed_time_to_collision_up_to_carrot: 1.0
       use_regulated_linear_velocity_scaling: true
@@ -158,8 +134,8 @@ local_costmap:
       global_frame: odom
       robot_base_frame: base_link
       rolling_window: true
-      width: 50
-      height: 50
+      width: 20
+      height: 20
       resolution: 0.2
       robot_radius: 0.8
       plugins: ["voxel_layer", "inflation_layer"]
@@ -167,7 +143,7 @@ local_costmap:
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
         enabled: true
-        publish_voxel_map: true          # Enable for costmap debugging (disable in production)
+        publish_voxel_map: false
         origin_z: 0.0
         z_resolution: 0.2
         z_voxels: 10
@@ -267,14 +243,3 @@ route_server:
     DistanceScorer:
       plugin: "nav2_route::DistanceScorer"
       weight: 1.0
-
-lifecycle_manager:
-  ros__parameters:
-    autostart: true
-    node_names:
-      - controller_server
-      - planner_server
-      - smoother_server
-      - behavior_server
-      - bt_navigator
-      - velocity_smoother
