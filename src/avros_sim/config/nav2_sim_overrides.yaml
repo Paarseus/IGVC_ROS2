@@ -1,11 +1,8 @@
 # Sim-specific Nav2 parameter overrides for Webots simulation.
 #
-# bt_navigator: no plugin_lib_names (Jazzy auto-discovers; Humble list causes
-# "already registered" errors).
-#
-# Other overrides: slower speed, relaxed progress checker, no collision
-# detection (VelodynePuck sees ground as obstacles), no camera_depth
-# (Webots RangeFinder doesn't publish PointCloud2), larger local costmap.
+# Overrides: slower speed, relaxed progress checker, no collision detection
+# (VelodynePuck sees ground as obstacles), no camera_depth (Webots
+# RangeFinder doesn't publish PointCloud2), larger local costmap.
 
 bt_navigator:
   ros__parameters:

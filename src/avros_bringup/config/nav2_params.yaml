@@ -17,22 +17,8 @@ bt_navigator:
       plugin: "nav2_bt_navigator::NavigateToPoseNavigator"
     navigate_through_poses:
       plugin: "nav2_bt_navigator::NavigateThroughPosesNavigator"
-    # Humble requires explicit plugin list (Jazzy auto-discovers)
-    # Only plugins used by navigate_route_graph.xml are loaded
-    plugin_lib_names:
-      - nav2_compute_route_bt_node
-      - nav2_follow_path_action_bt_node
-      - nav2_is_path_valid_condition_bt_node
-      - nav2_wait_action_bt_node
-      - nav2_clear_costmap_service_bt_node
-      - nav2_goal_updated_condition_bt_node
-      - nav2_globally_updated_goal_condition_bt_node
-      - nav2_rate_controller_bt_node
-      - nav2_recovery_node_bt_node
-      - nav2_pipeline_sequence_bt_node
-      - nav2_round_robin_node_bt_node
-      - nav2_goal_reached_condition_bt_node
-      - nav2_reactive_sequence_bt_node
+    # plugin_lib_names: added at launch time for Humble only
+    # (Jazzy auto-discovers; explicit list causes "already registered" errors)
 
 controller_server:
   ros__parameters:

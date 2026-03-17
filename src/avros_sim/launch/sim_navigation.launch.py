@@ -27,8 +27,14 @@ def generate_launch_description():
     ekf_config = os.path.join(bringup_pkg, 'config', 'ekf.yaml')
     navsat_config = os.path.join(bringup_pkg, 'config', 'navsat.yaml')
     nav2_config = os.path.join(bringup_pkg, 'config', 'nav2_params.yaml')
-    bt_xml = os.path.join(bringup_pkg, 'config', 'navigate_route_graph.xml')
     graph_file = os.path.join(bringup_pkg, 'config', 'cpp_campus_graph.geojson')
+
+    # Select BT XML based on ROS distro (v3 for Humble, v4 for Jazzy)
+    ros_distro = os.environ.get('ROS_DISTRO', 'humble')
+    if ros_distro == 'humble':
+        bt_xml = os.path.join(bringup_pkg, 'config', 'navigate_route_graph_humble.xml')
+    else:
+        bt_xml = os.path.join(bringup_pkg, 'config', 'navigate_route_graph.xml')
 
     # Rewrite nav2_params.yaml with resolved paths and use_sim_time
     configured_params = RewrittenYaml(
@@ -56,9 +62,9 @@ def generate_launch_description():
 
     lifecycle_nodes = [name for _, name in nav2_servers]
 
-    # Sim overrides: Jazzy bt_navigator (no plugin_lib_names), slower speed,
-    # no collision detection, no camera_depth, larger costmap.
-    # Loaded as a second parameter file — values override nav2_params.yaml.
+    # Sim overrides: slower speed, no collision detection, no camera_depth,
+    # larger costmap.  Loaded as a second parameter file — values override
+    # nav2_params.yaml.
     sim_overrides = os.path.join(sim_pkg, 'config', 'nav2_sim_overrides.yaml')
     sim_override_params = RewrittenYaml(
         source_file=sim_overrides,
@@ -75,14 +81,32 @@ def generate_launch_description():
     # Costmaps and Nav2 expect /velodyne_points.
     lidar_remap = ('/velodyne_points', '/velodyne_points/point_cloud')
 
+    # Humble requires explicit BT plugin list; Jazzy auto-discovers them
+    humble_bt_plugins = {
+        'plugin_lib_names': [
+            'nav2_compute_route_bt_node',
+            'nav2_follow_path_action_bt_node',
+            'nav2_is_path_valid_condition_bt_node',
+            'nav2_wait_action_bt_node',
+            'nav2_clear_costmap_service_bt_node',
+            'nav2_goal_updated_condition_bt_node',
+            'nav2_globally_updated_goal_condition_bt_node',
+            'nav2_rate_controller_bt_node',
+            'nav2_recovery_node_bt_node',
+            'nav2_pipeline_sequence_bt_node',
+            'nav2_round_robin_node_bt_node',
+            'nav2_goal_reached_condition_bt_node',
+            'nav2_reactive_sequence_bt_node',
+        ],
+    }
+
     nav2_nodes = []
     for package, name in nav2_servers:
-        # Base params from nav2_params.yaml + sim overrides on top
-        # bt_navigator uses ONLY sim overrides (no plugin_lib_names for Jazzy)
-        if name == 'bt_navigator':
-            params = [sim_override_params]
-        else:
-            params = [configured_params, sim_override_params]
+        # Base params + sim overrides on top
+        params = [configured_params, sim_override_params]
+        # Humble bt_navigator needs explicit plugin list
+        if name == 'bt_navigator' and ros_distro == 'humble':
+            params.append(humble_bt_plugins)
         remaps = []
         # Costmap nodes (inside controller_server and planner_server)
         # subscribe to /velodyne_points — remap to Webots topic
