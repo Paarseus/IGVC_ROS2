@@ -99,13 +99,20 @@ def generate_launch_description():
         ],
     }
 
+    # Humble plugin name overrides: nav2_smac_planner and nav2_behaviors
+    # register with '/' notation in plugin.xml; Jazzy uses '::' for all
+    humble_plugin_overrides = os.path.join(
+        bringup_pkg, 'config', 'nav2_humble_plugins.yaml')
+
     nav2_nodes = []
     for package, name in nav2_servers:
         # Base params + sim overrides on top
         params = [configured_params, sim_override_params]
-        # Humble bt_navigator needs explicit plugin list
-        if name == 'bt_navigator' and ros_distro == 'humble':
-            params.append(humble_bt_plugins)
+        if ros_distro == 'humble':
+            if name == 'bt_navigator':
+                params.append(humble_bt_plugins)
+            if name in ('planner_server', 'behavior_server'):
+                params.append(humble_plugin_overrides)
         remaps = []
         # Costmap nodes (inside controller_server and planner_server)
         # subscribe to /velodyne_points — remap to Webots topic

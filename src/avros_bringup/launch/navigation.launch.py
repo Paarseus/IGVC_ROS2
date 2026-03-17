@@ -88,12 +88,19 @@ def generate_launch_description():
         ],
     }
 
+    # Humble plugin name overrides: nav2_smac_planner and nav2_behaviors
+    # register with '/' notation in plugin.xml; Jazzy uses '::' for all
+    humble_plugin_overrides = os.path.join(
+        pkg_dir, 'config', 'nav2_humble_plugins.yaml')
+
     nav2_nodes = []
     for package, name in nav2_servers:
-        if name == 'bt_navigator' and ros_distro == 'humble':
-            params = [configured_params, humble_bt_plugins]
-        else:
-            params = [configured_params]
+        params = [configured_params]
+        if ros_distro == 'humble':
+            if name == 'bt_navigator':
+                params.append(humble_bt_plugins)
+            if name in ('planner_server', 'behavior_server'):
+                params.append(humble_plugin_overrides)
         nav2_nodes.append(Node(
             package=package,
             executable=name,
