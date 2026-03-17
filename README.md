@@ -1,12 +1,12 @@
 # AVROS — Autonomous Vehicle ROS 2 Platform
 
+**Author: Parsa Ghasemi**
+
 A ROS 2 (Jazzy/Humble) autonomous vehicle stack for a custom drive-by-wire platform, featuring GPS-based route planning, LiDAR obstacle avoidance, and full Nav2 integration.
 
 ## Demo
 
-https://github.com/user-attachments/assets/avros_nav_demo.mp4
-
-<video src="docs/avros_nav_demo.mp4" width="100%" controls></video>
+![AVROS Navigation Demo](docs/avros_nav_demo.gif)
 
 *Autonomous navigation on a simulated campus road network. The vehicle receives a GPS destination, computes a route via the campus road graph, and follows the path using Regulated Pure Pursuit with real-time LiDAR-based obstacle avoidance.*
 
@@ -58,3 +58,4 @@ ros2 action send_goal /navigate_to_pose nav2_msgs/action/NavigateToPose \
 ## Author
 
 **Parsa Ghasemi**
+GitHub: [@Paarseus](https://github.com/Paarseus)
