@@ -13,9 +13,7 @@ route_server can be included in the lifecycle manager's ordered node list.
 The lifecycle manager transitions nodes sequentially, guaranteeing
 route_server is active before bt_navigator loads the BT XML.
 
-Supports both ROS2 Humble and Jazzy:
-  - BT XML: v3 format on Humble, v4 on Jazzy
-  - plugin_lib_names: explicit list on Humble, omitted on Jazzy
+Cross-distro: ROS_DISTRO selects the correct nav2 params and BT XML.
 """
 
 import os
@@ -32,19 +30,20 @@ from nav2_common.launch import RewrittenYaml
 def generate_launch_description():
     pkg_dir = get_package_share_directory('avros_bringup')
     actuator_config = os.path.join(pkg_dir, 'config', 'actuator_params.yaml')
-    nav2_config = os.path.join(pkg_dir, 'config', 'nav2_params.yaml')
     graph_file = os.path.join(pkg_dir, 'config', 'cpp_campus_graph.geojson')
 
-    # Select BT XML based on ROS distro (v3 for Humble, v4 for Jazzy)
+    # Select distro-specific config (params + BT XML)
     ros_distro = os.environ.get('ROS_DISTRO', 'humble')
     if ros_distro == 'humble':
+        nav2_config = os.path.join(pkg_dir, 'config', 'nav2_params_humble.yaml')
         bt_xml = os.path.join(pkg_dir, 'config', 'navigate_route_graph_humble.xml')
     else:
+        nav2_config = os.path.join(pkg_dir, 'config', 'nav2_params.yaml')
         bt_xml = os.path.join(pkg_dir, 'config', 'navigate_route_graph.xml')
 
     use_sim_time = LaunchConfiguration('use_sim_time')
 
-    # Rewrite nav2_params.yaml with resolved paths and use_sim_time
+    # Rewrite nav2 params with resolved paths and use_sim_time
     configured_params = RewrittenYaml(
         source_file=nav2_config,
         param_rewrites={
@@ -70,46 +69,18 @@ def generate_launch_description():
 
     lifecycle_nodes = [name for _, name in nav2_servers]
 
-    # Humble requires explicit BT plugin list; Jazzy auto-discovers them
-    humble_bt_plugins = {
-        'plugin_lib_names': [
-            'nav2_compute_route_bt_node',
-            'nav2_follow_path_action_bt_node',
-            'nav2_is_path_valid_condition_bt_node',
-            'nav2_wait_action_bt_node',
-            'nav2_clear_costmap_service_bt_node',
-            'nav2_goal_updated_condition_bt_node',
-            'nav2_globally_updated_goal_condition_bt_node',
-            'nav2_rate_controller_bt_node',
-            'nav2_recovery_node_bt_node',
-            'nav2_pipeline_sequence_bt_node',
-            'nav2_round_robin_node_bt_node',
-            'nav2_goal_reached_condition_bt_node',
-        ],
-    }
-
-    # Humble plugin name overrides: nav2_smac_planner and nav2_behaviors
-    # register with '/' notation in plugin.xml; Jazzy uses '::' for all
-    humble_plugin_overrides = os.path.join(
-        pkg_dir, 'config', 'nav2_humble_plugins.yaml')
-
-    nav2_nodes = []
-    for package, name in nav2_servers:
-        params = [configured_params]
-        if ros_distro == 'humble':
-            if name == 'bt_navigator':
-                params.append(humble_bt_plugins)
-            if name in ('planner_server', 'behavior_server'):
-                params.append(humble_plugin_overrides)
-        nav2_nodes.append(Node(
+    nav2_nodes = [
+        Node(
             package=package,
             executable=name,
             name=name,
-            parameters=params,
+            parameters=[configured_params],
             output='screen',
             respawn=True,
             respawn_delay=2.0,
-        ))
+        )
+        for package, name in nav2_servers
+    ]
 
     return LaunchDescription([
         DeclareLaunchArgument(

@@ -8,6 +8,8 @@ Includes:
 
 Does NOT start: actuator_node, velodyne, realsense, xsens, ntrip, foxglove
 (Webots provides all sensor data; Car physics handles actuation)
+
+Cross-distro: ROS_DISTRO selects the correct nav2 params and BT XML.
 """
 
 import os
@@ -26,17 +28,18 @@ def generate_launch_description():
 
     ekf_config = os.path.join(bringup_pkg, 'config', 'ekf.yaml')
     navsat_config = os.path.join(bringup_pkg, 'config', 'navsat.yaml')
-    nav2_config = os.path.join(bringup_pkg, 'config', 'nav2_params.yaml')
     graph_file = os.path.join(bringup_pkg, 'config', 'cpp_campus_graph.geojson')
 
-    # Select BT XML based on ROS distro (v3 for Humble, v4 for Jazzy)
+    # Select distro-specific config (params + BT XML)
     ros_distro = os.environ.get('ROS_DISTRO', 'humble')
     if ros_distro == 'humble':
+        nav2_config = os.path.join(bringup_pkg, 'config', 'nav2_params_humble.yaml')
         bt_xml = os.path.join(bringup_pkg, 'config', 'navigate_route_graph_humble.xml')
     else:
+        nav2_config = os.path.join(bringup_pkg, 'config', 'nav2_params.yaml')
         bt_xml = os.path.join(bringup_pkg, 'config', 'navigate_route_graph.xml')
 
-    # Rewrite nav2_params.yaml with resolved paths and use_sim_time
+    # Rewrite nav2 params with resolved paths and use_sim_time
     configured_params = RewrittenYaml(
         source_file=nav2_config,
         param_rewrites={
@@ -64,14 +67,12 @@ def generate_launch_description():
 
     # Sim overrides: slower speed, no collision detection, no camera_depth,
     # larger costmap.  Loaded as a second parameter file — values override
-    # nav2_params.yaml.
+    # the base nav2 params.
     sim_overrides = os.path.join(sim_pkg, 'config', 'nav2_sim_overrides.yaml')
     sim_override_params = RewrittenYaml(
         source_file=sim_overrides,
         param_rewrites={
             'use_sim_time': 'true',
-            'default_nav_to_pose_bt_xml': bt_xml,
-            'default_nav_through_poses_bt_xml': bt_xml,
         },
         convert_types=True,
     )
@@ -81,48 +82,16 @@ def generate_launch_description():
     # Costmaps and Nav2 expect /velodyne_points.
     lidar_remap = ('/velodyne_points', '/velodyne_points/point_cloud')
 
-    # Humble requires explicit BT plugin list; Jazzy auto-discovers them
-    humble_bt_plugins = {
-        'plugin_lib_names': [
-            'nav2_compute_route_bt_node',
-            'nav2_follow_path_action_bt_node',
-            'nav2_is_path_valid_condition_bt_node',
-            'nav2_wait_action_bt_node',
-            'nav2_clear_costmap_service_bt_node',
-            'nav2_goal_updated_condition_bt_node',
-            'nav2_globally_updated_goal_condition_bt_node',
-            'nav2_rate_controller_bt_node',
-            'nav2_recovery_node_bt_node',
-            'nav2_pipeline_sequence_bt_node',
-            'nav2_round_robin_node_bt_node',
-            'nav2_goal_reached_condition_bt_node',
-        ],
-    }
-
-    # Humble plugin name overrides: nav2_smac_planner and nav2_behaviors
-    # register with '/' notation in plugin.xml; Jazzy uses '::' for all
-    humble_plugin_overrides = os.path.join(
-        bringup_pkg, 'config', 'nav2_humble_plugins.yaml')
-
     nav2_nodes = []
     for package, name in nav2_servers:
-        # Base params + sim overrides on top
-        params = [configured_params, sim_override_params]
-        if ros_distro == 'humble':
-            if name == 'bt_navigator':
-                params.append(humble_bt_plugins)
-            if name in ('planner_server', 'behavior_server'):
-                params.append(humble_plugin_overrides)
         remaps = []
-        # Costmap nodes (inside controller_server and planner_server)
-        # subscribe to /velodyne_points — remap to Webots topic
         if name in ('controller_server', 'planner_server'):
             remaps.append(lidar_remap)
         nav2_nodes.append(Node(
             package=package,
             executable=name,
             name=name,
-            parameters=params,
+            parameters=[configured_params, sim_override_params],
             remappings=remaps,
             output='screen',
         ))

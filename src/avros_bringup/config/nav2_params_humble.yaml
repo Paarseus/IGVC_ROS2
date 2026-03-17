@@ -1,10 +1,10 @@
-# Nav2 parameters for AVROS — Jazzy version
+# Nav2 parameters for AVROS — Humble version
 # Ackermann vehicle: wheelbase 1.23m, max steer 28deg, min turn radius 2.31m
 #
-# KEEP IN SYNC with nav2_params_humble.yaml. Differences:
-#   - No bt_navigator.plugin_lib_names (Jazzy auto-discovers)
-#   - SmacPlannerHybrid plugin: '::' notation (Humble uses '/')
-#   - behavior plugins: '::' notation (Humble uses '/')
+# KEEP IN SYNC with nav2_params.yaml (Jazzy). Differences:
+#   - bt_navigator.plugin_lib_names: required (Jazzy auto-discovers)
+#   - SmacPlannerHybrid plugin: '/' notation (Jazzy uses '::')
+#   - behavior plugins: '/' notation (Jazzy uses '::')
 
 bt_navigator:
   ros__parameters:
@@ -22,6 +22,20 @@ bt_navigator:
       plugin: "nav2_bt_navigator::NavigateToPoseNavigator"
     navigate_through_poses:
       plugin: "nav2_bt_navigator::NavigateThroughPosesNavigator"
+    # Humble requires explicit BT plugin list (Jazzy auto-discovers)
+    plugin_lib_names:
+      - nav2_compute_route_bt_node
+      - nav2_follow_path_action_bt_node
+      - nav2_is_path_valid_condition_bt_node
+      - nav2_wait_action_bt_node
+      - nav2_clear_costmap_service_bt_node
+      - nav2_goal_updated_condition_bt_node
+      - nav2_globally_updated_goal_condition_bt_node
+      - nav2_rate_controller_bt_node
+      - nav2_recovery_node_bt_node
+      - nav2_pipeline_sequence_bt_node
+      - nav2_round_robin_node_bt_node
+      - nav2_goal_reached_condition_bt_node
 
 controller_server:
   ros__parameters:
@@ -29,7 +43,7 @@ controller_server:
     min_x_velocity_threshold: 0.01
     min_y_velocity_threshold: 0.0
     min_theta_velocity_threshold: 0.01
-    progress_checker_plugin: "progress_checker"
+    progress_checker_plugin: "progress_checker"   # Humble: singular string (not list)
     goal_checker_plugins: ["general_goal_checker"]
     controller_plugins: ["FollowPath"]
 
@@ -73,7 +87,7 @@ planner_server:
     planner_plugins: ["GridBased"]
 
     GridBased:
-      plugin: "nav2_smac_planner::SmacPlannerHybrid"
+      plugin: "nav2_smac_planner/SmacPlannerHybrid"    # Humble: '/' (has name= in plugin.xml)
       tolerance: 0.5
       downsample_costmap: false
       downsampling_factor: 1
@@ -103,11 +117,11 @@ behavior_server:
     cycle_frequency: 10.0
     behavior_plugins: ["backup", "drive_on_heading", "wait"]
     backup:
-      plugin: "nav2_behaviors::BackUp"
+      plugin: "nav2_behaviors/BackUp"               # Humble: '/' (has name= in plugin.xml)
     drive_on_heading:
-      plugin: "nav2_behaviors::DriveOnHeading"
+      plugin: "nav2_behaviors/DriveOnHeading"        # Humble: '/'
     wait:
-      plugin: "nav2_behaviors::Wait"
+      plugin: "nav2_behaviors/Wait"                  # Humble: '/'
 
 local_costmap:
   local_costmap:
