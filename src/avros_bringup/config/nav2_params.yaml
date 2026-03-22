@@ -57,9 +57,9 @@ controller_server:
       min_approach_linear_velocity: 0.3
       approach_velocity_scaling_dist: 3.0      # must be > xy_goal_tolerance for deceleration to work
       use_collision_detection: true
-      max_allowed_time_to_collision_up_to_carrot: 1.0
+      max_allowed_time_to_collision_up_to_carrot: 2.0
       use_regulated_linear_velocity_scaling: true
-      use_cost_regulated_linear_velocity_scaling: false
+      use_cost_regulated_linear_velocity_scaling: true
       regulated_linear_scaling_min_radius: 2.31    # min turn radius
       regulated_linear_scaling_min_speed: 0.3
       max_angular_accel: 1.0
@@ -112,7 +112,7 @@ behavior_server:
 local_costmap:
   local_costmap:
     ros__parameters:
-      update_frequency: 5.0
+      update_frequency: 10.0
       publish_frequency: 2.0
       global_frame: odom
       robot_base_frame: base_link
@@ -159,8 +159,8 @@ local_costmap:
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 1.2       # must be >= inscribed radius (0.8) + safety margin
+        cost_scaling_factor: 2.5     # gentler decay = wider soft deceleration zone with cost-regulated scaling
+        inflation_radius: 1.8        # 0.8m robot + 1.0m safety margin (covers stopping distance at 1.5 m/s)
 
 global_costmap:
   global_costmap:
@@ -195,8 +195,8 @@ global_costmap:
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 1.2       # must be >= inscribed radius (0.8) + safety margin
+        cost_scaling_factor: 2.5     # match local costmap — gentler decay for cost-regulated speed scaling
+        inflation_radius: 1.8        # match local costmap — wider buffer for planner obstacle avoidance
 
 velocity_smoother:
   ros__parameters:
