@@ -1,10 +1,11 @@
-"""Launch sensor drivers and robot_state_publisher.
+"""Launch sensor drivers and robot_state_publisher for the AV2 platform.
 
 Launches:
   - robot_state_publisher (URDF -> static TF)
-  - velodyne driver + transform
-  - realsense2_camera
-  - xsens_mti_driver
+  - velodyne VLP-16 driver + pointcloud transform
+  - realsense D455 camera (color + depth + pointcloud)
+  - xsens MTi-680G IMU/GNSS
+  - NTRIP client for RTK corrections (optional)
 """
 
 import os
