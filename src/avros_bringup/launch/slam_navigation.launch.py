@@ -1,24 +1,22 @@
 """Launch full autonomous navigation stack with RTAB-Map SLAM localization.
 
-Alternative to navigation.launch.py — uses RTAB-Map SLAM instead of GPS/EKF
-for the map->odom transform. The local EKF (odom->base_link) is kept for
-smooth odometry. GPS is fed to RTAB-Map as a graph constraint to anchor the
-SLAM map to the route graph datum.
+Alternative to navigation.launch.py — uses RTAB-Map SLAM instead of GPS/EKF.
+ICP odometry from VLP-16 publishes odom->base_link (replaces EKF).
+GPS is fed to RTAB-Map as a graph prior to anchor the map globally.
 
 Launches:
   - Everything from sensors.launch.py (URDF, velodyne, realsense, xsens, ntrip)
-  - Local EKF (odom -> base_link)
   - ZED X cameras (left, right, back — conditional)
   - RGB-D sync nodes (1 per camera)
-  - ICP odometry (VLP-16 scan matching)
+  - ICP odometry (VLP-16 scan matching, publishes odom -> base_link)
   - RTAB-Map SLAM (map -> odom via loop closure + GPS prior)
   - actuator_node (cmd_vel -> Teensy UDP)
   - Nav2 servers (same config as navigation.launch.py)
   - foxglove_bridge
 
-TF tree (same shape as GPS mode, different producer for map->odom):
+TF tree:
   map -> odom -> base_link
-  (RTAB-Map) (local EKF)
+  (RTAB-Map) (ICP odom)
 """
 
 import os
@@ -36,7 +34,6 @@ from nav2_common.launch import RewrittenYaml
 
 def generate_launch_description():
     pkg_dir = get_package_share_directory('avros_bringup')
-    ekf_config = os.path.join(pkg_dir, 'config', 'ekf.yaml')
     rtabmap_config = os.path.join(pkg_dir, 'config', 'rtabmap.yaml')
     actuator_config = os.path.join(pkg_dir, 'config', 'actuator_params.yaml')
     graph_file = os.path.join(pkg_dir, 'config', 'cpp_campus_graph.geojson')
@@ -126,20 +123,9 @@ def generate_launch_description():
             }.items(),
         ),
 
-        # ── 2. Local EKF: odom -> base_link (smooth odometry) ────
-        Node(
-            package='robot_localization',
-            executable='ekf_node',
-            name='ekf_filter_node_odom',
-            parameters=[
-                ekf_config,
-                {'use_sim_time': use_sim_time},
-            ],
-            remappings=[
-                ('odometry/filtered', '/odometry/filtered'),
-            ],
-            output='screen',
-        ),
+        # ── 2. ICP odometry publishes odom -> base_link ─────────
+        # No EKF needed — ICP odom from VLP-16 replaces it.
+        # GPS navigation stack (navigation.launch.py) still uses EKF independently.
 
         # ── 3. ZED X Cameras ─────────────────────────────────────
         IncludeLaunchDescription(
@@ -205,7 +191,7 @@ def generate_launch_description():
             executable='rgbd_sync',
             name='rgbd_sync_realsense',
             namespace='realsense_front',
-            parameters=[{'approx_sync': True, 'queue_size': 30}],
+            parameters=[{'approx_sync': False, 'queue_size': 30}],
             remappings=[
                 ('rgb/image', '/camera/camera/color/image_raw'),
                 ('depth/image', '/camera/camera/aligned_depth_to_color/image_raw'),
@@ -219,7 +205,7 @@ def generate_launch_description():
             executable='rgbd_sync',
             name='rgbd_sync_zed_left',
             namespace='zed_left',
-            parameters=[{'approx_sync': True, 'queue_size': 30}],
+            parameters=[{'approx_sync': False, 'queue_size': 30}],
             remappings=[
                 ('rgb/image', '/zed_left/zed_node/rgb/color/rect/image'),
                 ('depth/image', '/zed_left/zed_node/depth/depth_registered'),
@@ -234,7 +220,7 @@ def generate_launch_description():
             executable='rgbd_sync',
             name='rgbd_sync_zed_right',
             namespace='zed_right',
-            parameters=[{'approx_sync': True, 'queue_size': 30}],
+            parameters=[{'approx_sync': False, 'queue_size': 30}],
             remappings=[
                 ('rgb/image', '/zed_right/zed_node/rgb/color/rect/image'),
                 ('depth/image', '/zed_right/zed_node/depth/depth_registered'),
@@ -249,7 +235,7 @@ def generate_launch_description():
             executable='rgbd_sync',
             name='rgbd_sync_zed_back',
             namespace='zed_back',
-            parameters=[{'approx_sync': True, 'queue_size': 30}],
+            parameters=[{'approx_sync': False, 'queue_size': 30}],
             remappings=[
                 ('rgb/image', '/zed_back/zed_node/rgb/color/rect/image'),
                 ('depth/image', '/zed_back/zed_node/depth/depth_registered'),
@@ -260,16 +246,23 @@ def generate_launch_description():
         ),
 
         # ── 5. ICP Odometry (VLP-16 scan matching) ───────────────
+        # Publishes odom -> base_link TF (replaces EKF in SLAM mode)
         Node(
             package='rtabmap_odom',
             executable='icp_odometry',
             name='icp_odometry',
             parameters=[
                 rtabmap_config,
-                {'Icp/MaxTranslation': '3.0'},
-                {'Odom/Strategy': '0'},
-                {'wait_imu_to_init': True},
-                {'use_sim_time': use_sim_time},
+                {
+                    'Odom/Strategy': '0',
+                    'wait_imu_to_init': True,
+                    'odom_frame_id': 'odom',
+                    'frame_id': 'base_link',
+                    'publish_tf': True,
+                    'deskewing': True,
+                    'expected_update_rate': 15.0,
+                    'use_sim_time': use_sim_time,
+                },
             ],
             remappings=[
                 ('scan_cloud', '/velodyne_points'),
@@ -294,11 +287,13 @@ def generate_launch_description():
                     'subscribe_scan': False,
                     'subscribe_rgbd': True,
                     'subscribe_imu': True,
+                    'subscribe_odom_info': True,
                     'rgbd_cameras': 3,
                     'approx_sync': True,
-                    'approx_sync_max_interval': 0.5,
                     'topic_queue_size': 30,
                     'sync_queue_size': 30,
+                    'Vis/EstimationType': '0',
+                    'Icp/CorrespondenceRatio': '0.2',
                     'use_sim_time': use_sim_time,
                 },
             ],
