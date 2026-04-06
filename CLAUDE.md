@@ -398,6 +398,8 @@ CycloneDDS (`cyclonedds.xml`):
 | numpy binary incompatibility on Jetson | Pin `numpy<2` — numpy 2.x breaks system matplotlib/scipy on JetPack 6 |
 | Camera topics have double prefix | Topics are at `/camera/camera/...` (e.g. `/camera/camera/color/image_raw`) due to `camera_name:=camera` config — both namespace and node name are "camera" |
 | RMW_IMPLEMENTATION not set | Must export `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` in addition to `CYCLONEDDS_URI` — defaults to FastDDS otherwise |
+| CLI commands get (0,0) goals / RMW mismatch | Launch file sets `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` for nav2 nodes, but `ros2` CLI tools use the shell default (FastDDS). FastDDS→CycloneDDS interop corrupts action goal payloads (poses arrive zeroed). Fix: `export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` in `.bashrc` or before any `ros2` CLI command |
+| route_server "Failed to transform from '' to map" | `global_frame` param missing from route_server config — defaults to empty string, so `getRobotPose()` uses empty frame_id. Fix: add `global_frame: "map"` to route_server params |
 | NTRIP client no data | Verify credentials and mountpoint in `ntrip_params.yaml`; check internet access from Jetson; try `enable_ntrip:=false` to isolate |
 | NTRIP `mountpoint` still `CHANGE_ME` | Edit `ntrip_params.yaml` — pick a nearby mountpoint from your caster (e.g. rtk2go.com mount list) |
 
