@@ -216,6 +216,7 @@ route_server:
   ros__parameters:
     base_frame: "base_link"
     route_frame: "map"
+    global_frame: "map"
     max_planning_time: 2.0
     prune_route: true
     path_density: 0.5
