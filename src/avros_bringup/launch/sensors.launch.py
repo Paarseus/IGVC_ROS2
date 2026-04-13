@@ -103,9 +103,8 @@ def generate_launch_description():
         ),
 
         # Xsens MTi-680G IMU/GNSS
-        # Package: xsens_mti_ros2_driver (build from source)
-        # git clone --recursive --branch ros2 \
-        #   https://github.com/xsenssupport/Xsens_MTi_ROS_Driver_and_Ntrip_Client.git
+        # Package: xsens_mti_ros2_driver (built from source via avros.repos)
+        # Fork: https://github.com/Paarseus/Xsens_MTi_ROS_Driver_and_Ntrip_Client (ros2 branch)
         Node(
             package='xsens_mti_ros2_driver',
             executable='xsens_mti_node',
@@ -115,7 +114,7 @@ def generate_launch_description():
         ),
 
         # NTRIP client for RTK corrections (GPGGA -> caster -> RTCM3)
-        # Package: ntrip (from Xsens_MTi_ROS_Driver_and_Ntrip_Client repo)
+        # Package: ntrip (same fork as xsens_mti_ros2_driver — monorepo)
         Node(
             package='ntrip',
             executable='ntrip',

@@ -1,4 +1,0 @@
-[submodule "src/xsens_mti"]
-	path = src/xsens_mti
-	url = https://github.com/Paarseus/Xsens_MTi_ROS_Driver_and_Ntrip_Client.git
-	branch = ros2
