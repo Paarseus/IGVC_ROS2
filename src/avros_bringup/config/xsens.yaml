@@ -1,6 +1,6 @@
 # Xsens MTi-680G configuration
-# Package: xsens_mti_ros2_driver (build from source)
-# https://github.com/xsenssupport/Xsens_MTi_ROS_Driver_and_Ntrip_Client
+# Package: xsens_mti_ros2_driver (build from source via avros.repos)
+# Fork: https://github.com/Paarseus/Xsens_MTi_ROS_Driver_and_Ntrip_Client (ros2 branch)
 
 xsens_mti_node:
   ros__parameters:
