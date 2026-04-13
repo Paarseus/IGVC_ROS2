@@ -23,8 +23,6 @@ setup(
         ],
     },
     entry_points={
-        'console_scripts': [
-            'route_planner_node = avros_navigation.route_planner_node:main'
-        ],
+        'console_scripts': [],
     },
 )
