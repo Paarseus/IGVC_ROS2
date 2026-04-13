@@ -22,7 +22,17 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     pkg_dir = get_package_share_directory('avros_bringup')
-    nav2_config = os.path.join(pkg_dir, 'config', 'nav2_params.yaml')
+
+    # Select distro-specific Nav2 params (matches navigation.launch.py).
+    # Humble and Jazzy have different plugin naming and param schemas;
+    # notably, always_send_full_costmap lives only in the Humble file,
+    # so using the wrong one leaves /local_costmap/costmap as a one-shot
+    # transient_local publisher and breaks downstream consumers.
+    ros_distro = os.environ.get('ROS_DISTRO', 'humble')
+    if ros_distro == 'humble':
+        nav2_config = os.path.join(pkg_dir, 'config', 'nav2_params_humble.yaml')
+    else:
+        nav2_config = os.path.join(pkg_dir, 'config', 'nav2_params.yaml')
     rviz_config = os.path.join(pkg_dir, 'rviz', 'costmap_test.rviz')
 
     return LaunchDescription([
