@@ -137,7 +137,7 @@ local_costmap:
         velodyne_points:
           topic: /velodyne_points
           max_obstacle_height: 2.0
-          min_obstacle_height: -0.8      # Sensor at z=1.0m; -0.8 = 0.2m above ground
+          min_obstacle_height: -0.2      # Reject VLP-16 ground ring artifact (sensor z=1.0m -> 0.8m above ground)
           obstacle_max_range: 15.0
           obstacle_min_range: 1.0        # Ignore car body
           clearing: true
@@ -217,7 +217,7 @@ global_costmap:
         velodyne_points:
           topic: /velodyne_points
           max_obstacle_height: 2.0
-          min_obstacle_height: -0.8      # Sensor at z=1.0m; -0.8 = 0.2m above ground
+          min_obstacle_height: -0.2      # Reject VLP-16 ground ring artifact (sensor z=1.0m -> 0.8m above ground)
           obstacle_max_range: 50.0
           obstacle_min_range: 1.0
           clearing: true
