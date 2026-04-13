@@ -30,6 +30,8 @@ from nav2_common.launch import RewrittenYaml
 def generate_launch_description():
     pkg_dir = get_package_share_directory('avros_bringup')
     actuator_config = os.path.join(pkg_dir, 'config', 'actuator_params.yaml')
+    lane_detector_config = os.path.join(
+        pkg_dir, 'config', 'lane_detector_params.yaml')
     graph_file = os.path.join(pkg_dir, 'config', 'cpp_campus_graph.geojson')
 
     # Select distro-specific config (params + BT XML)
@@ -123,6 +125,20 @@ def generate_launch_description():
             name='actuator_node',
             parameters=[
                 actuator_config,
+                {'use_sim_time': use_sim_time},
+            ],
+            output='screen',
+        ),
+
+        # Lane detector (HSV + aligned-depth deprojection -> /lane_points).
+        # Not a lifecycle node; runs alongside Nav2 and feeds the
+        # lane_obstacle_layer in both local and global costmaps.
+        Node(
+            package='avros_perception',
+            executable='lane_detector_node',
+            name='lane_detector_node',
+            parameters=[
+                lane_detector_config,
                 {'use_sim_time': use_sim_time},
             ],
             output='screen',

@@ -138,7 +138,8 @@ local_costmap:
       height: 50
       resolution: 0.2
       robot_radius: 0.8
-      plugins: ["voxel_layer", "inflation_layer"]
+      plugins: ["voxel_layer", "voxel_inflation_layer",
+                "lane_obstacle_layer", "lane_inflation_layer"]
 
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
@@ -174,10 +175,41 @@ local_costmap:
           raytrace_max_range: 5.0
           raytrace_min_range: 0.3
 
-      inflation_layer:
+      # Inflation for VoxelLayer obstacles (barrels, curbs, people).
+      # Ordered immediately after voxel_layer so it only sees VoxelLayer
+      # marks when it runs — lane cells haven't been placed yet.
+      voxel_inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 2.5
-        inflation_radius: 1.8
+        inflation_radius: 1.8        # wide buffer around 3D obstacles
+
+      # Lane paint gets its own ObstacleLayer so VoxelLayer's raytracing
+      # cannot clear lane marks (sources inside a single layer share the
+      # grid; separate plugin instances do not).
+      lane_obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        combination_method: 1        # MaxWithoutUnknownOverwrite
+        observation_sources: lane_points
+        lane_points:
+          topic: /lane_points
+          sensor_frame: ""           # blank -> use msg.header.frame_id
+          data_type: "PointCloud2"
+          marking: true
+          clearing: false
+          raytrace_max_range: 0.0    # belt-and-suspenders: never raytrace
+          raytrace_min_range: 0.0
+          min_obstacle_height: -0.1
+          max_obstacle_height: 0.2
+          obstacle_max_range: 5.0
+          obstacle_min_range: 0.3
+          observation_persistence: 1.0   # TUNE-AFTER-FIRST-DRIVE
+
+      # Tight inflation around lane paint — corridor must stay passable.
+      lane_inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 5.0
+        inflation_radius: 0.10       # tight: ~3m IGVC corridor survives
 
 global_costmap:
   global_costmap:
@@ -192,7 +224,8 @@ global_costmap:
       resolution: 0.2
       robot_radius: 0.8
       track_unknown_space: false
-      plugins: ["obstacle_layer", "inflation_layer"]
+      plugins: ["obstacle_layer", "obstacle_inflation_layer",
+                "lane_obstacle_layer", "lane_inflation_layer"]
 
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
@@ -210,10 +243,36 @@ global_costmap:
           raytrace_max_range: 50.0
           raytrace_min_range: 1.0
 
-      inflation_layer:
+      # Inflation for the Velodyne ObstacleLayer (barrels on the global map).
+      obstacle_inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 2.5
         inflation_radius: 1.8
+
+      # Lane paint on the global map — longer persistence than local.
+      lane_obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        combination_method: 1
+        observation_sources: lane_points
+        lane_points:
+          topic: /lane_points
+          sensor_frame: ""
+          data_type: "PointCloud2"
+          marking: true
+          clearing: false
+          raytrace_max_range: 0.0
+          raytrace_min_range: 0.0
+          min_obstacle_height: -0.1
+          max_obstacle_height: 0.2
+          obstacle_max_range: 8.0
+          obstacle_min_range: 0.3
+          observation_persistence: 3.0   # TUNE-AFTER-FIRST-DRIVE
+
+      lane_inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 5.0
+        inflation_radius: 0.10
 
 velocity_smoother:
   ros__parameters:
