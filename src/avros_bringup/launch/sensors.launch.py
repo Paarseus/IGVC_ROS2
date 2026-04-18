@@ -93,11 +93,19 @@ def generate_launch_description():
         ),
 
         # RealSense D455 (built from source, RSUSB backend)
+        # The align_depth.enable inline param is a workaround for realsense-ros
+        # 4.56.4: dot-separated nested params in a --params-file are silently
+        # dropped, so /camera/camera/aligned_depth_to_color/image_raw publishes
+        # at 0 Hz (verified in outdoor field test). Passing the flag as an
+        # inline parameter dict bypasses the YAML loader path and works.
         Node(
             package='realsense2_camera',
             executable='realsense2_camera_node',
             name='camera',
-            parameters=[realsense_config],
+            parameters=[
+                realsense_config,
+                {'align_depth.enable': True},
+            ],
             output='screen',
             condition=IfCondition(LaunchConfiguration('enable_realsense')),
         ),

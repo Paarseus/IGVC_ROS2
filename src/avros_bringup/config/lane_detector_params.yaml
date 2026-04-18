@@ -1,0 +1,49 @@
+# HSV lane detector parameters (avros_perception/lane_detector_node).
+#
+# Starting values tuned for IGVC: white painted lines on green grass, outdoor
+# daylight. Every HSV/morphology/ROI/range value is live-tunable via
+# rqt_reconfigure; save a per-lighting profile with:
+#   ros2 param dump /lane_detector_node > hsv_<profile>.yaml
+# and select at launch with:
+#   ros2 launch avros_bringup navigation.launch.py hsv_profile:=<profile>
+
+lane_detector_node:
+  ros__parameters:
+    # Topics
+    color_topic: /camera/camera/color/image_raw
+    depth_topic: /camera/camera/aligned_depth_to_color/image_raw
+    camera_info_topic: /camera/camera/color/camera_info
+
+    # White (primary, IGVC grass course)
+    h_min_white: 0
+    h_max_white: 179
+    s_min_white: 0        # white has near-zero saturation
+    s_max_white: 60
+    v_min_white: 180      # high brightness
+    v_max_white: 255
+
+    # Yellow (disabled by default; flip for on-road centerlines)
+    enable_yellow: false
+    h_min_yellow: 15
+    h_max_yellow: 40
+    s_min_yellow: 80
+    s_max_yellow: 255
+    v_min_yellow: 100
+    v_max_yellow: 255
+
+    # Morphology — kill grass speckle, fill paint gaps
+    erode_kernel: 3       # odd; enforced by code
+    close_kernel: 7
+
+    # ROI — skip upper 45% (sky, horizon, trees)
+    roi_y_start_frac: 0.45
+
+    # Depth filter — D455 reliable ground range
+    min_depth_m: 0.3
+    max_lane_range_m: 5.0
+
+    # Subsample: ~16x reduction in PointCloud2 size
+    pixel_stride: 4
+
+    # message_filters sync slop (one frame at 30 fps)
+    sync_slop_s: 0.033

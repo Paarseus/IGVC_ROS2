@@ -117,11 +117,14 @@ local_costmap:
       global_frame: odom
       robot_base_frame: base_link
       rolling_window: true
-      width: 50
-      height: 50
-      resolution: 0.2
+      width: 20                       # 20x20m rolling window (was 50x50)
+      height: 20
+      resolution: 0.05                # 5cm cells — resolves IGVC lane paint and
+                                      # makes lane_inflation_layer.inflation_radius
+                                      # of 0.10m actually inflate (2 cells wide).
       robot_radius: 0.8
-      plugins: ["voxel_layer", "inflation_layer"]
+      plugins: ["voxel_layer", "voxel_inflation_layer",
+                "lane_obstacle_layer", "lane_inflation_layer"]
 
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
@@ -136,7 +139,7 @@ local_costmap:
         velodyne_points:
           topic: /velodyne_points
           max_obstacle_height: 2.0
-          min_obstacle_height: -0.8      # Sensor at z=1.0m; -0.8 = 0.2m above ground
+          min_obstacle_height: -0.2      # Reject VLP-16 ground ring artifact (sensor z=1.0m -> 0.8m above ground)
           obstacle_max_range: 15.0
           obstacle_min_range: 1.0        # Ignore car body
           clearing: true
@@ -157,10 +160,52 @@ local_costmap:
           raytrace_max_range: 5.0
           raytrace_min_range: 0.3
 
-      inflation_layer:
+      # Inflation for VoxelLayer obstacles (barrels, curbs, people).
+      # Ordered immediately after voxel_layer so it only sees VoxelLayer
+      # marks when it runs — lane cells haven't been placed yet.
+      voxel_inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 2.5     # gentler decay = wider soft deceleration zone with cost-regulated scaling
         inflation_radius: 1.8        # 0.8m robot + 1.0m safety margin (covers stopping distance at 1.5 m/s)
+
+      # Lane paint gets its own ObstacleLayer so VoxelLayer's raytracing
+      # cannot clear lane marks (sources inside a single layer share the
+      # grid; separate plugin instances do not).
+      lane_obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        combination_method: 1        # MaxWithoutUnknownOverwrite
+        # Layer-level z-filter in costmap global_frame. Nav2's ObservationBuffer
+        # applies BOTH layer-level and per-source filters (intersection). If
+        # layer-level is omitted it defaults to [0.0, 2.0], which silently
+        # rejects every ground-plane point (they land at z < 0 because the
+        # current static TF puts base_link above ground). Must be set
+        # explicitly or lane_obstacle_layer never marks anything.
+        # TODO: tighten once base_footprint TF puts ground reliably at z=0.
+        min_obstacle_height: -0.5
+        max_obstacle_height: 0.3
+        observation_sources: lane_points
+        lane_points:
+          topic: /lane_points
+          sensor_frame: ""           # blank -> use msg.header.frame_id
+          data_type: "PointCloud2"
+          marking: true
+          clearing: false
+          raytrace_max_range: 0.0    # belt-and-suspenders: never raytrace
+          raytrace_min_range: 0.0
+          min_obstacle_height: -0.5  # match layer-level; accommodates uncalibrated base_link
+          max_obstacle_height: 0.3   # reject robot body cluster at z > 0.3 (verified in field test)
+          obstacle_max_range: 5.0
+          obstacle_min_range: 0.3
+          observation_persistence: 1.0   # TUNE-AFTER-FIRST-DRIVE
+
+      # Tight inflation around lane paint — corridor must stay passable.
+      # At 0.05m cells this is ~2 cells radius, which is functional.
+      # At the old 0.2m cells it was < 1 cell and effectively a no-op.
+      lane_inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 5.0
+        inflation_radius: 0.10       # tight: ~3m IGVC corridor survives
 
 global_costmap:
   global_costmap:
@@ -175,7 +220,8 @@ global_costmap:
       resolution: 0.2
       robot_radius: 0.8
       track_unknown_space: false     # false = free until proven occupied (needed for no-map operation)
-      plugins: ["obstacle_layer", "inflation_layer"]
+      plugins: ["obstacle_layer", "obstacle_inflation_layer",
+                "lane_obstacle_layer", "lane_inflation_layer"]
 
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
@@ -184,7 +230,7 @@ global_costmap:
         velodyne_points:
           topic: /velodyne_points
           max_obstacle_height: 2.0
-          min_obstacle_height: -0.8      # Sensor at z=1.0m; -0.8 = 0.2m above ground
+          min_obstacle_height: -0.2      # Reject VLP-16 ground ring artifact (sensor z=1.0m -> 0.8m above ground)
           obstacle_max_range: 50.0
           obstacle_min_range: 1.0
           clearing: true
@@ -193,10 +239,36 @@ global_costmap:
           raytrace_max_range: 50.0
           raytrace_min_range: 1.0
 
-      inflation_layer:
+      # Inflation for the Velodyne ObstacleLayer (barrels on the global map).
+      obstacle_inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 2.5     # match local costmap — gentler decay for cost-regulated speed scaling
         inflation_radius: 1.8        # match local costmap — wider buffer for planner obstacle avoidance
+
+      # Lane paint on the global map — longer persistence than local.
+      lane_obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        combination_method: 1
+        observation_sources: lane_points
+        lane_points:
+          topic: /lane_points
+          sensor_frame: ""
+          data_type: "PointCloud2"
+          marking: true
+          clearing: false
+          raytrace_max_range: 0.0
+          raytrace_min_range: 0.0
+          min_obstacle_height: -0.1
+          max_obstacle_height: 0.2
+          obstacle_max_range: 8.0
+          obstacle_min_range: 0.3
+          observation_persistence: 3.0   # TUNE-AFTER-FIRST-DRIVE
+
+      lane_inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 5.0
+        inflation_radius: 0.10
 
 velocity_smoother:
   ros__parameters:
