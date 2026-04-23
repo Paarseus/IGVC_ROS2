@@ -1,7 +1,11 @@
 """Launch actuator_node standalone for bench testing.
 
 Launches:
-  - actuator_node (cmd_vel -> Teensy UDP)
+  - actuator_node (cmd_vel / ActuatorCommand -> Teensy serial -> SparkMAX,
+    with IMU heading-hold on straight commands)
+
+Subscribes: /cmd_vel, /avros/actuator_command, /imu/data
+Publishes:  /avros/actuator_state, /wheel_odom
 """
 
 import os

@@ -1,318 +1,349 @@
-"""Actuator bridge node: cmd_vel -> Teensy UDP.
+"""Actuator bridge node: cmd_vel / ActuatorCommand -> Teensy serial -> SparkMAX.
 
-Ports logic from AV2.1-API:
-  - actuators/udp.py       (UDP socket, keepalive, command parsing)
-  - control/pid.py         (PID speed controller)
-  - control/ackermann_vehicle.py (bicycle model inverse kinematics)
+Diff-drive kinematics for an AndyMark Raptor track-drive chassis:
+    motor RPM -> ground m/s via 12.75:1 gearbox + 20T drive pulley
+    commanded (linear, angular) -> (L_rpm, R_rpm) via diff-drive inverse
+
+Heading-hold: when commanded angular velocity is near zero, IMU yaw is
+locked and a proportional correction is applied to ω. Makes the robot
+drive straight under teleop or any cmd_vel source without requiring
+Nav2 path-tracking feedback.
+
+Gyro-stabilized turns: when commanded angular velocity is non-zero,
+IMU yaw rate is used as feedback to close the loop on ω so "turn at
+0.5 rad/s" produces 0.5 rad/s regardless of surface friction.
 
 Subscribes:
-  /cmd_vel                  geometry_msgs/Twist
-  /avros/actuator_command   avros_msgs/ActuatorCommand (direct control / e-stop)
-  /filter/twist             geometry_msgs/TwistStamped (Xsens speed feedback for PID)
+  /cmd_vel                  geometry_msgs/Twist      (Nav2, teleop)
+  /avros/actuator_command   avros_msgs/ActuatorCommand (webui direct)
+  /imu/data                 sensor_msgs/Imu          (Xsens yaw + rate)
 
 Publishes:
-  /avros/actuator_state     avros_msgs/ActuatorState @ 20Hz
+  /avros/actuator_state     avros_msgs/ActuatorState @ 20 Hz
+  /wheel_odom               nav_msgs/Odometry @ 50 Hz (for EKF fusion)
 """
 
 import math
-import socket
-import json
 import threading
+import time
 
 import rclpy
+import serial
 from rclpy.node import Node
-from geometry_msgs.msg import Twist, TwistStamped
+from geometry_msgs.msg import Twist, TransformStamped
+from sensor_msgs.msg import Imu
+from nav_msgs.msg import Odometry
 from avros_msgs.msg import ActuatorCommand, ActuatorState
 
 
-class PID:
-    """PID controller with anti-windup. Ported from control/pid.py."""
+def yaw_from_quaternion(q) -> float:
+    """Extract yaw (Z rotation) from a geometry_msgs.Quaternion."""
+    siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+    cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+    return math.atan2(siny_cosp, cosy_cosp)
 
-    def __init__(self, kp=1.0, ki=0.0, kd=0.0, output_min=-1.0, output_max=1.0):
-        self.kp = kp
-        self.ki = ki
-        self.kd = kd
-        self.output_min = output_min
-        self.output_max = output_max
-        self._integral = 0.0
-        self._prev_error = 0.0
 
-    def compute(self, error, dt):
-        if dt <= 0:
-            return 0.0
-
-        p = self.kp * error
-
-        self._integral += error * dt
-        i = self.ki * self._integral
-
-        d = self.kd * (error - self._prev_error) / dt
-        self._prev_error = error
-
-        output = p + i + d
-        output = max(self.output_min, min(self.output_max, output))
-
-        # Anti-windup: clamp integral if output saturated
-        if output == self.output_max or output == self.output_min:
-            self._integral -= error * dt
-
-        return output
-
-    def reset(self):
-        self._integral = 0.0
-        self._prev_error = 0.0
+def wrap_angle(a: float) -> float:
+    """Wrap radians to [-pi, pi]."""
+    return math.atan2(math.sin(a), math.cos(a))
 
 
 class ActuatorNode(Node):
-    """ROS2 node bridging cmd_vel to Teensy UDP actuator protocol."""
+    """Diff-drive bridge: ROS2 commands <-> Teensy serial protocol."""
 
     def __init__(self):
         super().__init__('actuator_node')
 
-        # Declare parameters
-        self.declare_parameter('teensy_ip', '192.168.13.177')
-        self.declare_parameter('teensy_port', 5005)
-        self.declare_parameter('keepalive_interval', 0.2)
-        self.declare_parameter('wheelbase', 1.23)
-        self.declare_parameter('max_steering_rad', 0.489)
-        self.declare_parameter('steering_sign', -1)
-        self.declare_parameter('pid_kp', 0.55)
-        self.declare_parameter('pid_ki', 0.055)
-        self.declare_parameter('pid_kd', 0.08)
-        self.declare_parameter('max_throttle', 0.6)
-        self.declare_parameter('cmd_vel_timeout', 0.5)
-        self.declare_parameter('control_rate', 20.0)
+        # ---- parameters ----
+        self.declare_parameter('serial_port', '/dev/ttyACM0')
+        self.declare_parameter('serial_baud', 115200)
+        self.declare_parameter('track_width_m', 0.7366)       # 29 inches
+        self.declare_parameter('m_per_motor_rev', 0.01994)    # Raptor + TBMini 12.75:1 + 20T pulley
+        self.declare_parameter('max_linear_mps', 1.5)
+        self.declare_parameter('max_angular_rps', 1.0)
+        self.declare_parameter('heading_hold_deadband', 0.05) # rad/s threshold
+        self.declare_parameter('heading_kp', 1.5)             # heading-hold P gain
+        self.declare_parameter('yaw_rate_kp', 0.3)            # gyro-stabilized turn P gain
+        self.declare_parameter('cmd_timeout_s', 0.5)
+        self.declare_parameter('control_rate_hz', 50.0)
+        self.declare_parameter('state_pub_rate_hz', 20.0)
+        # SparkMAX PID gains to set on startup (from Phase 6 tuning)
+        self.declare_parameter('kFF', 0.000197)
+        self.declare_parameter('kP', 0.0004)
+        self.declare_parameter('kI', 0.0)
+        self.declare_parameter('kD', 0.0)
+        # Odom frame names
+        self.declare_parameter('odom_frame', 'odom')
+        self.declare_parameter('base_frame', 'base_link')
 
-        # Read parameters
-        self._teensy_ip = self.get_parameter('teensy_ip').value
-        self._teensy_port = self.get_parameter('teensy_port').value
-        self._keepalive_interval = self.get_parameter('keepalive_interval').value
-        self._wheelbase = self.get_parameter('wheelbase').value
-        self._max_steering_rad = self.get_parameter('max_steering_rad').value
-        self._steering_sign = self.get_parameter('steering_sign').value
-        self._max_throttle = self.get_parameter('max_throttle').value
-        self._cmd_vel_timeout = self.get_parameter('cmd_vel_timeout').value
-        control_rate = self.get_parameter('control_rate').value
+        p = self.get_parameter
+        self._port = p('serial_port').value
+        self._baud = p('serial_baud').value
+        self._track_w = p('track_width_m').value
+        self._m_per_rev = p('m_per_motor_rev').value
+        self._max_v = p('max_linear_mps').value
+        self._max_w = p('max_angular_rps').value
+        self._hh_deadband = p('heading_hold_deadband').value
+        self._heading_kp = p('heading_kp').value
+        self._yaw_rate_kp = p('yaw_rate_kp').value
+        self._cmd_timeout = p('cmd_timeout_s').value
+        self._odom_frame = p('odom_frame').value
+        self._base_frame = p('base_frame').value
 
-        # PID for speed control (linear.x -> throttle/brake)
-        self._speed_pid = PID(
-            kp=self.get_parameter('pid_kp').value,
-            ki=self.get_parameter('pid_ki').value,
-            kd=self.get_parameter('pid_kd').value,
-            output_min=-1.0,
-            output_max=1.0,
-        )
+        control_rate = p('control_rate_hz').value
+        state_rate = p('state_pub_rate_hz').value
 
-        # UDP socket
-        self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self._socket.settimeout(0.1)
-        self._socket.bind(('', 0))
-        self._lock = threading.Lock()
+        # ---- serial ----
+        self._serial = serial.Serial(self._port, self._baud, timeout=0.1)
+        time.sleep(0.3)
+        self._serial.reset_input_buffer()
+        self._serial_lock = threading.Lock()
+        self.get_logger().info(f'Serial open: {self._port} @ {self._baud}')
+
+        # Set PID gains on the Teensy (pushes to both SparkMAXes)
+        for name, val in [('KF', p('kFF').value), ('KP', p('kP').value),
+                          ('KI', p('kI').value), ('KD', p('kD').value)]:
+            self._serial_write(f'{name}{val}')
+            time.sleep(0.2)
         self.get_logger().info(
-            f'UDP actuator: {self._teensy_ip}:{self._teensy_port}'
+            f'SparkMAX gains set: kFF={p("kFF").value} kP={p("kP").value} '
+            f'kI={p("kI").value} kD={p("kD").value}'
         )
 
-        # Internal state
-        self._throttle = 0.0
-        self._brake = 0.0
-        self._steer = 0.0
-        self._mode = 'N'
+        # ---- state ----
+        # Command targets (set by callbacks; read by control loop)
+        self._target_v = 0.0       # m/s
+        self._target_w = 0.0       # rad/s
         self._estop = False
-        self._watchdog_active = False
-        self._last_cmd_vel_time = self.get_clock().now()
-        self._last_actuator_cmd_time = rclpy.time.Time(
-            clock_type=self.get_clock().clock_type
-        )  # epoch 0 = never
-        self._last_linear_x = 0.0
-        self._actual_speed = 0.0  # from Xsens /filter/twist
+        self._last_cmd_vel_t = None           # rclpy Time or None
+        self._last_actuator_cmd_t = None
 
-        # Actual state from Teensy response
-        self._actual_estop = False
-        self._actual_throttle = 0.0
-        self._actual_mode = 'N'
-        self._actual_brake = 0.0
-        self._actual_steer = 0.0
+        # Heading-hold state
+        self._heading_locked = False
+        self._heading_target = 0.0
+        self._current_yaw = 0.0
+        self._current_yaw_rate = 0.0
+        self._imu_fresh = False
 
-        # Subscribers
-        self._cmd_vel_sub = self.create_subscription(
-            Twist, '/cmd_vel', self._cmd_vel_callback, 10
-        )
-        self._actuator_cmd_sub = self.create_subscription(
+        # Feedback state (from Teensy E-lines)
+        self._l_meas_rpm = 0.0
+        self._r_meas_rpm = 0.0
+        self._l_meas_pos = 0.0    # motor revolutions, cumulative signed
+        self._r_meas_pos = 0.0
+        self._l_pos_prev = None
+        self._r_pos_prev = None
+        self._fb_lock = threading.Lock()
+
+        # Integrated odometry (pose from wheel encoders)
+        self._odom_x = 0.0
+        self._odom_y = 0.0
+        self._odom_yaw = 0.0
+        self._odom_last_t = self.get_clock().now()
+
+        # ---- subscribers ----
+        self.create_subscription(Twist, '/cmd_vel', self._on_cmd_vel, 10)
+        self.create_subscription(
             ActuatorCommand, '/avros/actuator_command',
-            self._actuator_cmd_callback, 10
+            self._on_actuator_cmd, 10
         )
-        self._twist_sub = self.create_subscription(
-            TwistStamped, '/filter/twist',
-            self._twist_callback, 10
-        )
+        self.create_subscription(Imu, '/imu/data', self._on_imu, 20)
 
-        # Publisher
+        # ---- publishers ----
         self._state_pub = self.create_publisher(
             ActuatorState, '/avros/actuator_state', 10
         )
+        self._odom_pub = self.create_publisher(Odometry, '/wheel_odom', 10)
 
-        # Control loop timer
-        self._dt = 1.0 / control_rate
-        self._timer = self.create_timer(self._dt, self._control_loop)
+        # ---- threads / timers ----
+        self._running = True
+        self._reader_thread = threading.Thread(
+            target=self._serial_reader, daemon=True
+        )
+        self._reader_thread.start()
 
-        self.get_logger().info('Actuator node started')
+        self._ctrl_dt = 1.0 / control_rate
+        self.create_timer(self._ctrl_dt, self._control_loop)
+        self.create_timer(1.0 / state_rate, self._publish_state)
 
-    def _cmd_vel_callback(self, msg: Twist):
-        """Convert cmd_vel to steering + speed command."""
-        self._last_cmd_vel_time = self.get_clock().now()
-        self._last_linear_x = msg.linear.x
+        self.get_logger().info('Actuator node ready — diff-drive with heading-hold')
 
-        v = msg.linear.x
-        omega = msg.angular.z
+    # ------------------------------------------------------------- callbacks
+    def _on_cmd_vel(self, msg: Twist):
+        self._target_v = max(-self._max_v, min(self._max_v, msg.linear.x))
+        self._target_w = max(-self._max_w, min(self._max_w, msg.angular.z))
+        self._last_cmd_vel_t = self.get_clock().now()
 
-        # Ackermann inverse: steering_rad = atan2(omega * wheelbase, v)
-        if abs(v) > 0.01:
-            steering_rad = math.atan2(omega * self._wheelbase, abs(v))
-        elif abs(omega) > 0.01:
-            # Turning in place: use max steering in direction of omega
-            steering_rad = math.copysign(self._max_steering_rad, omega)
-        else:
-            steering_rad = 0.0
-
-        # Clip to mechanical limits
-        steering_rad = max(-self._max_steering_rad,
-                           min(self._max_steering_rad, steering_rad))
-
-        # Normalize to [-1, 1] and apply hardware sign convention
-        self._steer = (steering_rad / self._max_steering_rad) * self._steering_sign
-
-        # Set mode based on direction
-        if v < -0.01:
-            self._mode = 'R'
-        elif v > 0.01:
-            if self._mode not in ('D', 'S'):
-                self._mode = 'D'
-        else:
-            pass  # keep current mode
-
-    def _twist_callback(self, msg: TwistStamped):
-        """Update actual speed from Xsens onboard filter."""
-        # Compute ground speed from vx/vy (ENU frame)
-        vx = msg.twist.linear.x
-        vy = msg.twist.linear.y
-        self._actual_speed = math.sqrt(vx * vx + vy * vy)
-
-    def _actuator_cmd_callback(self, msg: ActuatorCommand):
-        """Handle direct actuator commands (direct control / e-stop)."""
-        self._last_actuator_cmd_time = self.get_clock().now()
+    def _on_actuator_cmd(self, msg: ActuatorCommand):
+        self._last_actuator_cmd_t = self.get_clock().now()
         if msg.estop:
             self._estop = True
-            self._throttle = 0.0
-            self._brake = 1.0
-            self._speed_pid.reset()
-            self.get_logger().warn('E-STOP activated via actuator_command')
-        else:
-            self._estop = msg.estop
-            self._throttle = max(0.0, min(1.0, msg.throttle))
-            self._brake = max(0.0, min(1.0, msg.brake))
-            self._steer = max(-1.0, min(1.0, msg.steer))
-            if msg.mode in ('N', 'D', 'S', 'R'):
-                self._mode = msg.mode
+            self._target_v = 0.0
+            self._target_w = 0.0
+            self.get_logger().warn('E-STOP via actuator_command')
+            return
+        self._estop = False
+        # Map webui throttle/brake/steer -> (v, ω)
+        v = (msg.throttle - msg.brake) * self._max_v
+        w = msg.steer * self._max_w
+        self._target_v = max(-self._max_v, min(self._max_v, v))
+        self._target_w = max(-self._max_w, min(self._max_w, w))
 
+    def _on_imu(self, msg: Imu):
+        self._current_yaw = yaw_from_quaternion(msg.orientation)
+        self._current_yaw_rate = msg.angular_velocity.z
+        self._imu_fresh = True
+
+    # ------------------------------------------------------------- control
     def _control_loop(self):
-        """Main control loop at control_rate Hz.
-
-        Priority:
-          1. Fresh ActuatorCommand (< timeout) → direct control, skip PID
-          2. Fresh cmd_vel (< timeout)         → PID speed control
-          3. Neither                           → brake to stop
-        """
         now = self.get_clock().now()
 
-        dt_since_actuator_cmd = (
-            (now - self._last_actuator_cmd_time).nanoseconds / 1e9
+        # Command freshness (priority: actuator_command > cmd_vel > stop)
+        has_actuator = (
+            self._last_actuator_cmd_t is not None
+            and (now - self._last_actuator_cmd_t).nanoseconds / 1e9 < self._cmd_timeout
         )
-        dt_since_cmd_vel = (
-            (now - self._last_cmd_vel_time).nanoseconds / 1e9
+        has_cmd_vel = (
+            self._last_cmd_vel_t is not None
+            and (now - self._last_cmd_vel_t).nanoseconds / 1e9 < self._cmd_timeout
         )
 
-        if dt_since_actuator_cmd < self._cmd_vel_timeout:
-            # Direct control path — values already set by callback
-            self._speed_pid.reset()
-        elif dt_since_cmd_vel < self._cmd_vel_timeout:
-            # PID speed control: error = desired_speed - actual_speed
-            speed_error = self._last_linear_x - self._actual_speed
-            pid_output = self._speed_pid.compute(speed_error, self._dt)
-
-            if pid_output >= 0:
-                self._throttle = min(pid_output, self._max_throttle)
-                self._brake = 0.0
-            else:
-                self._throttle = 0.0
-                self._brake = min(abs(pid_output), 1.0)
+        if self._estop:
+            v, w = 0.0, 0.0
+        elif has_actuator or has_cmd_vel:
+            v = self._target_v
+            w = self._target_w
         else:
-            # No commands — brake to stop
-            self._throttle = 0.0
-            self._brake = 1.0
-            self._steer = 0.0
-            self._speed_pid.reset()
+            v, w = 0.0, 0.0
 
-        # Send to Teensy
-        self._send_all()
+        # IMU-based filters on ω
+        if self._imu_fresh:
+            if abs(w) < self._hh_deadband and abs(v) > 0.02:
+                # Straight-line intent → heading hold
+                if not self._heading_locked:
+                    self._heading_target = self._current_yaw
+                    self._heading_locked = True
+                yaw_err = wrap_angle(self._heading_target - self._current_yaw)
+                w = self._heading_kp * yaw_err
+                # cap the correction so it never fights the user
+                w = max(-self._max_w * 0.5, min(self._max_w * 0.5, w))
+            else:
+                # Turning → release hold, optionally close loop on ω via IMU
+                self._heading_locked = False
+                w_err = w - self._current_yaw_rate
+                w = w + self._yaw_rate_kp * w_err
 
-        # Publish state
-        state_msg = ActuatorState()
-        state_msg.header.stamp = now.to_msg()
-        state_msg.header.frame_id = 'base_link'
-        # Publish actual Teensy state (falls back to commanded if no response)
-        state_msg.estop = self._actual_estop
-        state_msg.throttle = self._actual_throttle
-        state_msg.mode = self._actual_mode
-        state_msg.brake = self._actual_brake
-        state_msg.steer = self._actual_steer
-        state_msg.watchdog_active = self._watchdog_active
-        self._state_pub.publish(state_msg)
+        # Diff-drive inverse kinematics
+        l_mps = v - w * self._track_w / 2.0
+        r_mps = v + w * self._track_w / 2.0
+        l_rpm = l_mps / self._m_per_rev * 60.0
+        r_rpm = r_mps / self._m_per_rev * 60.0
 
-    def _send_all(self):
-        """Send all-in-one command to Teensy via UDP."""
-        cmd = (
-            f"A E={1 if self._estop else 0} "
-            f"T={self._throttle:.3f} "
-            f"M={self._mode} "
-            f"B={self._brake:.3f} "
-            f"S={self._steer:.3f}"
-        )
-        data = (cmd + '\n').encode('ascii')
+        # Send setpoint (or S on idle/estop)
+        if self._estop or (not has_actuator and not has_cmd_vel and abs(v) < 1e-6 and abs(w) < 1e-6):
+            self._serial_write('S')
+        else:
+            self._serial_write(f'L{l_rpm:.0f} R{r_rpm:.0f}')
 
-        with self._lock:
-            try:
-                self._socket.sendto(
-                    data, (self._teensy_ip, self._teensy_port)
-                )
-                try:
-                    response, _ = self._socket.recvfrom(256)
-                    resp_str = response.decode('ascii').strip()
-                    if resp_str.startswith('{'):
-                        resp = json.loads(resp_str)
-                        # Update state from Teensy response (actual values)
-                        self._actual_estop = bool(resp.get('e', 0))
-                        self._actual_throttle = float(resp.get('t', 0.0))
-                        self._actual_mode = str(resp.get('m', 'N'))
-                        self._actual_brake = float(resp.get('b', 0.0))
-                        self._actual_steer = float(resp.get('s', 0.0))
-                        self._watchdog_active = bool(resp.get('w', 0))
-                except (socket.timeout, json.JSONDecodeError):
-                    pass
-            except Exception as e:
-                self.get_logger().error(f'UDP send error: {e}')
+    # ------------------------------------------------------------- publishing
+    def _publish_state(self):
+        now = self.get_clock().now()
+        with self._fb_lock:
+            l_rpm = self._l_meas_rpm
+            r_rpm = self._r_meas_rpm
 
-    def destroy_node(self):
-        """Clean shutdown: e-stop and close socket."""
-        self.get_logger().info('Shutting down — sending e-stop')
-        self._estop = True
-        self._throttle = 0.0
-        self._brake = 1.0
+        # Legacy ActuatorState contract (for webui compatibility)
+        msg = ActuatorState()
+        msg.header.stamp = now.to_msg()
+        msg.header.frame_id = self._base_frame
+        msg.estop = self._estop
+        # Approximate throttle/brake/steer from measured wheel RPMs so webui
+        # UI reflects reality, not command
+        avg_mps = ((l_rpm + r_rpm) / 2.0) * self._m_per_rev / 60.0
+        diff_mps = ((r_rpm - l_rpm)) * self._m_per_rev / 60.0
+        throttle = max(0.0, min(1.0, avg_mps / self._max_v))
+        brake = max(0.0, min(1.0, -avg_mps / self._max_v))
+        steer = max(-1.0, min(1.0,
+                              (diff_mps / self._track_w) / self._max_w)) if self._max_w > 0 else 0.0
+        msg.throttle = throttle
+        msg.brake = brake
+        msg.steer = steer
+        msg.mode = 'D' if not self._estop else 'N'
+        msg.watchdog_active = False
+        self._state_pub.publish(msg)
+
+        # Integrate + publish wheel odometry
+        self._publish_odom(now, l_rpm, r_rpm)
+
+    def _publish_odom(self, now, l_rpm, r_rpm):
+        dt = (now - self._odom_last_t).nanoseconds / 1e9
+        if dt <= 0 or dt > 0.5:
+            self._odom_last_t = now
+            return
+        self._odom_last_t = now
+
+        l_mps = l_rpm * self._m_per_rev / 60.0
+        r_mps = r_rpm * self._m_per_rev / 60.0
+        v = (l_mps + r_mps) / 2.0
+        w = (r_mps - l_mps) / self._track_w
+
+        self._odom_yaw = wrap_angle(self._odom_yaw + w * dt)
+        self._odom_x += v * math.cos(self._odom_yaw) * dt
+        self._odom_y += v * math.sin(self._odom_yaw) * dt
+
+        odom = Odometry()
+        odom.header.stamp = now.to_msg()
+        odom.header.frame_id = self._odom_frame
+        odom.child_frame_id = self._base_frame
+        odom.pose.pose.position.x = self._odom_x
+        odom.pose.pose.position.y = self._odom_y
+        odom.pose.pose.orientation.z = math.sin(self._odom_yaw / 2.0)
+        odom.pose.pose.orientation.w = math.cos(self._odom_yaw / 2.0)
+        odom.twist.twist.linear.x = v
+        odom.twist.twist.angular.z = w
+        self._odom_pub.publish(odom)
+
+    # ------------------------------------------------------------- serial I/O
+    def _serial_write(self, line: str):
         try:
-            self._send_all()
+            with self._serial_lock:
+                self._serial.write((line + '\n').encode('ascii'))
+        except Exception as e:
+            self.get_logger().error(f'serial write failed: {e}')
+
+    def _serial_reader(self):
+        """Background thread: read E lines, update measured state."""
+        import re
+        E_RE = re.compile(r"E L(-?\d+) (-?[\d.]+) R(-?\d+) (-?[\d.]+)")
+        buf = ''
+        while self._running:
+            try:
+                chunk = self._serial.read(256).decode('ascii', errors='replace')
+                if not chunk:
+                    continue
+                buf += chunk
+                while '\n' in buf:
+                    line, buf = buf.split('\n', 1)
+                    m = E_RE.match(line.strip())
+                    if m:
+                        with self._fb_lock:
+                            self._l_meas_rpm = float(m.group(1))
+                            self._l_meas_pos = float(m.group(2))
+                            self._r_meas_rpm = float(m.group(3))
+                            self._r_meas_pos = float(m.group(4))
+            except Exception as e:
+                self.get_logger().error(f'serial reader: {e}')
+                time.sleep(0.1)
+
+    # ------------------------------------------------------------- shutdown
+    def destroy_node(self):
+        self.get_logger().info('shutdown — sending S')
+        self._running = False
+        try:
+            self._serial_write('S')
+            time.sleep(0.1)
+            self._serial.close()
         except Exception:
             pass
-        if self._socket:
-            self._socket.close()
         super().destroy_node()
 
 

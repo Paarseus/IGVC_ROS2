@@ -1,10 +1,14 @@
 """Launch web UI with actuator_node.
 
 Launches:
-  - actuator_node (ActuatorCommand -> Teensy UDP)
+  - actuator_node (ActuatorCommand/cmd_vel -> Teensy serial -> SparkMAX)
   - webui_node (phone WebSocket -> ActuatorCommand)
 
 Phone: open https://<jetson-ip>:8000
+
+Note: heading-hold activates if /imu/data is publishing. Launch
+sensors.launch.py alongside to get the Xsens feed; otherwise the node
+passes webui throttle/steer through without IMU correction.
 """
 
 import os

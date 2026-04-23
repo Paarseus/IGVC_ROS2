@@ -1,10 +1,14 @@
 """Launch keyboard teleop with actuator_node.
 
 Launches:
-  - actuator_node (cmd_vel -> Teensy UDP)
+  - actuator_node (cmd_vel -> Teensy serial -> SparkMAX)
   - teleop_twist_keyboard (keyboard -> cmd_vel)
 
 Keys: i=forward, ,=backward, j=left, l=right, k=stop, q/z=speed up/down
+
+Note: for IMU heading-hold to be active while driving, also launch
+`sensors.launch.py` in another terminal (starts the Xsens /imu/data).
+Without the IMU, the node passes cmd_vel through without heading correction.
 """
 
 import os

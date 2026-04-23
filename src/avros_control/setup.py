@@ -11,11 +11,11 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
     ],
-    install_requires=['setuptools'],
+    install_requires=['setuptools', 'pyserial'],
     zip_safe=True,
     maintainer='AV Lab',
     maintainer_email='avlab@cpp.edu',
-    description='Actuator bridge: cmd_vel to Teensy UDP',
+    description='Diff-drive actuator bridge: cmd_vel to Teensy serial (SparkMAX)',
     license='MIT',
     extras_require={
         'test': [

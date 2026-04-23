@@ -1,21 +1,34 @@
 actuator_node:
   ros__parameters:
-    # Teensy UDP connection
-    teensy_ip: "192.168.13.177"
-    teensy_port: 5005
-    keepalive_interval: 0.2
+    # ---- Teensy serial ----
+    serial_port: "/dev/ttyACM0"
+    serial_baud: 115200
 
-    # Vehicle geometry
-    wheelbase: 1.23
-    max_steering_rad: 0.489        # 28 degrees
-    steering_sign: -1              # Hardware sign convention
+    # ---- Vehicle geometry (AndyMark Raptor Track Drive) ----
+    track_width_m: 0.7366          # 29 inches between track centerlines
+    m_per_motor_rev: 0.01994       # π × 80.85 mm / 12.75:1 gearbox — ground meters per motor rev
 
-    # Speed PID (linear.x -> throttle/brake)
-    pid_kp: 0.34
-    pid_ki: 0.15
-    pid_kd: 0.065
-    max_throttle: 0.6              # Safety limit
+    # ---- Speed limits (safety caps) ----
+    max_linear_mps: 1.5
+    max_angular_rps: 1.0
 
-    # Timing
-    cmd_vel_timeout: 0.5           # E-stop if no cmd_vel for this long
-    control_rate: 20.0             # Hz
+    # ---- IMU-based straight-line assist ----
+    heading_hold_deadband: 0.05    # rad/s — |ω_cmd| below this engages heading-hold
+    heading_kp: 1.5                # P gain for heading-hold (rad/s per rad of yaw error)
+    yaw_rate_kp: 0.3               # P gain for gyro-stabilized turn rate
+
+    # ---- Timing ----
+    cmd_timeout_s: 0.5             # stop if no cmd_vel or actuator_command for this long
+    control_rate_hz: 50.0          # L/R RPM setpoint update rate
+    state_pub_rate_hz: 20.0        # /avros/actuator_state + /wheel_odom rate
+
+    # ---- SparkMAX PID gains (pushed to Teensy on startup) ----
+    # From Phase 6 tuning: kFF = 1 / measured_max_RPM, kP modest, kI/kD unused
+    kFF: 0.000197
+    kP:  0.0004
+    kI:  0.0
+    kD:  0.0
+
+    # ---- Odometry frames ----
+    odom_frame: "odom"
+    base_frame: "base_link"
