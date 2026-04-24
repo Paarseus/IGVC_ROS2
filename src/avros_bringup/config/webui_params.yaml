@@ -3,4 +3,4 @@ webui_node:
     web_port: 8000
     ssl_certfile: /home/dinosaur/avros_certs/cert.pem
     ssl_keyfile: /home/dinosaur/avros_certs/key.pem
-    max_throttle: 0.55
+    max_throttle: 1.0
