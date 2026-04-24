@@ -10,7 +10,7 @@
 #
 # rgb_topic / cloud_topic override those defaults when non-empty.
 
-perception_node:
+/**:
   ros__parameters:
     camera_name: 'front'
     rgb_topic: ''
