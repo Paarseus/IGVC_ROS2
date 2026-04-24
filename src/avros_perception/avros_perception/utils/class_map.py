@@ -1,4 +1,5 @@
-"""Class-map loader.
+"""
+Class-map loader.
 
 Parses class_map.yaml and builds a vision_msgs/LabelInfo message the node
 can latch. Keeping this in one module means pipelines, config, and the

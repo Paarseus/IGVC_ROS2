@@ -1,4 +1,5 @@
-"""Stub pipeline for plumbing validation.
+"""
+Stub pipeline for plumbing validation.
 
 Returns a zero mask, except for a vertical stripe of configurable width/start
 that is filled with a configurable class ID. Use it to drive the full
@@ -25,7 +26,8 @@ class StubPipeline(Pipeline):
         if width > 0:
             width = min(width, w)
             default_start = (w - width) // 2
-            start = int(self.params.get('inject_stripe_start', default_start))
+            requested_start = int(self.params.get('inject_stripe_start', -1))
+            start = default_start if requested_start < 0 else requested_start
             start = max(0, min(start, w - width))
             class_id = int(self.params.get('inject_class_id', 1)) & 0xFF
             mask[:, start:start + width] = class_id

@@ -1,4 +1,5 @@
-"""Abstract pipeline interface.
+"""
+Abstract pipeline interface.
 
 A Pipeline converts an RGB (and optional depth) frame into a mono8 class-ID
 mask plus a uint8 confidence plane, both the same HxW as the input. Concrete

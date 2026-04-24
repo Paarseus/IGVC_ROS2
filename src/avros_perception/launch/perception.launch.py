@@ -1,44 +1,57 @@
-"""Launch the perception node for a single ZED camera.
+"""
+Launch one perception_node per camera.
 
-For Phase 2 / 3 this spawns exactly one perception_node bound to the front
-camera. Phase 5 extends this to a cameras-list loop for 3-camera setups.
+Default is a single node bound to the front ZED. Pass `cameras:=front,left,right`
+to spawn one node per camera — each owns a /perception/{cam}/* namespace.
 """
 
 import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch_ros.actions import Node
 
 
-def generate_launch_description():
+def _spawn_nodes(context, *_args, **_kwargs):
     pkg_dir = get_package_share_directory('avros_perception')
     perception_config = os.path.join(pkg_dir, 'config', 'perception.yaml')
 
-    return LaunchDescription([
-        DeclareLaunchArgument(
-            'use_sim_time', default_value='false',
-            description='Use simulation clock'
-        ),
+    cameras = [c.strip() for c in context.launch_configurations['cameras'].split(',') if c.strip()]
+    use_sim_time = context.launch_configurations['use_sim_time'].lower() == 'true'
 
-        DeclareLaunchArgument(
-            'camera_name', default_value='front',
-            description='Logical camera name (drives topic namespaces)'
-        ),
-
+    return [
         Node(
             package='avros_perception',
             executable='perception_node',
-            name='perception_node',
+            name=f'perception_{cam}',
             parameters=[
                 perception_config,
                 {
-                    'use_sim_time': LaunchConfiguration('use_sim_time'),
-                    'camera_name': LaunchConfiguration('camera_name'),
+                    'use_sim_time': use_sim_time,
+                    'camera_name': cam,
                 },
             ],
             output='screen',
+        )
+        for cam in cameras
+    ]
+
+
+def generate_launch_description():
+    return LaunchDescription([
+        DeclareLaunchArgument(
+            'use_sim_time', default_value='false',
+            description='Use simulation clock',
         ),
+        DeclareLaunchArgument(
+            'cameras', default_value='front',
+            description='Comma-separated list of ZED camera names (e.g. front,left,right)',
+        ),
+        # Kept for backward compatibility; ignored when `cameras` has >1 entry.
+        DeclareLaunchArgument(
+            'camera_name', default_value='front',
+            description='(Legacy) Single camera; prefer `cameras`',
+        ),
+        OpaqueFunction(function=_spawn_nodes),
     ])

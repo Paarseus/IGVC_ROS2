@@ -1,4 +1,5 @@
-"""Camera perception bridge.
+"""
+Camera perception bridge.
 
 Subscribes to one ZED camera's rectified RGB + organized PointCloud2, runs a
 pluggable Pipeline to produce a mono8 class-ID mask, and publishes the
@@ -16,7 +17,6 @@ message-filters them and drops frames with mismatched stamps.
 import os
 
 import cv2
-import numpy as np
 import rclpy
 from ament_index_python.packages import get_package_share_directory
 from cv_bridge import CvBridge
@@ -124,8 +124,12 @@ class PerceptionNode(Node):
 
         # ---- subscribers + time-sync ----
         self._bridge = CvBridge()
-        self._rgb_sub = Subscriber(self, Image, rgb_topic, qos_profile=qos_profile_sensor_data)
-        self._cloud_sub = Subscriber(self, PointCloud2, cloud_topic, qos_profile=qos_profile_sensor_data)
+        self._rgb_sub = Subscriber(
+            self, Image, rgb_topic, qos_profile=qos_profile_sensor_data
+        )
+        self._cloud_sub = Subscriber(
+            self, PointCloud2, cloud_topic, qos_profile=qos_profile_sensor_data
+        )
         self._sync = ApproximateTimeSynchronizer(
             [self._rgb_sub, self._cloud_sub],
             queue_size=sync_queue,

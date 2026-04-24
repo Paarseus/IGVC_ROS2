@@ -21,7 +21,7 @@ setup(
     zip_safe=True,
     maintainer='AV Lab',
     maintainer_email='avlab@cpp.edu',
-    description='Camera perception bridge: ZED X images to kiwicampus semantic_segmentation_layer contract',
+    description='Camera perception bridge: ZED X images to kiwicampus contract',
     license='MIT',
     extras_require={
         'test': [
