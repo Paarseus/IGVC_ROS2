@@ -171,12 +171,12 @@ local_costmap:
           pointcloud_topic: /perception/front/semantic_points
           confidence_topic: /perception/front/semantic_confidence
           labels_topic: /perception/front/label_info
-          max_obstacle_distance: 5.0     # ZED X usable depth for painted features
+          max_obstacle_distance: 5.0     # ZED X usable depth for painted features; widen only for debug
           min_obstacle_distance: 0.3
           tile_map_decay_time: 1.5       # seconds; paint fades if not re-observed
           observation_persistence: 0.0
           expected_update_rate: 0.0
-          visualize_tile_map: false
+          visualize_tile_map: false      # flip to true for debugging; publishes /local_costmap/front/tile_map
           use_cost_selection: false
           # Stub class map. Phase 4 adds lane_white, barrel_orange, pothole.
           class_types: ["danger"]
