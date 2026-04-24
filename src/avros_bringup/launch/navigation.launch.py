@@ -110,8 +110,23 @@ def generate_launch_description():
         ),
 
         DeclareLaunchArgument(
+            'enable_zed_left', default_value='false',
+            description='Enable left ZED X camera'
+        ),
+
+        DeclareLaunchArgument(
+            'enable_zed_right', default_value='false',
+            description='Enable right ZED X camera'
+        ),
+
+        DeclareLaunchArgument(
             'enable_perception', default_value='false',
-            description='Enable avros_perception (requires enable_zed_front:=true)'
+            description='Enable avros_perception (requires at least one enable_zed_* camera)'
+        ),
+
+        DeclareLaunchArgument(
+            'perception_cameras', default_value='front',
+            description='Comma-separated camera list for perception_node, e.g. "front,left,right"'
         ),
 
         # Localization (sensors + EKF + navsat)
@@ -125,6 +140,8 @@ def generate_launch_description():
                 'enable_velodyne': LaunchConfiguration('enable_velodyne'),
                 'enable_realsense': LaunchConfiguration('enable_realsense'),
                 'enable_zed_front': LaunchConfiguration('enable_zed_front'),
+                'enable_zed_left': LaunchConfiguration('enable_zed_left'),
+                'enable_zed_right': LaunchConfiguration('enable_zed_right'),
             }.items(),
         ),
 
@@ -136,7 +153,7 @@ def generate_launch_description():
             ]),
             launch_arguments={
                 'use_sim_time': use_sim_time,
-                'camera_name': 'front',
+                'cameras': LaunchConfiguration('perception_cameras'),
             }.items(),
             condition=IfCondition(LaunchConfiguration('enable_perception')),
         ),

@@ -65,13 +65,15 @@ class HSVPipeline(Pipeline):
         self._id_barrel = int(self.params.get('class_id_barrel', cid['barrel']))
         self._id_pothole = int(self.params.get('class_id_pothole', cid['pothole']))
 
-        # ROI polygon: list of [x,y] pairs in NORMALIZED 0..1 coordinates.
-        # Scaled to image size on every frame so it's resolution-independent.
+        # ROI polygon: flat [x1, y1, x2, y2, ...] array of normalized 0..1
+        # coords (ROS2 params don't support list-of-lists). Reshape to
+        # (N, 2) here once; scale to image size per frame in _roi_polygon_px.
         # Default rejects the top 35% of the frame (sky / distant trees).
-        self._roi_poly_norm = self.params.get(
+        raw_poly = self.params.get(
             'sky_roi_poly',
-            [[0.0, 0.0], [1.0, 0.0], [1.0, 0.35], [0.0, 0.35]],
+            [0.0, 0.0, 1.0, 0.0, 1.0, 0.35, 0.0, 0.35],
         )
+        self._roi_poly_norm = self._reshape_poly(raw_poly)
 
         # Morphology kernel — pebbles/speckle removal (iscumd 3x3)
         self._morph_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
@@ -80,6 +82,20 @@ class HSVPipeline(Pipeline):
     def _as_hsv(triplet):
         """Coerce a param into a uint8 HSV triplet ndarray suitable for inRange."""
         return np.array(list(triplet), dtype=np.uint8)
+
+    @staticmethod
+    def _reshape_poly(flat_or_pairs):
+        """Accept either a flat [x,y,...] list or a list of [x,y] pairs."""
+        seq = list(flat_or_pairs)
+        if not seq:
+            return []
+        if isinstance(seq[0], (list, tuple)):
+            return [(float(x), float(y)) for x, y in seq]
+        if len(seq) % 2 != 0:
+            raise ValueError(
+                f'sky_roi_poly flat list must have even length, got {len(seq)}'
+            )
+        return [(float(seq[i]), float(seq[i + 1])) for i in range(0, len(seq), 2)]
 
     def _roi_polygon_px(self, h, w):
         """Convert normalized polygon to pixel coords for cv2.fillPoly."""

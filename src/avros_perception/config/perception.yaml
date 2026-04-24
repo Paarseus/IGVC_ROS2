@@ -17,7 +17,7 @@ perception_node:
     cloud_topic: ''
 
     # Pipeline selector: 'stub' | 'hsv' | 'onnx' (onnx lands in Phase 6).
-    pipeline: 'stub'
+    pipeline: 'hsv'
 
     # message_filters ApproximateTimeSynchronizer
     sync_slop: 0.02        # seconds; ZED sensors_image_sync:=true keeps pairs tight
@@ -56,10 +56,7 @@ perception_node:
     class_id_pothole: 3
 
     # ROI polygon — pixels inside the polygon are zeroed (class=free).
-    # Normalized 0..1 coordinates so the polygon is resolution-independent.
-    # Default: top 35% of the frame (sky + distant trees).
-    sky_roi_poly:
-      - [0.0, 0.0]
-      - [1.0, 0.0]
-      - [1.0, 0.35]
-      - [0.0, 0.35]
+    # Flat [x1, y1, x2, y2, ...] array of normalized 0..1 coordinates
+    # (ROS2 params don't support list-of-lists). Default: top 35% of the
+    # frame (sky + distant trees). Empty list disables the ROI.
+    sky_roi_poly: [0.0, 0.0,  1.0, 0.0,  1.0, 0.35,  0.0, 0.35]

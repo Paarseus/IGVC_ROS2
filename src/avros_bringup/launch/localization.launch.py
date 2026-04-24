@@ -55,6 +55,16 @@ def generate_launch_description():
             description='Enable front ZED X camera'
         ),
 
+        DeclareLaunchArgument(
+            'enable_zed_left', default_value='false',
+            description='Enable left ZED X camera'
+        ),
+
+        DeclareLaunchArgument(
+            'enable_zed_right', default_value='false',
+            description='Enable right ZED X camera'
+        ),
+
         # Include sensors launch
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
@@ -66,6 +76,8 @@ def generate_launch_description():
                 'enable_velodyne': LaunchConfiguration('enable_velodyne'),
                 'enable_realsense': LaunchConfiguration('enable_realsense'),
                 'enable_zed_front': LaunchConfiguration('enable_zed_front'),
+                'enable_zed_left': LaunchConfiguration('enable_zed_left'),
+                'enable_zed_right': LaunchConfiguration('enable_zed_right'),
             }.items(),
         ),
 

@@ -31,7 +31,7 @@ _HSV_PARAM_KEYS = [
 ]
 
 # Frozen hash. Update when retuning intentionally.
-EXPECTED_HASH = '4aeb9acc7fb1b24611138db5956b1c99d711018a3ac3f578ed61754150a4990a'
+EXPECTED_HASH = 'aca1c4d16f5fddef0fad13db5e9b4cfe58b4ca8daa9732bbb1086ee507e42437'
 
 
 def _hash_hsv_params():

@@ -121,7 +121,7 @@ local_costmap:
       height: 50
       resolution: 0.2
       robot_radius: 0.8
-      plugins: ["voxel_layer", "semantic_front", "inflation_layer"]
+      plugins: ["voxel_layer", "semantic_front", "semantic_left", "semantic_right", "inflation_layer"]
 
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
@@ -178,11 +178,64 @@ local_costmap:
           expected_update_rate: 0.0
           visualize_tile_map: false      # flip to true for debugging; publishes /local_costmap/front/tile_map
           use_cost_selection: false
-          # Stub class map. Phase 4 adds lane_white, barrel_orange, pothole.
+          # Phase 4 HSVPipeline writes class IDs per class_map.yaml:
+          #   1 lane_white, 2 barrel_orange, 3 pothole. All LETHAL for now.
           class_types: ["danger"]
           danger:
-            classes: ["obstacle"]
+            classes: ["lane_white", "barrel_orange", "pothole"]
             base_cost: 254               # LETHAL per nav2_costmap_2d cost_values
+            max_cost: 254
+            mark_confidence: 0
+            samples_to_max_cost: 1
+            dominant_priority: true
+
+      # Mirror of semantic_front for the left-side ZED X camera.
+      semantic_left:
+        plugin: "semantic_segmentation_layer::SemanticSegmentationLayer"
+        enabled: true
+        observation_sources: left
+        left:
+          segmentation_topic: /perception/left/semantic_mask
+          pointcloud_topic: /perception/left/semantic_points
+          confidence_topic: /perception/left/semantic_confidence
+          labels_topic: /perception/left/label_info
+          max_obstacle_distance: 5.0     # ZED X usable depth for painted features; widen only for debug
+          min_obstacle_distance: 0.3
+          tile_map_decay_time: 1.5       # seconds; paint fades if not re-observed
+          observation_persistence: 0.0
+          expected_update_rate: 0.0
+          visualize_tile_map: false      # flip to true for debugging; publishes /local_costmap/left/tile_map
+          use_cost_selection: false
+          class_types: ["danger"]
+          danger:
+            classes: ["lane_white", "barrel_orange", "pothole"]
+            base_cost: 254
+            max_cost: 254
+            mark_confidence: 0
+            samples_to_max_cost: 1
+            dominant_priority: true
+
+      # Mirror of semantic_front for the right-side ZED X camera.
+      semantic_right:
+        plugin: "semantic_segmentation_layer::SemanticSegmentationLayer"
+        enabled: true
+        observation_sources: right
+        right:
+          segmentation_topic: /perception/right/semantic_mask
+          pointcloud_topic: /perception/right/semantic_points
+          confidence_topic: /perception/right/semantic_confidence
+          labels_topic: /perception/right/label_info
+          max_obstacle_distance: 5.0
+          min_obstacle_distance: 0.3
+          tile_map_decay_time: 1.5
+          observation_persistence: 0.0
+          expected_update_rate: 0.0
+          visualize_tile_map: false
+          use_cost_selection: false
+          class_types: ["danger"]
+          danger:
+            classes: ["lane_white", "barrel_orange", "pothole"]
+            base_cost: 254
             max_cost: 254
             mark_confidence: 0
             samples_to_max_cost: 1
