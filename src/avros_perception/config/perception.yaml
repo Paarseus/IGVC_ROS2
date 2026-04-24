@@ -1,9 +1,10 @@
 # avros_perception/perception_node parameters.
 #
 # camera_name drives the default ZED input topics and the output namespace:
-#   subscribes: /zed_{cam}/zed_node/rgb/image_rect_color
+#   subscribes: /zed_{cam}/zed_node/rgb/color/rect/image
 #               /zed_{cam}/zed_node/point_cloud/cloud_registered
 #   publishes:  /perception/{cam}/semantic_mask
+#               /perception/{cam}/semantic_confidence
 #               /perception/{cam}/semantic_points
 #               /perception/{cam}/label_info
 #
@@ -15,7 +16,7 @@ perception_node:
     rgb_topic: ''
     cloud_topic: ''
 
-    # Pipeline selector: 'stub' today; 'hsv' and 'onnx' land in later phases.
+    # Pipeline selector: 'stub' | 'hsv' | 'onnx' (onnx lands in Phase 6).
     pipeline: 'stub'
 
     # message_filters ApproximateTimeSynchronizer
@@ -25,9 +26,40 @@ perception_node:
     # Leave blank to fall back to avros_perception/share/config/class_map.yaml
     class_map_path: ''
 
-    # Stub-pipeline runtime knobs.
+    # -------- Stub-pipeline runtime knobs --------
     # Set inject_stripe_width > 0 to paint a vertical band of class_id into the mask.
     # Verify: ros2 param set /perception_node inject_stripe_width 100
     inject_stripe_width: 0
     inject_stripe_start: -1     # -1 = auto-center
     inject_class_id: 1          # must exist in class_map.yaml
+
+    # -------- HSV-pipeline parameters --------
+    # Field-calibrate these per-camera on grass at the actual course.
+    # HSV is in OpenCV convention: H in [0, 179], S and V in [0, 255].
+    blur_iters: 3               # 3x 5x5 box-blur preprocessing (Sooner 2023)
+    adaptive_period: 5          # V-floor refresh every N frames (iscumd)
+    adaptive_k: 3.0             # V-floor = mean + k*std; k=3 keeps ~top 3%
+
+    # White lane paint: low saturation, high value, hue irrelevant
+    lane_low:    [0,   0, 180]
+    lane_high:   [179, 60, 255]
+    class_id_lane: 1
+
+    # Orange safety barrels: narrow H band around 15 deg, saturated+bright
+    barrel_low:  [5, 120, 100]
+    barrel_high: [25, 255, 255]
+    class_id_barrel: 2
+
+    # Pothole marker: white paint ring (similar to lane but stricter V)
+    pothole_low:  [0,   0, 200]
+    pothole_high: [179, 40, 255]
+    class_id_pothole: 3
+
+    # ROI polygon — pixels inside the polygon are zeroed (class=free).
+    # Normalized 0..1 coordinates so the polygon is resolution-independent.
+    # Default: top 35% of the frame (sky + distant trees).
+    sky_roi_poly:
+      - [0.0, 0.0]
+      - [1.0, 0.0]
+      - [1.0, 0.35]
+      - [0.0, 0.35]

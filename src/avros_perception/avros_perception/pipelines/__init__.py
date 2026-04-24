@@ -1,10 +1,19 @@
 from avros_perception.pipelines.base import Pipeline, PipelineResult
+from avros_perception.pipelines.hsv import HSVPipeline
 from avros_perception.pipelines.stub import StubPipeline
 
-__all__ = ['Pipeline', 'PipelineResult', 'StubPipeline', 'PIPELINES', 'build_pipeline']
+__all__ = [
+    'Pipeline',
+    'PipelineResult',
+    'StubPipeline',
+    'HSVPipeline',
+    'PIPELINES',
+    'build_pipeline',
+]
 
 PIPELINES = {
     'stub': StubPipeline,
+    'hsv': HSVPipeline,
 }
 
 

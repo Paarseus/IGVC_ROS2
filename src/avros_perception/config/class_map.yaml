@@ -11,6 +11,8 @@
 # kiwicampus to cost. Names not listed there are silently ignored.
 
 classes:
-  - {id: 0,   name: free,     rgb: [  0, 255,   0]}
-  - {id: 1,   name: obstacle, rgb: [255,   0,   0]}   # stub-only; Phase 4 splits into lane_white/barrel/etc.
-  - {id: 255, name: unknown,  rgb: [128, 128, 128]}
+  - {id: 0,   name: free,          rgb: [  0, 255,   0]}
+  - {id: 1,   name: lane_white,    rgb: [255, 255, 255]}
+  - {id: 2,   name: barrel_orange, rgb: [255, 128,   0]}
+  - {id: 3,   name: pothole,       rgb: [128,   0, 128]}
+  - {id: 255, name: unknown,       rgb: [128, 128, 128]}
