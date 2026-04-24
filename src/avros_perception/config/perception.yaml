@@ -1,0 +1,33 @@
+# avros_perception/perception_node parameters.
+#
+# camera_name drives the default ZED input topics and the output namespace:
+#   subscribes: /zed_{cam}/zed_node/rgb/image_rect_color
+#               /zed_{cam}/zed_node/point_cloud/cloud_registered
+#   publishes:  /perception/{cam}/semantic_mask
+#               /perception/{cam}/semantic_points
+#               /perception/{cam}/label_info
+#
+# rgb_topic / cloud_topic override those defaults when non-empty.
+
+perception_node:
+  ros__parameters:
+    camera_name: 'front'
+    rgb_topic: ''
+    cloud_topic: ''
+
+    # Pipeline selector: 'stub' today; 'hsv' and 'onnx' land in later phases.
+    pipeline: 'stub'
+
+    # message_filters ApproximateTimeSynchronizer
+    sync_slop: 0.02        # seconds; ZED sensors_image_sync:=true keeps pairs tight
+    sync_queue: 10
+
+    # Leave blank to fall back to avros_perception/share/config/class_map.yaml
+    class_map_path: ''
+
+    # Stub-pipeline runtime knobs.
+    # Set inject_stripe_width > 0 to paint a vertical band of class_id into the mask.
+    # Verify: ros2 param set /perception_node inject_stripe_width 100
+    inject_stripe_width: 0
+    inject_stripe_start: -1     # -1 = auto-center
+    inject_class_id: 1          # must exist in class_map.yaml

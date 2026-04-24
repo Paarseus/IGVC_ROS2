@@ -50,6 +50,11 @@ def generate_launch_description():
             description='Enable RealSense D455 camera'
         ),
 
+        DeclareLaunchArgument(
+            'enable_zed_front', default_value='false',
+            description='Enable front ZED X camera'
+        ),
+
         # Include sensors launch
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
@@ -60,6 +65,7 @@ def generate_launch_description():
                 'enable_ntrip': LaunchConfiguration('enable_ntrip'),
                 'enable_velodyne': LaunchConfiguration('enable_velodyne'),
                 'enable_realsense': LaunchConfiguration('enable_realsense'),
+                'enable_zed_front': LaunchConfiguration('enable_zed_front'),
             }.items(),
         ),
 

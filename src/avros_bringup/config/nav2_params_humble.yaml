@@ -138,7 +138,7 @@ local_costmap:
       height: 50
       resolution: 0.2
       robot_radius: 0.8
-      plugins: ["voxel_layer", "inflation_layer"]
+      plugins: ["voxel_layer", "semantic_front", "inflation_layer"]
 
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
@@ -173,6 +173,36 @@ local_costmap:
           data_type: "PointCloud2"
           raytrace_max_range: 5.0
           raytrace_min_range: 0.3
+
+      # kiwicampus/semantic_segmentation_layer — consumes the avros_perception 3-topic contract
+      # from the front ZED X. Additive to voxel_layer; it writes cost from camera-classified
+      # pixels (lane paint, barrels, etc) that LiDAR cannot see.
+      semantic_front:
+        plugin: "semantic_segmentation_layer::SemanticSegmentationLayer"
+        enabled: true
+        # observation_sources is a SPACE-SEPARATED string (same as VoxelLayer),
+        # NOT a YAML list. For Phase 5 multi-cam use e.g. "front left right".
+        observation_sources: front
+        front:
+          segmentation_topic: /perception/front/semantic_mask
+          pointcloud_topic: /perception/front/semantic_points
+          confidence_topic: /perception/front/semantic_confidence
+          labels_topic: /perception/front/label_info
+          max_obstacle_distance: 100.0    # widened for bench-test; tune for real use
+          min_obstacle_distance: 0.0
+          tile_map_decay_time: 5.0        # longer decay so the probe can catch it
+          observation_persistence: 0.0
+          expected_update_rate: 0.0
+          visualize_tile_map: true        # publishes /local_costmap/<layer>/tile_map for debug
+          use_cost_selection: false
+          class_types: ["danger"]
+          danger:
+            classes: ["obstacle"]
+            base_cost: 254
+            max_cost: 254
+            mark_confidence: 0
+            samples_to_max_cost: 1
+            dominant_priority: true
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"

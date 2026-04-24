@@ -21,6 +21,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -103,6 +104,16 @@ def generate_launch_description():
             description='Enable RealSense D455 camera'
         ),
 
+        DeclareLaunchArgument(
+            'enable_zed_front', default_value='false',
+            description='Enable front ZED X camera'
+        ),
+
+        DeclareLaunchArgument(
+            'enable_perception', default_value='false',
+            description='Enable avros_perception (requires enable_zed_front:=true)'
+        ),
+
         # Localization (sensors + EKF + navsat)
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
@@ -113,7 +124,21 @@ def generate_launch_description():
                 'enable_ntrip': LaunchConfiguration('enable_ntrip'),
                 'enable_velodyne': LaunchConfiguration('enable_velodyne'),
                 'enable_realsense': LaunchConfiguration('enable_realsense'),
+                'enable_zed_front': LaunchConfiguration('enable_zed_front'),
             }.items(),
+        ),
+
+        # avros_perception — semantic segmentation feed for Nav2 (kiwicampus layer)
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource([
+                get_package_share_directory('avros_perception'),
+                '/launch/perception.launch.py',
+            ]),
+            launch_arguments={
+                'use_sim_time': use_sim_time,
+                'camera_name': 'front',
+            }.items(),
+            condition=IfCondition(LaunchConfiguration('enable_perception')),
         ),
 
         # Actuator bridge

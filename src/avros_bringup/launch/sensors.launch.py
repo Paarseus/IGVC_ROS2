@@ -12,8 +12,13 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, SetEnvironmentVariable
+from launch.actions import (
+    DeclareLaunchArgument,
+    IncludeLaunchDescription,
+    SetEnvironmentVariable,
+)
 from launch.conditions import IfCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -25,6 +30,7 @@ def generate_launch_description():
     cyclonedds_file = os.path.join(pkg_dir, 'config', 'cyclonedds.xml')
     velodyne_config = os.path.join(pkg_dir, 'config', 'velodyne.yaml')
     realsense_config = os.path.join(pkg_dir, 'config', 'realsense.yaml')
+    zed_front_config = os.path.join(pkg_dir, 'config', 'zed_front.yaml')
     xsens_config = os.path.join(pkg_dir, 'config', 'xsens.yaml')
     ntrip_config = os.path.join(pkg_dir, 'config', 'ntrip_params.yaml')
 
@@ -57,6 +63,11 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'enable_realsense', default_value='true',
             description='Enable RealSense D455 camera'
+        ),
+
+        DeclareLaunchArgument(
+            'enable_zed_front', default_value='false',
+            description='Enable front ZED X camera (requires ZED SDK + ZED Link Quad)'
         ),
 
         # robot_state_publisher: URDF -> static TF
@@ -100,6 +111,31 @@ def generate_launch_description():
             parameters=[realsense_config],
             output='screen',
             condition=IfCondition(LaunchConfiguration('enable_realsense')),
+        ),
+
+        # ZED X Front (GMSL via ZED Link Quad). Launched via the wrapper's own
+        # launch file — zed_wrapper is a metapackage; the camera is a composable
+        # component (stereolabs::ZedCamera) loaded by zed_camera.launch.py.
+        #
+        # Canonical args per zed-ros2-examples: pass only camera_model +
+        # camera_name; wrapper sets namespace=camera_name, node_name=zed_node,
+        # and our URDF provides the frame chain via zed_macro.urdf.xacro.
+        # Passing `namespace` + `node_name` explicitly triggers a collision
+        # (wrapper overwrites node_name with camera_name → /zed_front/zed_front/...).
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource([
+                get_package_share_directory('zed_wrapper'),
+                '/launch/zed_camera.launch.py',
+            ]),
+            launch_arguments={
+                'camera_model': 'zedx',
+                'camera_name': 'zed_front',
+                'serial_number': '49910017',
+                'publish_tf': 'false',           # robot_localization owns odom→base_link
+                'publish_urdf': 'false',         # our URDF already includes zed_macro
+                'ros_params_override_path': zed_front_config,
+            }.items(),
+            condition=IfCondition(LaunchConfiguration('enable_zed_front')),
         ),
 
         # Xsens MTi-680G IMU/GNSS

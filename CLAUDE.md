@@ -97,8 +97,9 @@ AVROS/
 | `avros_control` | ament_python | `actuator_node`: cmd_vel / ActuatorCommand → diff-drive inverse + IMU heading-hold + slew-rate → Teensy serial → SparkMAX velocity PID |
 | `avros_webui` | ament_python | `webui_node`: phone joystick WebSocket → ActuatorCommand (direct control) |
 | `avros_navigation` | ament_python | `generate_graph.py`: offline OSMnx → nav2_route GeoJSON graph tool |
+| `avros_perception` | ament_python | `perception_node`: ZED X RGB/cloud → swappable Pipeline (stub/HSV/ONNX) → mono8 mask + organized cloud + LabelInfo for `kiwicampus/semantic_segmentation_layer` |
 
-No `avros_sensors` — upstream drivers used directly. Source dependencies are managed via `avros.repos` (vcstool manifest) and git-ignored. `vcs import src < avros.repos` clones `realsense-ros` (4.56.4) to `src/realsense-ros/` and the Xsens monorepo to `src/xsens_mti/` (contains both `xsens_mti_ros2_driver` and `ntrip` packages). Velodyne uses `ros-humble-velodyne` (apt).
+No `avros_sensors` — upstream drivers used directly. Source dependencies are managed via `avros.repos` (vcstool manifest) and git-ignored. `vcs import src < avros.repos` clones `realsense-ros` (4.56.4), the Xsens monorepo (`xsens_mti_ros2_driver` + `ntrip`), `zed-ros2-wrapper`, and `semantic_segmentation_layer` (kiwicampus, humble branch — requires patch, see `scripts/apply_kiwicampus_patches.sh`). Velodyne uses `ros-humble-velodyne` (apt).
 
 ---
 
@@ -165,6 +166,27 @@ No `avros_sensors` — upstream drivers used directly. Source dependencies are m
 - **Setup:** Included in `avros.repos` — `vcs import src < avros.repos` clones the full Xsens monorepo to `src/xsens_mti/`, which contains both `xsens_mti_ros2_driver` and `ntrip` packages. Then `colcon build` discovers both automatically.
 - **Not tracked in git** — `src/xsens_mti/` is in `.gitignore`, built from source like `src/realsense-ros/`
 
+### ZED X Front Camera (GMSL2)
+
+- **Package:** `zed_wrapper` (metapackage from `stereolabs/zed-ros2-wrapper`, pinned to `v5.2.2` in `avros.repos`). **The camera is a composable component (`stereolabs::ZedCamera`), not a standalone executable** — launched via `IncludeLaunchDescription` of the wrapper's own `zed_camera.launch.py`, not a raw `Node()`.
+- **Hardware:** ZED X, serial `49910017`, mounted front-center, connected via ZED Link Quad capture card on Jetson Orin. Confirmed live 2026-04-24 on Jetson (SDK 5.2.0, JetPack 6 L4T R36).
+- **Config:** `avros_bringup/config/zed_front.yaml` — override layered on wrapper's `common_stereo.yaml` + `zedx.yaml` via `ros_params_override_path`. Uses `/**:` wildcard as top-level key. Launch args set `camera_name`, `camera_model`, `serial_number`, `publish_tf`.
+- **Resolution/rate:** `HD1080 @ 15 fps` grab, `NEURAL_LIGHT` depth, point cloud at 15 Hz (match image for ApproximateTime sync). Published image is 540×960 (pub_downscale_factor 2.0); published cloud is 256×448 (`point_cloud_res: COMPACT`) — **see avros_perception note below**.
+- **Namespace / node name:** `/zed_front/zed_node/...` — **pass ONLY `camera_name` to the launch include** (not `namespace`/`node_name`), or the wrapper silently collapses the tree to `/zed_front/zed_front/...`.
+- **Key topics (verified 2026-04-24):**
+  - `/zed_front/zed_node/rgb/color/rect/image` (sensor_msgs/Image, rectified color; **note v5.x path**, not `rgb/image_rect_color`)
+  - `/zed_front/zed_node/point_cloud/cloud_registered` (organized PointCloud2, `height > 1`)
+  - `/zed_front/zed_node/rgb/color/rect/camera_info`
+- **TF:** `base_link → zed_front_camera_link → zed_front_camera_center / _left_camera_frame(_optical) / _right_camera_frame(_optical) / _imu_link` — full frame chain provided by `<xacro:zed_camera>` macro in the URDF. Mount joint is `base_link → zed_front_camera_link` (TODO measure real offset).
+- **Launch:** off by default — `ros2 launch avros_bringup sensors.launch.py enable_zed_front:=true`.
+- **Required on Jetson:** ZED SDK installed at `/usr/local/zed`; wrapper rebuilt against the installed SDK (major.minor must match the `v5.2.2` pin). After any SDK upgrade, `colcon build --packages-select zed_wrapper zed_components`.
+- **Verification:** `ZED_Explorer` should see serial 49910017 before launching the ROS node.
+
+### Left / Right / Back ZED X (future)
+
+- `zed_left.yaml` (serial 43779087) and `zed_right.yaml` (new unit — replacing faulted 47753729, serial TBD) are not yet wired into launch; Phase 5 work.
+- `zed_back_camera_center` URDF frame is preserved but gated behind `enable_zed_back:=true` xacro arg (default false). Serial 49910017 was repurposed to front.
+
 ---
 
 ## TF Tree
@@ -175,9 +197,16 @@ map                                    ← navsat_transform_node
       └── base_link                    ← robot_state_publisher (URDF)
            ├── imu_link                ← static (URDF) — TODO: measure mount position
            ├── velodyne                ← static (URDF) — TODO: measure mount position
-           ├── camera_link             ← static (URDF) — TODO: measure mount position
+           ├── camera_link             ← static (URDF, RealSense) — TODO: measure mount
            │    ├── camera_color_optical_frame  ← realsense driver
            │    └── camera_depth_optical_frame  ← realsense driver
+           ├── zed_front_camera_link   ← static (URDF, via zed_macro.urdf.xacro) — TODO: measure mount
+           │    ├── zed_front_camera_center
+           │    ├── zed_front_left_camera_frame
+           │    │    └── zed_front_left_camera_frame_optical   ← cloud/image frame_id
+           │    ├── zed_front_right_camera_frame
+           │    │    └── zed_front_right_camera_frame_optical
+           │    └── zed_front_imu_link
            └── base_footprint          ← static (URDF)
 ```
 
@@ -335,12 +364,13 @@ Phone-based joystick controller for bench testing. FastAPI + WebSocket + nipplej
 
 | Launch File | What it starts |
 |-------------|---------------|
-| `sensors.launch.py` | robot_state_publisher + velodyne driver/convert + realsense + xsens + ntrip (conditional) |
+| `sensors.launch.py` | robot_state_publisher + velodyne driver/convert + realsense + **zed_front (conditional)** + xsens + ntrip |
 | `actuator.launch.py` | actuator_node only |
 | `teleop.launch.py` | actuator_node + teleop_twist_keyboard |
 | `webui.launch.py` | actuator_node + webui_node |
 | `localization.launch.py` | EKF + navsat_transform |
-| `navigation.launch.py` | Full stack: sensors + localization + Nav2 + route_server |
+| `navigation.launch.py` | Full stack: sensors + localization + Nav2 + route_server + **perception (conditional)** |
+| `perception.launch.py` (avros_perception) | `perception_node` for one ZED camera (camera_name:=front default) |
 
 ---
 
@@ -360,6 +390,10 @@ Phone-based joystick controller for bench testing. FastAPI + WebSocket + nipplej
 | `cpp_campus_graph.geojson` | Pre-built CPP campus road graph for nav2_route (map-frame coords) |
 | `cyclonedds.xml` | CycloneDDS config — shared memory disabled, socket buffer 10MB |
 | `ntrip_params.yaml` | ntrip_client — NTRIP caster host, port, mountpoint, credentials |
+| `zed_front.yaml` | zed_wrapper (front) — camera_model zedx, serial 49910017, HD720@15fps, organized pointcloud |
+| `zed_left.yaml`, `zed_right.yaml`, `zed_back.yaml` | unused in Phase 3; retained for Phase 5 multi-camera bring-up |
+| `avros_perception/config/perception.yaml` | `perception_node` — camera_name, pipeline selector (stub/hsv/onnx), sync slop, stub stripe params |
+| `avros_perception/config/class_map.yaml` | single source of truth for class ID ↔ name ↔ RGB; consumed by node + `vision_msgs/LabelInfo` publisher |
 
 ---
 
@@ -438,6 +472,15 @@ CycloneDDS (`cyclonedds.xml`):
 | kP writes "succeed" but have no effect (FW 26.1.4) | PARAMETER_WRITE was cls=48 idx=0 in FW 24.x — in FW 25+ this frame doesn't exist. Correct frame per REV-Specs 2.1.0: **cls=14 idx=0**, DLC=5, `[param_id, float32 LE]`. Verify by writing a sentinel value and reading back in Hardware Client. |
 | Velocity setpoint has no effect (FW 26.1.4) | VELOCITY_SETPOINT was cls=1 idx=2 (legacy `CmdApiSpdSet`) — REV-Specs authoritative for FW 25+ is **cls=0 idx=0**. Firmware uses the new path. |
 | STATUS_2 never arrives | Disabled by default on FW 25+. Send SET_STATUSES_ENABLED (cls=1 idx=0, mask=0x0004, enable=0x0004, DLC=8) once per device — firmware keepalives this every 1 s to survive SparkMAX power cycles. |
+| kiwicampus/semantic_segmentation_layer fails to build on Humble | `humble` branch depends on modern Nav2 imported CMake targets that don't exist on Humble, and is missing `#include <deque>`. Apply [PR #1](https://github.com/kiwicampus/semantic_segmentation_layer/pull/1) via `scripts/apply_kiwicampus_patches.sh` after `vcs import`. When upstream merges the PR, delete the patch script + `src/avros_bringup/patches/kiwicampus_pr1.patch` and advance the `avros.repos` pin to the merged commit. |
+| kiwicampus layer silently ignores frames | Usually a topic-contract mismatch. Mask and pointcloud MUST share `header.stamp` (avros_perception uses the image stamp on both); pointcloud MUST be organized (`height > 1`); `vision_msgs/LabelInfo` MUST be published with `transient_local` + `reliable` QoS so late-joining plugin gets the latched message. Also the mask HxW MUST equal the cloud HxW — they diverge by default (cloud uses `point_cloud_res: COMPACT` independent of image downscale), so `perception_node` resizes the image to the cloud shape before running the pipeline. |
+| kiwicampus error: "no class types defined for source X" | `class_types: [...]` + per-type blocks must live **inside** the per-source block (`semantic_front.front.class_types`), not at the plugin top level. README formatting is ambiguous; the plugin source declares them under `layer_name.source.class_types` only. |
+| ZED wrapper launches a "libexec directory not found" error | `zed_wrapper` is a metapackage — the camera is a composable component (`stereolabs::ZedCamera`) in `zed_components`, loaded by `zed_wrapper/launch/zed_camera.launch.py`. Use `IncludeLaunchDescription` of that file, not a raw `Node(package='zed_wrapper', executable='zed_wrapper')`. |
+| ZED topics show up at `/zed_front/zed_front/...` instead of `/zed_front/zed_node/...` | Passing both `namespace` and `node_name` to `zed_camera.launch.py` silently overwrites `node_name` with `camera_name` (`zed_camera.launch.py:242-245`). Fix: pass only `camera_name` + `camera_model` + `serial_number`; let the wrapper default `namespace = camera_name`, `node_name = 'zed_node'`. |
+| ZED image/cloud `frame_id` is unknown in TF tree | `zed-ros2-wrapper` publishes in frames created by `zed_wrapper/urdf/zed_macro.urdf.xacro` (`<cam>_camera_link`, `_left_camera_frame_optical`, etc.). A hand-rolled `zed_front_camera_center` link leaves those unresolved. Fix: in your URDF, `<xacro:include filename="$(find zed_wrapper)/urdf/zed_macro.urdf.xacro"/>` + `<xacro:zed_camera name="zed_front" model="zedx">` + a `base_link → zed_front_camera_link` joint. |
+| ZED `InvalidParameterValueException` during init | v5.2 deprecated the old depth-mode and ZED-X resolution enums. `depth_mode` must be `NONE | NEURAL_LIGHT | NEURAL | NEURAL_PLUS` (no more `PERFORMANCE/QUALITY/ULTRA`); `grab_resolution` for ZED X must be `HD1200 | HD1080 | SVGA | AUTO` (no `HD720`). Verify the wrapper's own `config/zedx.yaml` for the authoritative enum. |
+| ZED v5 topic names differ from v4 | v5 uses `/rgb/color/rect/image` and `/rgb/color/rect/camera_info`. Older examples / tutorials may reference `/rgb/image_rect_color` which was v4. Downstream subscribers (perception_node) default to the v5 path. |
+| ZED `serial_number` in YAML appears ignored | It's a **launch arg**, not a YAML param — the wrapper's launch overrides any YAML value. Pass `'serial_number': '<N>'` inside the `launch_arguments` dict on the `IncludeLaunchDescription`; don't put it in the override YAML. |
 
 ---
 
@@ -570,8 +613,25 @@ ros2 launch realsense2_camera rs_launch.py \
 - [ ] Commit SSL cert paths for Jetson (currently only set locally)
 - [ ] Run `vcs import src < avros.repos` on Jetson to standardize source deps (replaces old `src/xsens_ros_mti_driver/` with `src/xsens_mti/`)
 
+### Perception / semantic segmentation (Phases 0–3 done in code, pending Jetson verification)
+- [x] Pin `zed-ros2-wrapper` to `v5.2.2` in `avros.repos` (verify matches installed ZED SDK on Jetson — bump tag if needed)
+- [x] `zed_front.yaml` config + URDF `zed_front_camera_center` frame
+- [x] `enable_zed_front` launch arg plumbed through sensors/localization/navigation launches (default false)
+- [x] `avros_perception` package with swappable Pipeline interface + `StubPipeline` (zero mask + runtime-tunable stripe injection)
+- [x] `kiwicampus/semantic_segmentation_layer` added to `avros.repos` (humble branch) + PR #1 carry patch + `scripts/apply_kiwicampus_patches.sh`
+- [x] `semantic_front` plugin block added to `nav2_params.yaml` + `nav2_params_humble.yaml`
+- [x] `enable_perception` launch arg in `navigation.launch.py` including `perception.launch.py`
+- [x] **Jetson verification:** ZED SDK 5.2.0 confirmed; wrapper rebuilt; Phase 1 exit criteria all green (`/zed_front/zed_node/rgb/color/rect/image` + `point_cloud/cloud_registered` @ 15 Hz, organized 256×448, TF chain via `zed_macro.urdf.xacro`)
+- [x] **Jetson verification:** Phase 2 stub end-to-end — `inject_stripe_width 200` produced 51,200 non-zero mask pixels (exactly `200 cols × 256 rows`)
+- [x] **Jetson verification:** Phase 3 — stripe injection produces 2,400+ `max_cost=100` cells in `/local_costmap/costmap`; baseline 0
+- [ ] Re-tighten `max_obstacle_distance` (currently 100m for bench-test) back to ~5–8m before field tests
+- [ ] Measure + commit real `zed_front` mount offset in URDF (currently placeholder `1.0 0 0.9`)
+- [ ] Phase 4: replace `StubPipeline` with `HSVPipeline` (white lanes + orange barrels)
+- [ ] Phase 5: scale to 3 cameras (front + left + right); decide whether to drop RealSense from VoxelLayer
+
 ### Reference docs
 - `docs/CHANGELOG_2026-04-23.md` — full session log of the diff-drive commissioning
+- `docs/CHANGELOG_2026-04-24.md` — semantic segmentation layer (Phases 0–3): avros_perception scaffold + kiwicampus wiring + ZED X front
 - `firmware/teensy_diff_drive/CLAUDE.md` — firmware architecture + CAN protocol details
 - `firmware/teensy_diff_drive/BRING_UP.md` — bench-test procedure
 - `firmware/teensy_diff_drive/FINDINGS.md` — empirical results (voltages, gains, RPMs)

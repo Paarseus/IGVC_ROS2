@@ -5,6 +5,9 @@
   <xacro:property name="wheelbase" value="1.23"/>
   <xacro:property name="track_width" value="0.9"/>
 
+  <!-- Optional frames. Pass via xacro args, e.g. xacro avros.urdf.xacro enable_zed_back:=true -->
+  <xacro:arg name="enable_zed_back" default="false"/>
+
   <!-- ============================================================ -->
   <!-- base_link: center of rear axle at ground level               -->
   <!-- ============================================================ -->
@@ -104,6 +107,25 @@
   </joint>
 
   <!-- ============================================================ -->
+  <!-- Camera: ZED X Front (GMSL) — via stock Stereolabs macro      -->
+  <!-- Creates the full frame chain (camera_link, left_camera_frame,-->
+  <!-- right_camera_frame, camera_center, imu_link) that the ZED    -->
+  <!-- wrapper publishes image/cloud frame_ids against. We attach   -->
+  <!-- the camera_link root to base_link via a separate joint.      -->
+  <!-- TODO: Measure exact mount position on real vehicle           -->
+  <!-- ============================================================ -->
+  <xacro:include filename="$(find zed_wrapper)/urdf/zed_macro.urdf.xacro"/>
+  <xacro:zed_camera name="zed_front" model="zedx">
+    <origin xyz="0 0 0" rpy="0 0 0"/>    <!-- gnss_origin block, unused (enable_gnss=false) -->
+  </xacro:zed_camera>
+  <joint name="zed_front_mount_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="zed_front_camera_link"/>
+    <!-- TODO: Measure on vehicle. Approximate: front center, roof height, facing +X -->
+    <origin xyz="1.0 0.0 0.9" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ============================================================ -->
   <!-- Camera: ZED X Left (GMSL)                                    -->
   <!-- TODO: Measure exact mount position on real vehicle           -->
   <!-- ============================================================ -->
@@ -142,22 +164,25 @@
   </joint>
 
   <!-- ============================================================ -->
-  <!-- Camera: ZED X Back (GMSL)                                    -->
-  <!-- TODO: Measure exact mount position on real vehicle           -->
+  <!-- Camera: ZED X Back (GMSL) — optional, off by default         -->
+  <!-- Serial 49910017 repurposed to zed_front; frame retained for  -->
+  <!-- documentation. Enable via: xacro ... enable_zed_back:=true   -->
   <!-- ============================================================ -->
-  <link name="zed_back_camera_center">
-    <visual>
-      <geometry>
-        <box size="0.04 0.17 0.03"/>
-      </geometry>
-      <material name="dark_grey"/>
-    </visual>
-  </link>
-  <joint name="zed_back_joint" type="fixed">
-    <parent link="base_link"/>
-    <child link="zed_back_camera_center"/>
-    <!-- TODO: Measure on vehicle. Approximate: rear center, facing back -->
-    <origin xyz="-0.75 0.0 0.6" rpy="0 0 3.14159"/>
-  </joint>
+  <xacro:if value="$(arg enable_zed_back)">
+    <link name="zed_back_camera_center">
+      <visual>
+        <geometry>
+          <box size="0.04 0.17 0.03"/>
+        </geometry>
+        <material name="dark_grey"/>
+      </visual>
+    </link>
+    <joint name="zed_back_joint" type="fixed">
+      <parent link="base_link"/>
+      <child link="zed_back_camera_center"/>
+      <!-- TODO: Measure on vehicle. Approximate: rear center, facing back -->
+      <origin xyz="-0.75 0.0 0.6" rpy="0 0 3.14159"/>
+    </joint>
+  </xacro:if>
 
 </robot>

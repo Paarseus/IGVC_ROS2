@@ -8,3 +8,4 @@ __pycache__/
 src/realsense-ros/
 src/xsens_mti/
 src/zed-ros2-wrapper/
+src/semantic_segmentation_layer/
