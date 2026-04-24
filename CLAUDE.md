@@ -554,7 +554,7 @@ ros2 launch realsense2_camera rs_launch.py \
 ### Actuator / drivetrain (new, 2026-04-23)
 - [x] Rewrite actuator_node for diff-drive (Raptor track chassis, was Ackermann bicycle)
 - [x] Write Teensy firmware for SparkMAX FW 26.1.4 (REV-Specs 2.1.0 CAN frames)
-- [x] Phase 1-6 bench bring-up (stiction, duty-vs-RPM, stability, PID tune) — see `firmware/teensy_diff_drive/data/FINDINGS.md`
+- [x] Phase 1-6 bench bring-up (stiction, duty-vs-RPM, stability, PID tune) — see `firmware/teensy_diff_drive/FINDINGS.md`
 - [x] Verify cls=14 PARAMETER_WRITE landed via sentinel kP=0.00042069 readback in Hardware Client
 - [x] IMU heading-hold + gyro-stabilized turns in actuator_node
 - [x] Slew-rate limiter in actuator_node (protects 12V rail + passengers)
@@ -574,4 +574,4 @@ ros2 launch realsense2_camera rs_launch.py \
 - `docs/CHANGELOG_2026-04-23.md` — full session log of the diff-drive commissioning
 - `firmware/teensy_diff_drive/CLAUDE.md` — firmware architecture + CAN protocol details
 - `firmware/teensy_diff_drive/BRING_UP.md` — bench-test procedure
-- `firmware/teensy_diff_drive/data/FINDINGS.md` — empirical results (voltages, gains, RPMs)
+- `firmware/teensy_diff_drive/FINDINGS.md` — empirical results (voltages, gains, RPMs)

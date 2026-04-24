@@ -4,6 +4,19 @@ Thin USB-Serial ↔ CAN bridge for the IGVC differential drive. The Jetson's ROS
 
 Derived from `Paarseus/AVL-IGVC2026/firmware/teensy_sparkmax_arduino/teensy_sparkmax_fw26_synced/` with several fixes and simplifications (see "Delta from upstream" below). This folder is local staging — the canonical upstream is the IGVC firmware repo. Nothing here is wired into the ROS2 build; it's flashed independently.
 
+## Tuned PID gains (burned to SparkMAX flash on both controllers, 2026-04-23)
+
+| Gain | Value | Rationale |
+|---|---|---|
+| **kFF** | **0.000197** | ≈ 1 / Phase-4 slower-wheel max RPM (5072) — feedforward won't saturate |
+| **kP**  | **0.0004**   | Highest stable P before oscillation at kP=0.0008 |
+| **kI**  | **9e-07**    | Smallest kI that eliminates steady-state error, no wind-up osc |
+| **kD**  | **0**        | Skipped — velocity PID on NEO usually doesn't need D |
+
+Verified via Phase 6c: 99% tracking at 500-3000 RPM, 0.24% trial-to-trial precision, 0.83% L/R sync delta.
+
+These are persisted in flash via PERSIST_PARAMETERS (cls=63 idx=15). The actuator_node yaml also pushes them on startup as redundant override.
+
 ## Hardware
 
 - Teensy 4.1 — CAN1 on pins CTX1=22, CRX1=23
@@ -80,7 +93,7 @@ Four parallel research agents cross-checked the protocol against REVLib-2024, RE
 **Real bug fixed from upstream `_synced.ino`**
 - **kFF parameter ID was 17 in `_synced.ino`. Correct value is 16.** Parameter 17 is `kIZone_0` (integrator dead zone), not feedforward. The upstream has been silently disabling the integrator on every `KF<val>` command instead of tuning feedforward for who knows how long. Fixed here in `teensy_diff_drive.ino` around line 66.
 
-**Verified (2026-04-23 bench session) — see `data/FINDINGS.md`**
+**Verified (2026-04-23 bench session) — see `FINDINGS.md`**
 - **Velocity setpoint**: upstream `cls=1 idx=2` legacy path is **dropped silently on FW 26.1.4**. REV-Specs 2.1.0 authoritative frame is **`cls=0 idx=0`** (firmware now uses this). When the legacy path was active, commanded RPM produced zero motion — confirming FW 25+ removed the legacy.
 - **Parameter SET layout**: **`cls=14 idx=0`, DLC=5, `[param_id@0, float32_LE@1:4]`** per REV-Specs 2.1.0. The old cls=48 / 8-byte-payload frame silently dropped on FW 26.1.4. Verified by writing sentinel kP=0.00042069 via firmware and reading back in Hardware Client on both controllers.
 - **BURN frame**: `cls=63 idx=15`, magic `0x3AA3` LE (bytes `A3 3A`). Phase 7 power-cycle readback pending.
@@ -103,7 +116,7 @@ CAN wire format is otherwise **byte-for-byte identical** to `_synced.ino` except
 
 ## TODOs
 
-- [x] Run phases 2-6 of `BRING_UP.md` — done 2026-04-23, see `data/FINDINGS.md`
+- [x] Run phases 2-6 of `BRING_UP.md` — done 2026-04-23, see `FINDINGS.md`
 - [x] Verify cls=14 PARAMETER_WRITE landed (sentinel readback via Hardware Client)
 - [x] Confirm cls=0 idx=0 velocity setpoint works on FW 26.1.4 (it does)
 - [x] Confirm kFF=16 is the correct feedforward parameter ID (it is)
