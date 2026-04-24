@@ -80,9 +80,10 @@ Four parallel research agents cross-checked the protocol against REVLib-2024, RE
 **Real bug fixed from upstream `_synced.ino`**
 - **kFF parameter ID was 17 in `_synced.ino`. Correct value is 16.** Parameter 17 is `kIZone_0` (integrator dead zone), not feedforward. The upstream has been silently disabling the integrator on every `KF<val>` command instead of tuning feedforward for who knows how long. Fixed here in `teensy_diff_drive.ino` around line 66.
 
-**Needs bench verification — see `BRING_UP.md`**
-- **Velocity setpoint CAN frame**: upstream `_synced.ino` uses `0x2050480` (cls=1 idx=2). REVLib-2026's `SPARK_VELOCITY_SETPOINT_FRAME_ID` is `0x2050000` (cls=0 idx=0). Upstream is "currently running" on FW 26.1.4 so firmware appears to accept the legacy path, but REVLib-2026 is the authoritative current format. Phase 4 of bring-up settles which actually works (or both).
-- **Parameter SET byte layout**: upstream uses `[value@0:3, id@4, ptype@5]`. One research source (REV's USB-side server tool, probably not authoritative for CAN) claims `[id@0, _, value@2:5, ptype@6]`. Phase 3 of bring-up resolves this via read-back.
+**Verified (2026-04-23 bench session) — see `data/FINDINGS.md`**
+- **Velocity setpoint**: upstream `cls=1 idx=2` legacy path is **dropped silently on FW 26.1.4**. REV-Specs 2.1.0 authoritative frame is **`cls=0 idx=0`** (firmware now uses this). When the legacy path was active, commanded RPM produced zero motion — confirming FW 25+ removed the legacy.
+- **Parameter SET layout**: **`cls=14 idx=0`, DLC=5, `[param_id@0, float32_LE@1:4]`** per REV-Specs 2.1.0. The old cls=48 / 8-byte-payload frame silently dropped on FW 26.1.4. Verified by writing sentinel kP=0.00042069 via firmware and reading back in Hardware Client on both controllers.
+- **BURN frame**: `cls=63 idx=15`, magic `0x3AA3` LE (bytes `A3 3A`). Phase 7 power-cycle readback pending.
 
 ## Delta from upstream `_synced.ino`
 
@@ -102,8 +103,13 @@ CAN wire format is otherwise **byte-for-byte identical** to `_synced.ino` except
 
 ## TODOs
 
-- [ ] Run all 7 phases of `BRING_UP.md` (bench verification)
-- [ ] Tune PID on the robot on the actual surface (grass / pavement)
+- [x] Run phases 2-6 of `BRING_UP.md` — done 2026-04-23, see `data/FINDINGS.md`
+- [x] Verify cls=14 PARAMETER_WRITE landed (sentinel readback via Hardware Client)
+- [x] Confirm cls=0 idx=0 velocity setpoint works on FW 26.1.4 (it does)
+- [x] Confirm kFF=16 is the correct feedforward parameter ID (it is)
+- [x] STATUS_2 enable frame is NOT redundant on FW 26.1.4 — disabled by default, must be enabled explicitly (firmware keepalives it every 1 s)
+- [ ] Phase 1 hand-spin resistance check (manual, user-facing)
+- [ ] Phase 7 BURN persistence across power cycle (needs manual 12V toggle)
 - [ ] Upstream the kFF=16 fix to `Paarseus/AVL-IGVC2026` as a PR against `_synced.ino`
-- [ ] If Phase 1 confirms STATUS_2 is on by default, drop `enableStatus2()` and the Secondary Heartbeat as dead code
-- [ ] Consider adding `GET <id>` command to the firmware for in-field parameter readback (currently only write path exists)
+- [ ] Consider adding a generic `GET <id>` command for in-field parameter readback (low priority — Hardware Client handles verification for now)
+- [ ] Decode STATUS_1 fault flags in DIAG (over-current, brownout, sensor fault) — nice-to-have diagnostic

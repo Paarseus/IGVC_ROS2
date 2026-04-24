@@ -75,11 +75,14 @@ AVROS/
 │   │   ├── config/               # ekf, navsat, nav2, actuator, velodyne, realsense, xsens, webui, cyclonedds
 │   │   ├── urdf/                 # avros.urdf.xacro
 │   │   └── rviz/                 # avros.rviz
-│   ├── avros_control/            # ament_python — actuator_node (cmd_vel → Teensy UDP)
+│   ├── avros_control/            # ament_python — actuator_node (cmd_vel → Teensy serial → SparkMAX over CAN)
 │   ├── avros_webui/              # ament_python — webui_node (phone joystick → ActuatorCommand)
 │   │   └── static/               # index.html, app.js (nipplejs joystick UI)
 │   └── avros_navigation/         # ament_python — generate_graph.py (offline OSMnx → GeoJSON)
-├── firmware/                     # Teensy CAN code (unchanged from AV2.1-API)
+├── firmware/
+│   ├── teensy_diff_drive/        # Teensy 4.1 USB-serial ↔ CAN bridge for SparkMAX FW 26.1.4
+│   │                             # + bench-test phase scripts (phase1-7), teensy_bridge.py helper
+│   └── teensy_diag/              # passive CAN sniffer sketch for protocol verification
 └── docs/
 ```
 
@@ -91,7 +94,7 @@ AVROS/
 |---------|-----------|---------|
 | `avros_msgs` | ament_cmake | ActuatorCommand.msg, ActuatorState.msg, PlanRoute.srv |
 | `avros_bringup` | ament_python | Launch files, URDF, all YAML configs, RViz config |
-| `avros_control` | ament_python | `actuator_node`: cmd_vel → PID → Ackermann inverse → Teensy UDP |
+| `avros_control` | ament_python | `actuator_node`: cmd_vel / ActuatorCommand → diff-drive inverse + IMU heading-hold + slew-rate → Teensy serial → SparkMAX velocity PID |
 | `avros_webui` | ament_python | `webui_node`: phone joystick WebSocket → ActuatorCommand (direct control) |
 | `avros_navigation` | ament_python | `generate_graph.py`: offline OSMnx → nav2_route GeoJSON graph tool |
 
@@ -106,7 +109,7 @@ No `avros_sensors` — upstream drivers used directly. Source dependencies are m
 | 192.168.13.10 | Jetson Orin | — | Compute platform, runs all ROS2 nodes |
 | 192.168.13.11 | Velodyne VLP-16 | 60:76:88:38:0F:20 | Reconfigured from factory 192.168.1.201 |
 | 192.168.13.31 | Gateway/router | — | Network gateway |
-| 192.168.13.177 | Teensy (PJRC) | 04:E9:E5:1C:70:4A | Actuator MCU, UDP port 5005 |
+| ~~192.168.13.177~~ | ~~Teensy (PJRC)~~ | — | **Deprecated.** Teensy now USB-serial to Jetson at `/dev/ttyACM0` (115200 baud), not UDP. See "Actuator Control" below. |
 
 ---
 
@@ -240,38 +243,61 @@ uint32 num_waypoints
 
 ## Actuator Control
 
-### UDP Protocol
-
-Teensy at `192.168.13.177:5005`. Watchdog: 500 ms. Keepalive at 200 ms.
+### Architecture (diff-drive track chassis — AndyMark Raptor)
 
 ```
-A E=0 T=0.500 M=D B=0.000 S=0.100    # all-in-one command
-→ {"e":0,"t":0.500,"m":"D","b":0.000,"s":0.100,"w":1}
+/cmd_vel (Twist)           ──┐
+/avros/actuator_command ─────┤ → actuator_node (Jetson)
+                             │   ├─ slew-rate limit (v, ω)
+                             │   ├─ IMU heading-hold (straight) + gyro-stabilized turns (turning)
+                             │   ├─ diff-drive inverse → L_mps, R_mps → motor RPM
+                             │   └─ pyserial to /dev/ttyACM0 @ 115200
+                             │       └─ Teensy 4.1 USB-serial ↔ CAN1
+                             │           ├─ Universal Heartbeat 0x01011840 @ 50 Hz
+                             │           ├─ VELOCITY_SETPOINT cls=0 idx=0 → SparkMAX velocity PID
+                             │           └─ STATUS_0/STATUS_2 decode → E line
+                             │               └─ SparkMAX FW 26.1.4 → NEO brushless → 12.75:1 ToughBox Mini
+                             │                   → 22T:22T #35 chain → 20T × 0.5" pulley → timing belt track
+                             └─ back: /wheel_odom (integrated from E-line positions) → EKF
 ```
 
-**Verified working** — Teensy UDP communication confirmed. Mode switching (N to D) works, e-stop works, watchdog active.
+### Serial Protocol (115200 baud, line-oriented)
 
-### Control Priority (actuator_node)
+Documented in `firmware/teensy_diff_drive/CLAUDE.md`. Summary:
 
-The actuator node has a 3-way priority system:
-1. **Fresh ActuatorCommand** (< timeout) → direct control, skip PID (used by webui)
-2. **Fresh cmd_vel** (< timeout) → PID speed control (used by Nav2/teleop)
-3. **Neither** → brake to stop
+| Host → Teensy | Effect |
+|---|---|
+| `L<rpm> R<rpm>` | velocity mode setpoint per wheel — SparkMAX onboard PID handles loop |
+| `UL<d> UR<d>` | duty-cycle mode setpoint (-0.3..0.3 clamped) |
+| `S` | stop — switches to MODE_DUTY=0 so SparkMAX Brake idle engages |
+| `D` | DIAG line with tx/rx counts, watchdog state, mode, L/R meas/cmd, bus voltage |
+| `K[PIDF]<val>` | write PID slot-0 gain to both SparkMAXes via PARAMETER_WRITE (cls=14 idx=0) |
+| `BURN` | PERSIST_PARAMETERS (cls=63 idx=15) — write RAM gains to SparkMAX flash |
 
-This enables seamless handoff: when webui stops publishing, timeout expires and Nav2's cmd_vel takes over automatically.
+### Control priority (actuator_node)
+
+Unified (v, ω) target computed from whichever input is freshest:
+1. Fresh `/avros/actuator_command` (< 500 ms) — webui path. `throttle/brake/steer` mapped to (v, ω).
+2. Fresh `/cmd_vel` (< 500 ms) — teleop / Nav2 path. `linear.x`, `angular.z` used directly.
+3. Neither → (0, 0) target.
+
+**Both paths go through the same slew-rate limiter + heading-hold**, so webui and Nav2 commands behave identically.
 
 ---
 
-## Vehicle Parameters
+## Diff-Drive Parameters
 
-- Wheelbase: 1.23 m
-- Track width: 0.9 m
-- Max steering: 28 deg (0.489 rad)
-- Min turning radius: 2.31 m
-- Steering sign: -1 (hardware convention)
-- PID: Kp=0.55, Ki=0.055, Kd=0.08
-- Max throttle: 0.6 (actuator_node), 0.55 (webui safety limit)
-- Robot radius: 0.8 m, inflation: 0.7 m
+- **Track gauge (centerline to centerline):** 0.7366 m (29 inches)
+- **Ground per motor revolution:** 0.01994 m (π × 80.85 mm drive-pulley pitch dia / 12.75:1 gearbox)
+- **Theoretical top speed:** 1.89 m/s at NEO free speed (5676 RPM)
+- **Measured Phase 4 max RPM extrapolated:** L = 5532 (97.5% free), R = 5072 (89.4% free) — right track has 8% higher friction
+- **SparkMAX PID gains (tuned in Phase 6):** kFF=0.000197, kP=0.0004, kI=0, kD=0
+- **Actuator-node slew caps:** max_linear_accel = 1.0 m/s², max_linear_decel = 1.5 m/s², max_angular_accel = 2.0 rad/s²
+- **Speed caps:** max_linear_mps = 1.5, max_angular_rps = 1.0
+- **WebUI max_throttle:** 1.0 (full cmd_vel range; clamped by max_linear_mps)
+- **Robot radius:** 0.8 m, inflation: 0.7 m
+- **Idle mode:** **Brake** (set via REV Hardware Client on both SparkMAXes — required for quick stops)
+- **Motor inversion:** one SparkMAX has `Motor Inverted = true` so `L+ R+` produces forward ground motion on both tracks
 
 ---
 
@@ -294,7 +320,7 @@ Phone-based joystick controller for bench testing. FastAPI + WebSocket + nipplej
 
 - **Launch:** `ros2 launch avros_bringup webui.launch.py`
 - **URL:** `https://<jetson-ip>:8000` (self-signed cert required for phone WebSocket)
-- **Control path:** phone joystick → WebSocket → webui_node → `/avros/actuator_command` → actuator_node → Teensy UDP
+- **Control path:** phone joystick → WebSocket → webui_node → `/avros/actuator_command` → actuator_node (diff-drive inverse + heading-hold + slew-rate) → Teensy serial → SparkMAX velocity PID
 - **Priority:** ActuatorCommand (direct) takes precedence over cmd_vel (PID). When webui stops publishing, timeout expires and Nav2's cmd_vel takes over.
 - **Safety:** WebSocket disconnect → e-stop published automatically
 - **Features:** proportional joystick (throttle/brake/steer), E-STOP button, drive mode buttons (N/D/S/R), live telemetry from ActuatorState
@@ -322,7 +348,7 @@ Phone-based joystick controller for bench testing. FastAPI + WebSocket + nipplej
 
 | Config | Used By |
 |--------|---------|
-| `actuator_params.yaml` | actuator_node — Teensy IP/port, PID gains, vehicle geometry |
+| `actuator_params.yaml` | actuator_node — serial port, track width, speed/accel limits, IMU heading-hold gains, SparkMAX PID gains pushed on startup |
 | `velodyne.yaml` | velodyne_driver_node + velodyne_convert_node |
 | `realsense.yaml` | realsense2_camera_node |
 | `xsens.yaml` | xsens_mti_node — IMU/GNSS, lever arm, output rate |
@@ -352,9 +378,9 @@ CycloneDDS (`cyclonedds.xml`):
 
 | AV2.1-API Source | AVROS Destination |
 |------------------|-------------------|
-| `actuators/udp.py` | `avros_control/actuator_node.py` (UDP protocol) |
-| `control/pid.py` | `avros_control/actuator_node.py` (PID class) |
-| `control/ackermann_vehicle.py` | `avros_control/actuator_node.py` (Ackermann inverse) |
+| `actuators/udp.py` | **Replaced.** actuator_node uses pyserial to Teensy now (see `firmware/teensy_diff_drive/` for protocol) |
+| `control/pid.py` | **Replaced.** Velocity PID runs on the SparkMAX (gains pushed at startup), not the Jetson |
+| `control/ackermann_vehicle.py` | **Replaced.** Diff-drive inverse kinematics in `avros_control/actuator_node.py` (new chassis is a track robot, not Ackermann) |
 | `planning/navigator.py` | `nav2_route` route_server + `avros_navigation/scripts/generate_graph.py` |
 | `config/default.yaml` | Split into per-component YAML in `avros_bringup/config/` |
 | `webui/server_standalone.py` | `avros_webui/webui_node.py` (ROS2 ActuatorCommand instead of raw UDP) |
@@ -402,6 +428,16 @@ CycloneDDS (`cyclonedds.xml`):
 | route_server "Failed to transform from '' to map" | `global_frame` param missing from route_server config — defaults to empty string, so `getRobotPose()` uses empty frame_id. Fix: add `global_frame: "map"` to route_server params |
 | NTRIP client no data | Verify credentials and mountpoint in `ntrip_params.yaml`; check internet access from Jetson; try `enable_ntrip:=false` to isolate |
 | NTRIP `mountpoint` still `CHANGE_ME` | Edit `ntrip_params.yaml` — pick a nearby mountpoint from your caster (e.g. rtk2go.com mount list) |
+| **Jetson crashes randomly during motor testing** | Shared 12 V rail — Jetson and SparkMAXes both fed from the 48V→12V buck. Motor inrush (~200A transient) sags the rail below Jetson brown-out threshold. Fix: dedicated 48V→19V buck for Jetson, separate from motor rail. Persistent journald now enabled for post-crash forensics. |
+| SparkMAX velocity mode caps at ~2450 RPM | Not `kOutputMax_0` — it's velocity-PID + Brake-idle oscillation. Slew-rate limit in actuator_node + proper kFF (= 1/max_loaded_RPM) fixes it. |
+| Motors spin opposite directions under `L+ R+` | Mirror-mounted motors. Fix: check "Motor Inverted" on ONE SparkMAX via REV Hardware Client (Basic tab). Inverts both output and encoder sign so firmware sees consistent direction. |
+| Motors "coast forever" on S command | SparkMAX default idle mode is Coast. Fix: set Idle Mode = Brake in REV Hardware Client → LED turns cyan → near-instant regen brake on any zero-duty command. |
+| Hard-brake feel under velocity mode | When cmd_vel drops to 0, velocity PID commands ~60% reverse duty. Fix: slew-rate limit in actuator_node (`max_linear_decel_mps2`) ramps the setpoint smoothly. |
+| Blinking magenta on SparkMAX | "Brushless + Coast + NO valid signal" — heartbeat gap > 100 ms. Most commonly caused by overly aggressive `!Serial` gating on the Teensy during USB CDC traffic. Current firmware has no `!Serial` guard. |
+| Hardware Client unreachable over CAN | Unplug CAN wire from the SparkMAX before USB-C config — Hardware Client and Teensy fight for the bus otherwise. |
+| kP writes "succeed" but have no effect (FW 26.1.4) | PARAMETER_WRITE was cls=48 idx=0 in FW 24.x — in FW 25+ this frame doesn't exist. Correct frame per REV-Specs 2.1.0: **cls=14 idx=0**, DLC=5, `[param_id, float32 LE]`. Verify by writing a sentinel value and reading back in Hardware Client. |
+| Velocity setpoint has no effect (FW 26.1.4) | VELOCITY_SETPOINT was cls=1 idx=2 (legacy `CmdApiSpdSet`) — REV-Specs authoritative for FW 25+ is **cls=0 idx=0**. Firmware uses the new path. |
+| STATUS_2 never arrives | Disabled by default on FW 25+. Send SET_STATUSES_ENABLED (cls=1 idx=0, mask=0x0004, enable=0x0004, DLC=8) once per device — firmware keepalives this every 1 s to survive SparkMAX power cycles. |
 
 ---
 
@@ -505,14 +541,37 @@ ros2 launch realsense2_camera rs_launch.py \
 
 ## TODOs
 
+### Sensors / perception
 - [ ] Measure physical sensor mount positions on vehicle (URDF imu_link, velodyne, camera_link)
 - [ ] Calibrate GNSS lever arm in xsens.yaml (antenna offset from IMU)
 - [x] Test full sensors.launch.py (all sensors together) — DONE, all 3 sensors working: camera 30fps, velodyne ~20Hz, IMU 100Hz
 - [x] Verify RealSense D455 camera working (FW 5.13.0.50, librealsense 2.57.6, realsense-ros 4.56.4)
 - [x] Verify Xsens MTi-680G on /dev/ttyUSB0 — DONE, device ID 0080005BF5, FW 1.12.0, 100Hz IMU
 - [ ] Test localization stack (EKF + navsat)
-- [ ] Test full Nav2 navigation stack
-- [ ] Commit SSL cert paths for Jetson (currently only set locally)
 - [ ] Configure NTRIP credentials in ntrip_params.yaml (mountpoint, username, password)
-- [ ] Run `vcs import src < avros.repos` on Jetson to standardize source deps (replaces old `src/xsens_ros_mti_driver/` with `src/xsens_mti/`)
 - [ ] Verify RTK FIXED/FLOAT status with NTRIP corrections enabled
+
+### Actuator / drivetrain (new, 2026-04-23)
+- [x] Rewrite actuator_node for diff-drive (Raptor track chassis, was Ackermann bicycle)
+- [x] Write Teensy firmware for SparkMAX FW 26.1.4 (REV-Specs 2.1.0 CAN frames)
+- [x] Phase 1-6 bench bring-up (stiction, duty-vs-RPM, stability, PID tune) — see `firmware/teensy_diff_drive/data/FINDINGS.md`
+- [x] Verify cls=14 PARAMETER_WRITE landed via sentinel kP=0.00042069 readback in Hardware Client
+- [x] IMU heading-hold + gyro-stabilized turns in actuator_node
+- [x] Slew-rate limiter in actuator_node (protects 12V rail + passengers)
+- [x] WebUI working on Jetson with full throttle range (0-1.5 m/s)
+- [ ] **Dedicated 48V→19V buck for Jetson** (separate from motor rail) — blocks safe field testing
+- [ ] Phase 7 BURN persistence verification (manual power-cycle readback)
+- [ ] Ground-drive test with `/imu/data` active (launch sensors.launch.py alongside webui)
+- [ ] Tune heading_kp / yaw_rate_kp if drift or wobble under real driving
+- [ ] Loosen right track (optional) — Phase 3 showed 2× stiction asymmetry vs left
+
+### Navigation / integration
+- [ ] Test full Nav2 navigation stack after power rail is fixed
+- [ ] Commit SSL cert paths for Jetson (currently only set locally)
+- [ ] Run `vcs import src < avros.repos` on Jetson to standardize source deps (replaces old `src/xsens_ros_mti_driver/` with `src/xsens_mti/`)
+
+### Reference docs
+- `docs/CHANGELOG_2026-04-23.md` — full session log of the diff-drive commissioning
+- `firmware/teensy_diff_drive/CLAUDE.md` — firmware architecture + CAN protocol details
+- `firmware/teensy_diff_drive/BRING_UP.md` — bench-test procedure
+- `firmware/teensy_diff_drive/data/FINDINGS.md` — empirical results (voltages, gains, RPMs)
