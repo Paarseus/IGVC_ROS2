@@ -12,6 +12,14 @@ actuator_node:
     max_linear_mps: 1.5
     max_angular_rps: 1.0
 
+    # ---- Slew-rate limits (smooth accel/decel, protects 12V rail) ----
+    # Time to reach max_linear_mps from 0 = max_linear_mps / max_linear_accel_mps2
+    # Example: 1.5 m/s target, accel 1.0 m/s² → 1.5 s to reach top speed.
+    # Decel cap can be higher for quicker stops without hard regen brake.
+    max_linear_accel_mps2: 1.0
+    max_linear_decel_mps2: 1.5
+    max_angular_accel_rps2: 2.0
+
     # ---- IMU-based straight-line assist ----
     heading_hold_deadband: 0.05    # rad/s — |ω_cmd| below this engages heading-hold
     heading_kp: 1.5                # P gain for heading-hold (rad/s per rad of yaw error)

@@ -61,6 +61,13 @@ class ActuatorNode(Node):
         self.declare_parameter('m_per_motor_rev', 0.01994)    # Raptor + TBMini 12.75:1 + 20T pulley
         self.declare_parameter('max_linear_mps', 1.5)
         self.declare_parameter('max_angular_rps', 1.0)
+        # Slew-rate limiting: smooths velocity changes to protect both the
+        # 12V rail (motor inrush causes Jetson brown-outs) and passengers
+        # (decel is felt as a jolt). Applied to the target (v, ω) before
+        # heading-hold corrections and diff-drive inverse kinematics.
+        self.declare_parameter('max_linear_accel_mps2', 1.0)
+        self.declare_parameter('max_linear_decel_mps2', 1.5)
+        self.declare_parameter('max_angular_accel_rps2', 2.0)
         self.declare_parameter('heading_hold_deadband', 0.05) # rad/s threshold
         self.declare_parameter('heading_kp', 1.5)             # heading-hold P gain
         self.declare_parameter('yaw_rate_kp', 0.3)            # gyro-stabilized turn P gain
@@ -83,6 +90,9 @@ class ActuatorNode(Node):
         self._m_per_rev = p('m_per_motor_rev').value
         self._max_v = p('max_linear_mps').value
         self._max_w = p('max_angular_rps').value
+        self._accel_v = p('max_linear_accel_mps2').value
+        self._decel_v = p('max_linear_decel_mps2').value
+        self._accel_w = p('max_angular_accel_rps2').value
         self._hh_deadband = p('heading_hold_deadband').value
         self._heading_kp = p('heading_kp').value
         self._yaw_rate_kp = p('yaw_rate_kp').value
@@ -112,8 +122,12 @@ class ActuatorNode(Node):
 
         # ---- state ----
         # Command targets (set by callbacks; read by control loop)
-        self._target_v = 0.0       # m/s
+        self._target_v = 0.0       # m/s (what the user requested, last received)
         self._target_w = 0.0       # rad/s
+        # Slewed values — the actually-commanded setpoints, rate-limited
+        # toward the targets in the control loop.
+        self._slew_v = 0.0
+        self._slew_w = 0.0
         self._estop = False
         self._last_cmd_vel_t = None           # rclpy Time or None
         self._last_actuator_cmd_t = None
@@ -208,12 +222,34 @@ class ActuatorNode(Node):
         )
 
         if self._estop:
-            v, w = 0.0, 0.0
+            v_req, w_req = 0.0, 0.0
         elif has_actuator or has_cmd_vel:
-            v = self._target_v
-            w = self._target_w
+            v_req = self._target_v
+            w_req = self._target_w
         else:
-            v, w = 0.0, 0.0
+            v_req, w_req = 0.0, 0.0
+
+        # Slew-rate limit toward the requested target. Asymmetric accel/decel:
+        # |slew| increasing toward request uses accel cap; decreasing uses
+        # the (usually larger) decel cap. This smooths cmd_vel steps so
+        # motor current draw is gradual — protects the 12V rail + passengers.
+        if self._estop:
+            # Emergency path: allow fastest decel to zero regardless of caps
+            self._slew_v = 0.0
+            self._slew_w = 0.0
+        else:
+            dv = v_req - self._slew_v
+            dw = w_req - self._slew_w
+            if abs(v_req) > abs(self._slew_v) and v_req * self._slew_v >= 0:
+                max_dv = self._accel_v * self._ctrl_dt
+            else:
+                max_dv = self._decel_v * self._ctrl_dt
+            max_dw = self._accel_w * self._ctrl_dt
+            self._slew_v += max(-max_dv, min(max_dv, dv))
+            self._slew_w += max(-max_dw, min(max_dw, dw))
+
+        v = self._slew_v
+        w = self._slew_w
 
         # IMU-based filters on ω
         if self._imu_fresh:
