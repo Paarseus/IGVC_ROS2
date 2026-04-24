@@ -196,7 +196,8 @@ class ActuatorNode(Node):
             self.get_logger().warn('E-STOP via actuator_command')
             return
         self._estop = False
-        # Map webui throttle/brake/steer -> (v, ω)
+        # Map webui throttle/brake/steer -> (v, ω). steer follows REP-103
+        # (CCW / left = +), same convention as angular.z.
         v = (msg.throttle - msg.brake) * self._max_v
         w = msg.steer * self._max_w
         self._target_v = max(-self._max_v, min(self._max_v, v))

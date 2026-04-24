@@ -133,11 +133,14 @@ def create_app(node: WebUINode) -> FastAPI:
                 msg_type = data.get('type')
 
                 if msg_type == 'control':
+                    # nipplejs vector: screen coords (x right = +, y up = +).
+                    # ActuatorCommand uses REP-103 (steer + = CCW / left).
                     x = float(data.get('x', 0))
                     y = float(data.get('y', 0))
                     throttle = max(0.0, y)
                     brake = max(0.0, -y)
-                    node.publish_command(throttle, brake, x, mode, estop)
+                    steer = -x
+                    node.publish_command(throttle, brake, steer, mode, estop)
 
                 elif msg_type == 'estop':
                     estop = data.get('value', False)
