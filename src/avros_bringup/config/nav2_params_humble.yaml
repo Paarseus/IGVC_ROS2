@@ -182,7 +182,7 @@ local_costmap:
       # instance, multiple observation_sources nested under it. Three separate
       # plugin instances do NOT propagate tiles to the master grid.
       #
-      # tile_map_decay_time: 30.0 is REQUIRED on Humble — the default 1.5s is
+      # tile_map_decay_time: 5.0 is REQUIRED on Humble — the default 1.5s is
       # too short, observations get purged before the master-grid write cycle
       # sees them, leaving 90% of update cycles with degenerate bounds.
       semantic_layer:
@@ -196,7 +196,7 @@ local_costmap:
           labels_topic: /perception/front/label_info
           max_obstacle_distance: 5.0
           min_obstacle_distance: 0.3
-          tile_map_decay_time: 30.0
+          tile_map_decay_time: 5.0
           observation_persistence: 0.0
           expected_update_rate: 0.0
           visualize_tile_map: true
@@ -216,7 +216,7 @@ local_costmap:
           labels_topic: /perception/left/label_info
           max_obstacle_distance: 5.0
           min_obstacle_distance: 0.3
-          tile_map_decay_time: 30.0
+          tile_map_decay_time: 5.0
           observation_persistence: 0.0
           expected_update_rate: 0.0
           visualize_tile_map: false
@@ -236,7 +236,7 @@ local_costmap:
           labels_topic: /perception/right/label_info
           max_obstacle_distance: 5.0
           min_obstacle_distance: 0.3
-          tile_map_decay_time: 30.0
+          tile_map_decay_time: 5.0
           observation_persistence: 0.0
           expected_update_rate: 0.0
           visualize_tile_map: false
@@ -316,9 +316,9 @@ route_server:
     smooth_corners: false             # dense graph nodes follow road curves; smoothing can distort path
     graph_filepath: ""   # Overridden at launch time
     graph_file_loader: "GeoJsonGraphFileLoader"
-    GeoJsonGraphFileLoader:
-      plugin: "nav2_route::GeoJsonGraphFileLoader"
-    edge_cost_functions: ["DistanceScorer"]
     DistanceScorer:
       plugin: "nav2_route::DistanceScorer"
       weight: 1.0
+    GeoJsonGraphFileLoader:
+      plugin: "nav2_route::GeoJsonGraphFileLoader"
+    edge_cost_functions: ["DistanceScorer"]
