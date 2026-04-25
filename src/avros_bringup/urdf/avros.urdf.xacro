@@ -10,11 +10,11 @@
   <xacro:arg name="enable_zed_back" default="false"/>
 
   <!-- ============================================================ -->
-  <!-- base_link: coincident with the Xsens body — that's the       -->
-  <!-- origin every sensor offset on the chassis was measured from. -->
-  <!-- Sits 0.5 m above ground at the chassis geometric center.     -->
-  <!-- The chassis box visual is shifted DOWN by Xsens height so it -->
-  <!-- still renders sitting on the floor in RViz/Foxglove.         -->
+  <!-- base_link: chassis geometric center at ground level.          -->
+  <!-- Standard ROS / Nav2 convention so robot_radius inflates       -->
+  <!-- around the centroid and downstream tools (Nav2, AMCL,         -->
+  <!-- robot_localization) work without surprise. Sensor offsets     -->
+  <!-- below have the IMU's 0.5 m mounting height baked into Z.      -->
   <!-- ============================================================ -->
   <xacro:property name="xsens_height" value="0.500"/>
   <link name="base_link">
@@ -22,7 +22,7 @@
       <geometry>
         <box size="${chassis_length} ${chassis_width} ${chassis_height}"/>
       </geometry>
-      <origin xyz="0 0 ${chassis_height/2 - xsens_height}" rpy="0 0 0"/>
+      <origin xyz="0 0 ${chassis_height/2}" rpy="0 0 0"/>
       <material name="grey">
         <color rgba="0.5 0.5 0.5 0.8"/>
       </material>
@@ -31,7 +31,7 @@
       <geometry>
         <box size="${chassis_length} ${chassis_width} ${chassis_height}"/>
       </geometry>
-      <origin xyz="0 0 ${chassis_height/2 - xsens_height}" rpy="0 0 0"/>
+      <origin xyz="0 0 ${chassis_height/2}" rpy="0 0 0"/>
     </collision>
     <inertial>
       <mass value="150.0"/>
@@ -40,14 +40,13 @@
   </link>
 
   <!-- ============================================================ -->
-  <!-- base_footprint: ground projection of base_link               -->
+  <!-- base_footprint: coincident with base_link (already on ground) -->
   <!-- ============================================================ -->
   <link name="base_footprint"/>
   <joint name="base_footprint_joint" type="fixed">
     <parent link="base_link"/>
     <child link="base_footprint"/>
-    <!-- Drop straight down by xsens_height so base_footprint sits on the floor. -->
-    <origin xyz="0 0 ${-xsens_height}" rpy="0 0 0"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
   </joint>
 
   <!-- ============================================================ -->
@@ -67,8 +66,8 @@
   <joint name="imu_joint" type="fixed">
     <parent link="base_link"/>
     <child link="imu_link"/>
-    <!-- Xsens body IS base_link (sketch convention). Zero offset. -->
-    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <!-- Sketch 2026-04-25: Xsens at chassis center, 0.5 m above ground. -->
+    <origin xyz="0 0 ${xsens_height}" rpy="0 0 0"/>
   </joint>
 
   <!-- ============================================================ -->
@@ -88,8 +87,9 @@
   <joint name="velodyne_joint" type="fixed">
     <parent link="base_link"/>
     <child link="velodyne"/>
-    <!-- Sketch 2026-04-25: 3.5" forward, 6.25" up from Xsens, centerline. -->
-    <origin xyz="0.089 0.0 0.159" rpy="0 0 0"/>
+    <!-- Sketch 2026-04-25: 3.5" forward, 6.25" up from Xsens.
+         Xsens is xsens_height above base_link, so Z = xsens_height + 0.159. -->
+    <origin xyz="0.089 0.0 ${xsens_height + 0.159}" rpy="0 0 0"/>
   </joint>
 
   <!-- ============================================================ -->
@@ -107,9 +107,9 @@
   <joint name="zed_front_mount_joint" type="fixed">
     <parent link="base_link"/>
     <child link="zed_front_camera_link"/>
-    <!-- Sketch 2026-04-25: 15.625" forward, 2.25" above Xsens, centerline.
-         Faces +X (forward). -->
-    <origin xyz="0.397 0.0 0.057" rpy="0 0 0"/>
+    <!-- Sketch 2026-04-25: 15.625" forward, 2.25" above Xsens.
+         Z = xsens_height + 0.057. Faces +X (forward). -->
+    <origin xyz="0.397 0.0 ${xsens_height + 0.057}" rpy="0 0 0"/>
   </joint>
 
   <!-- ============================================================ -->
@@ -123,9 +123,9 @@
     <parent link="base_link"/>
     <child link="zed_left_camera_link"/>
     <!-- Sketch 2026-04-25: 3.875" forward, 11.25" left of centerline,
-         2.25" above Xsens. Faces +Y (left). Sketch convention had
-         left=negative; flipped to ROS REP-103 (left=positive). -->
-    <origin xyz="0.098 0.286 0.057" rpy="0 0 1.5708"/>
+         2.25" above Xsens. Z = xsens_height + 0.057. Faces +Y (left).
+         Sketch convention had left=negative; flipped to ROS REP-103. -->
+    <origin xyz="0.098 0.286 ${xsens_height + 0.057}" rpy="0 0 1.5708"/>
   </joint>
 
   <!-- ============================================================ -->
@@ -139,8 +139,8 @@
     <parent link="base_link"/>
     <child link="zed_right_camera_link"/>
     <!-- Sketch 2026-04-25: 3.875" forward, 11.25" right of centerline,
-         2.25" above Xsens. Faces -Y (right). -->
-    <origin xyz="0.098 -0.286 0.057" rpy="0 0 -1.5708"/>
+         2.25" above Xsens. Z = xsens_height + 0.057. Faces -Y (right). -->
+    <origin xyz="0.098 -0.286 ${xsens_height + 0.057}" rpy="0 0 -1.5708"/>
   </joint>
 
   <!-- ============================================================ -->
