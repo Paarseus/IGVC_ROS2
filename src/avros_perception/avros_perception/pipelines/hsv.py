@@ -41,42 +41,18 @@ class HSVPipeline(Pipeline):
     def __init__(self, params, logger=None):
         super().__init__(params, logger)
 
-        # Preprocessing
-        self._blur_iters = int(self.params.get('blur_iters', 3))
-
-        # iscumd adaptive V threshold
-        self._adaptive_period = int(self.params.get('adaptive_period', 5))
-        self._adaptive_k = float(self.params.get('adaptive_k', 3.0))
+        # Stateful adaptive-V across frames (NOT a tunable; tick counter +
+        # cached floor that's refreshed every adaptive_period frames).
         self._tick = 0
         self._v_floor = None
 
-        # Per-class HSV bounds — opencv HSV is H in [0,179], S/V in [0,255].
-        # Starter values from Sooner 2023/2024; field-calibrate per camera.
-        self._lane_low = self._as_hsv(self.params.get('lane_low', [0, 0, 180]))
-        self._lane_high = self._as_hsv(self.params.get('lane_high', [179, 60, 255]))
-        self._barrel_low = self._as_hsv(self.params.get('barrel_low', [5, 120, 100]))
-        self._barrel_high = self._as_hsv(self.params.get('barrel_high', [25, 255, 255]))
-        self._pothole_low = self._as_hsv(self.params.get('pothole_low', [0, 0, 200]))
-        self._pothole_high = self._as_hsv(self.params.get('pothole_high', [179, 40, 255]))
-
-        # Class IDs (must match class_map.yaml)
-        cid = _DEFAULT_CLASS_IDS
-        self._id_lane = int(self.params.get('class_id_lane', cid['lane']))
-        self._id_barrel = int(self.params.get('class_id_barrel', cid['barrel']))
-        self._id_pothole = int(self.params.get('class_id_pothole', cid['pothole']))
-
-        # ROI polygon: flat [x1, y1, x2, y2, ...] array of normalized 0..1
-        # coords (ROS2 params don't support list-of-lists). Reshape to
-        # (N, 2) here once; scale to image size per frame in _roi_polygon_px.
-        # Default rejects the top 35% of the frame (sky / distant trees).
-        raw_poly = self.params.get(
-            'sky_roi_poly',
-            [0.0, 0.0, 1.0, 0.0, 1.0, 0.35, 0.0, 0.35],
-        )
-        self._roi_poly_norm = self._reshape_poly(raw_poly)
-
         # Morphology kernel — pebbles/speckle removal (iscumd 3x3)
         self._morph_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+
+        # All HSV bounds, blur, adaptive_k, class IDs, and the ROI polygon
+        # are re-read from self.params on every run() so live `ros2 param set`
+        # takes effect on the next frame. Cost is six tiny np.array casts +
+        # a few int/float coercions — negligible vs. the cv2 ops.
 
     @staticmethod
     def _as_hsv(triplet):
@@ -98,12 +74,17 @@ class HSVPipeline(Pipeline):
         return [(float(seq[i]), float(seq[i + 1])) for i in range(0, len(seq), 2)]
 
     def _roi_polygon_px(self, h, w):
-        """Convert normalized polygon to pixel coords for cv2.fillPoly."""
-        if not self._roi_poly_norm:
+        """Convert normalized polygon (read live from params) to pixel coords."""
+        raw_poly = self.params.get(
+            'sky_roi_poly',
+            [0.0, 0.0, 1.0, 0.0, 1.0, 0.35, 0.0, 0.35],
+        )
+        poly_norm = self._reshape_poly(raw_poly)
+        if not poly_norm:
             return None
         pts = np.array(
             [[int(round(x * (w - 1))), int(round(y * (h - 1)))]
-             for x, y in self._roi_poly_norm],
+             for x, y in poly_norm],
             dtype=np.int32,
         )
         return pts.reshape(-1, 1, 2)
@@ -113,24 +94,39 @@ class HSVPipeline(Pipeline):
         if bgr.ndim != 3 or bgr.shape[2] != 3:
             raise ValueError(f'HSVPipeline expects HxWx3 BGR; got {bgr.shape}')
 
-        # Sooner 2023 preprocessing — 3 iterations of 5x5 box blur
+        # Re-read live tunables from params on every frame (cheap).
+        blur_iters = int(self.params.get('blur_iters', 3))
+        adaptive_period = int(self.params.get('adaptive_period', 5))
+        adaptive_k = float(self.params.get('adaptive_k', 3.0))
+        lane_low = self._as_hsv(self.params.get('lane_low', [0, 0, 180]))
+        lane_high = self._as_hsv(self.params.get('lane_high', [179, 60, 255]))
+        barrel_low = self._as_hsv(self.params.get('barrel_low', [5, 120, 100]))
+        barrel_high = self._as_hsv(self.params.get('barrel_high', [25, 255, 255]))
+        pothole_low = self._as_hsv(self.params.get('pothole_low', [0, 0, 200]))
+        pothole_high = self._as_hsv(self.params.get('pothole_high', [179, 40, 255]))
+        cid = _DEFAULT_CLASS_IDS
+        id_lane = int(self.params.get('class_id_lane', cid['lane']))
+        id_barrel = int(self.params.get('class_id_barrel', cid['barrel']))
+        id_pothole = int(self.params.get('class_id_pothole', cid['pothole']))
+
+        # Sooner 2023 preprocessing — N iterations of 5x5 box blur
         blurred = bgr
-        for _ in range(self._blur_iters):
+        for _ in range(blur_iters):
             blurred = cv2.blur(blurred, (5, 5))
         hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
 
         # iscumd adaptive V-threshold, refreshed every N frames
         v_channel = hsv[:, :, 2]
         if self._tick == 0 or self._v_floor is None:
-            self._v_floor = float(v_channel.mean() + self._adaptive_k * v_channel.std())
-        self._tick = (self._tick + 1) % max(self._adaptive_period, 1)
+            self._v_floor = float(v_channel.mean() + adaptive_k * v_channel.std())
+        self._tick = (self._tick + 1) % max(adaptive_period, 1)
         bright = (v_channel >= self._v_floor).astype(np.uint8) * 255
 
         # Per-class thresholds
-        lane_hsv = cv2.inRange(hsv, self._lane_low, self._lane_high)
+        lane_hsv = cv2.inRange(hsv, lane_low, lane_high)
         lane = cv2.bitwise_and(lane_hsv, bright)
-        barrel = cv2.inRange(hsv, self._barrel_low, self._barrel_high)
-        pothole = cv2.inRange(hsv, self._pothole_low, self._pothole_high)
+        barrel = cv2.inRange(hsv, barrel_low, barrel_high)
+        pothole = cv2.inRange(hsv, pothole_low, pothole_high)
 
         # Cleanup — erode lane to kill grass speckle, open barrel/pothole
         # to kill pepper noise without closing narrow features.
@@ -142,9 +138,9 @@ class HSVPipeline(Pipeline):
         # pixels that also pass the barrel/pothole range.
         h, w = v_channel.shape
         mask = np.zeros((h, w), dtype=np.uint8)
-        mask[pothole > 0] = self._id_pothole
-        mask[barrel > 0] = self._id_barrel
-        mask[lane > 0] = self._id_lane
+        mask[pothole > 0] = id_pothole
+        mask[barrel > 0] = id_barrel
+        mask[lane > 0] = id_lane
 
         # ROI — zero out the sky/tree region (top of image by default)
         poly = self._roi_polygon_px(h, w)

@@ -22,7 +22,12 @@ import rclpy
 from ament_index_python.packages import get_package_share_directory
 from cv_bridge import CvBridge
 from message_filters import ApproximateTimeSynchronizer, Subscriber
-from rcl_interfaces.msg import SetParametersResult
+from rcl_interfaces.msg import (
+    FloatingPointRange,
+    IntegerRange,
+    ParameterDescriptor,
+    SetParametersResult,
+)
 from rclpy.node import Node
 from rclpy.qos import (
     DurabilityPolicy,
@@ -35,6 +40,36 @@ from vision_msgs.msg import LabelInfo
 
 from avros_perception.pipelines import build_pipeline
 from avros_perception.utils.class_map import build_label_info, load_class_map
+
+
+# Pipeline params surfaced to ROS so they're tunable at runtime via
+# `ros2 param set` / rqt_reconfigure. Order doesn't matter, but keep
+# stub knobs first to mirror perception.yaml. The set is also the
+# allowlist used by _on_set_params.
+_PIPELINE_PARAM_NAMES = (
+    # stub
+    'inject_stripe_width', 'inject_stripe_start', 'inject_class_id',
+    # hsv preprocessing + adaptive V-floor
+    'blur_iters', 'adaptive_period', 'adaptive_k',
+    # hsv per-class bounds + class IDs
+    'lane_low', 'lane_high', 'class_id_lane',
+    'barrel_low', 'barrel_high', 'class_id_barrel',
+    'pothole_low', 'pothole_high', 'class_id_pothole',
+    # hsv ROI polygon (normalized coords)
+    'sky_roi_poly',
+)
+
+_HSV_BOUND_NAMES = frozenset((
+    'lane_low', 'lane_high',
+    'barrel_low', 'barrel_high',
+    'pothole_low', 'pothole_high',
+))
+
+_HSV_BOUND_PAIRS = (
+    ('lane_low', 'lane_high'),
+    ('barrel_low', 'barrel_high'),
+    ('pothole_low', 'pothole_high'),
+)
 
 
 class PerceptionNode(Node):
@@ -53,6 +88,51 @@ class PerceptionNode(Node):
         self.declare_parameter('inject_stripe_width', 0)
         self.declare_parameter('inject_stripe_start', -1)
         self.declare_parameter('inject_class_id', 1)
+
+        # HSV-pipeline tunables. Declared on every node so they can be
+        # set via `ros2 param set` even when running the stub pipeline
+        # (no-op for stub). Defaults match perception.yaml.
+        cls_id_desc = ParameterDescriptor(
+            description='Class ID written into the mask (must exist in class_map.yaml)',
+            integer_range=[IntegerRange(from_value=0, to_value=255, step=1)],
+        )
+        self.declare_parameter(
+            'blur_iters', 3,
+            ParameterDescriptor(
+                description='Number of 5x5 box-blur passes before HSV conversion',
+                integer_range=[IntegerRange(from_value=0, to_value=10, step=1)],
+            ),
+        )
+        self.declare_parameter(
+            'adaptive_period', 5,
+            ParameterDescriptor(
+                description='Refresh adaptive V-floor every N frames',
+                integer_range=[IntegerRange(from_value=1, to_value=120, step=1)],
+            ),
+        )
+        self.declare_parameter(
+            'adaptive_k', 3.0,
+            ParameterDescriptor(
+                description='Adaptive V-floor = mean + k*std (per-frame brightness)',
+                floating_point_range=[FloatingPointRange(
+                    from_value=0.0, to_value=10.0, step=0.0)],
+            ),
+        )
+        # HSV bounds: arrays of [H, S, V]. IntegerRange descriptors apply
+        # per-scalar only, so we validate element-wise in _on_set_params.
+        self.declare_parameter('lane_low',     [0,   0, 180])
+        self.declare_parameter('lane_high',    [179, 60, 255])
+        self.declare_parameter('class_id_lane',    1, cls_id_desc)
+        self.declare_parameter('barrel_low',   [5, 120, 100])
+        self.declare_parameter('barrel_high',  [25, 255, 255])
+        self.declare_parameter('class_id_barrel',  2, cls_id_desc)
+        self.declare_parameter('pothole_low',  [0,   0, 200])
+        self.declare_parameter('pothole_high', [179, 40, 255])
+        self.declare_parameter('class_id_pothole', 3, cls_id_desc)
+        self.declare_parameter(
+            'sky_roi_poly',
+            [0.0, 0.0, 1.0, 0.0, 1.0, 0.35, 0.0, 0.35],
+        )
 
         cam = self.get_parameter('camera_name').value
         # zed-ros2-wrapper v5.x topic names:
@@ -85,10 +165,11 @@ class PerceptionNode(Node):
         }
 
         # ---- pipeline ----
+        # Shared mutable dict — pipeline reads keys on each run(), so any
+        # mutation here (from launch, YAML, or live `ros2 param set`) takes
+        # effect on the next frame.
         self._pipeline_params = {
-            'inject_stripe_width': self.get_parameter('inject_stripe_width').value,
-            'inject_stripe_start': self.get_parameter('inject_stripe_start').value,
-            'inject_class_id': self.get_parameter('inject_class_id').value,
+            n: self.get_parameter(n).value for n in _PIPELINE_PARAM_NAMES
         }
         self._pipeline = build_pipeline(
             pipeline_name, self._pipeline_params, self.get_logger()
@@ -96,10 +177,10 @@ class PerceptionNode(Node):
         self._pipeline.warmup()
         self.get_logger().info(f"Pipeline active: {pipeline_name}")
 
-        # React to runtime param changes (only the stub knobs for now)
-        self._stub_param_names = {
-            'inject_stripe_width', 'inject_stripe_start', 'inject_class_id',
-        }
+        # Allowlist for runtime param updates. Anything else is silently
+        # ignored (param library still reports success — we just don't
+        # forward it to the pipeline).
+        self._live_param_names = frozenset(_PIPELINE_PARAM_NAMES)
         self.add_on_set_parameters_callback(self._on_set_params)
 
         # ---- publishers ----
@@ -154,10 +235,40 @@ class PerceptionNode(Node):
 
     def _on_set_params(self, params):
         # Update the pipeline's shared params dict in-place; pipeline reads
-        # on next run(). Only touch keys that belong to the stub pipeline.
+        # on next run(). Validate first so a bad set of values is rejected
+        # atomically — the dict is only mutated after every check passes.
+        staged = {}
         for p in params:
-            if p.name in self._stub_param_names:
-                self._pipeline_params[p.name] = p.value
+            if p.name not in self._live_param_names:
+                continue
+            if p.name in _HSV_BOUND_NAMES:
+                triplet = list(p.value)
+                if len(triplet) != 3:
+                    return SetParametersResult(
+                        successful=False,
+                        reason=f'{p.name} must have exactly 3 elements, got {len(triplet)}',
+                    )
+                h, s, v = (int(x) for x in triplet)
+                if not (0 <= h <= 179 and 0 <= s <= 255 and 0 <= v <= 255):
+                    return SetParametersResult(
+                        successful=False,
+                        reason=f'{p.name}={triplet} outside HSV range '
+                               '(H in [0,179], S/V in [0,255])',
+                    )
+            staged[p.name] = p.value
+
+        # Element-wise low <= high check across the *merged* state.
+        merged = {**self._pipeline_params, **staged}
+        for low_k, high_k in _HSV_BOUND_PAIRS:
+            lo = list(merged.get(low_k, []))
+            hi = list(merged.get(high_k, []))
+            if len(lo) == 3 and len(hi) == 3 and any(l > h for l, h in zip(lo, hi)):
+                return SetParametersResult(
+                    successful=False,
+                    reason=f'{low_k}={lo} must be <= {high_k}={hi} element-wise',
+                )
+
+        self._pipeline_params.update(staged)
         return SetParametersResult(successful=True)
 
     def _on_synced(self, image: Image, cloud: PointCloud2):
