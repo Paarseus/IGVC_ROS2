@@ -1,6 +1,9 @@
 # ZED X Front Camera — override YAML layered on top of wrapper defaults
 # (common_stereo.yaml + zedx.yaml) via ros_params_override_path.
 #
+# Serial is passed by the launch file (not this YAML). Currently using
+# 49910017 (known-good unit) until the physical-front serial is verified.
+#
 # Topic tree (after the launch-file fix that drops explicit namespace/node_name):
 #   /zed_front/zed_node/rgb/image_rect_color        (sensor_msgs/Image)
 #   /zed_front/zed_node/point_cloud/cloud_registered (organized sensor_msgs/PointCloud2)

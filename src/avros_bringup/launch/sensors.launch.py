@@ -31,6 +31,8 @@ def generate_launch_description():
     velodyne_config = os.path.join(pkg_dir, 'config', 'velodyne.yaml')
     realsense_config = os.path.join(pkg_dir, 'config', 'realsense.yaml')
     zed_front_config = os.path.join(pkg_dir, 'config', 'zed_front.yaml')
+    zed_left_config = os.path.join(pkg_dir, 'config', 'zed_left.yaml')
+    zed_right_config = os.path.join(pkg_dir, 'config', 'zed_right.yaml')
     xsens_config = os.path.join(pkg_dir, 'config', 'xsens.yaml')
     ntrip_config = os.path.join(pkg_dir, 'config', 'ntrip_params.yaml')
 
@@ -68,6 +70,16 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'enable_zed_front', default_value='false',
             description='Enable front ZED X camera (requires ZED SDK + ZED Link Quad)'
+        ),
+
+        DeclareLaunchArgument(
+            'enable_zed_left', default_value='false',
+            description='Enable left ZED X camera (requires ZED SDK + ZED Link Quad)'
+        ),
+
+        DeclareLaunchArgument(
+            'enable_zed_right', default_value='false',
+            description='Enable right ZED X camera (requires ZED SDK + ZED Link Quad)'
         ),
 
         # robot_state_publisher: URDF -> static TF
@@ -130,12 +142,51 @@ def generate_launch_description():
             launch_arguments={
                 'camera_model': 'zedx',
                 'camera_name': 'zed_front',
-                'serial_number': '49910017',
+                # Verified 2026-04-24 via per-port enumeration:
+                #   GMSL port 0 -> SN 42569280  (physical front, confirmed by user)
+                #   GMSL port 1 -> SN 49910017
+                #   GMSL port 2 -> SN 43779087
+                'serial_number': '42569280',
                 'publish_tf': 'false',           # robot_localization owns odom→base_link
                 'publish_urdf': 'false',         # our URDF already includes zed_macro
                 'ros_params_override_path': zed_front_config,
             }.items(),
             condition=IfCondition(LaunchConfiguration('enable_zed_front')),
+        ),
+
+        # ZED X Left (GMSL via ZED Link Quad)
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource([
+                get_package_share_directory('zed_wrapper'),
+                '/launch/zed_camera.launch.py',
+            ]),
+            launch_arguments={
+                'camera_model': 'zedx',
+                'camera_name': 'zed_left',
+                'serial_number': '43779087',
+                'publish_tf': 'false',
+                'publish_urdf': 'false',
+                'ros_params_override_path': zed_left_config,
+            }.items(),
+            condition=IfCondition(LaunchConfiguration('enable_zed_left')),
+        ),
+
+        # ZED X Right (GMSL via ZED Link Quad)
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource([
+                get_package_share_directory('zed_wrapper'),
+                '/launch/zed_camera.launch.py',
+            ]),
+            launch_arguments={
+                'camera_model': 'zedx',
+                'camera_name': 'zed_right',
+                # TODO: confirm right-camera serial (was 42569280, now repurposed to front).
+                'serial_number': '49910017',
+                'publish_tf': 'false',
+                'publish_urdf': 'false',
+                'ros_params_override_path': zed_right_config,
+            }.items(),
+            condition=IfCondition(LaunchConfiguration('enable_zed_right')),
         ),
 
         # Xsens MTi-680G IMU/GNSS

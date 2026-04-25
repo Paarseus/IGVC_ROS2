@@ -34,10 +34,21 @@ _HSV_PARAM_KEYS = [
 EXPECTED_HASH = 'aca1c4d16f5fddef0fad13db5e9b4cfe58b4ca8daa9732bbb1086ee507e42437'
 
 
-def _hash_hsv_params():
+def _load_params():
+    """Read perception.yaml's ros__parameters, tolerant of root key name."""
     with open(PERCEPTION_YAML) as f:
         data = yaml.safe_load(f)
-    params = data['perception_node']['ros__parameters']
+    # Accept either explicit 'perception_node' or wildcard '/**' root key.
+    for root_key in ('/**', 'perception_node'):
+        if root_key in data and 'ros__parameters' in data[root_key]:
+            return data[root_key]['ros__parameters']
+    raise KeyError(
+        f'{PERCEPTION_YAML}: no ros__parameters under /** or perception_node'
+    )
+
+
+def _hash_hsv_params():
+    params = _load_params()
     extracted = {k: params.get(k) for k in _HSV_PARAM_KEYS}
     serialized = yaml.dump(extracted, sort_keys=True).encode('utf-8')
     return hashlib.sha256(serialized).hexdigest()
@@ -62,7 +73,6 @@ def test_hsv_thresholds_unchanged():
 
 def test_hsv_param_keys_all_present():
     """perception.yaml must declare every key the hash tracks."""
-    with open(PERCEPTION_YAML) as f:
-        params = yaml.safe_load(f)['perception_node']['ros__parameters']
+    params = _load_params()
     missing = [k for k in _HSV_PARAM_KEYS if k not in params]
     assert not missing, f'perception.yaml missing: {missing}'

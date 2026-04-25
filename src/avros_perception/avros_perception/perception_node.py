@@ -17,6 +17,7 @@ message-filters them and drops frames with mismatched stamps.
 import os
 
 import cv2
+import numpy as np
 import rclpy
 from ament_index_python.packages import get_package_share_directory
 from cv_bridge import CvBridge
@@ -77,6 +78,11 @@ class PerceptionNode(Node):
         self.get_logger().info(
             f'Loaded {len(self._classes)} classes from {class_map_path}'
         )
+        # OpenCV uses BGR; class_map.yaml stores RGB. Flip once at init.
+        self._class_colors_bgr = {
+            e.id: (int(e.rgb[2]), int(e.rgb[1]), int(e.rgb[0]))
+            for e in self._classes if e.id != 0
+        }
 
         # ---- pipeline ----
         self._pipeline_params = {
@@ -106,6 +112,11 @@ class PerceptionNode(Node):
         )
         self._cloud_pub = self.create_publisher(
             PointCloud2, f'{ns}/semantic_points', qos_profile_sensor_data
+        )
+        # Debug: RGB with mask pixels tinted per class. Useful in Foxglove
+        # to see WHAT is being classified without splitting panels.
+        self._overlay_pub = self.create_publisher(
+            Image, f'{ns}/overlay', qos_profile_sensor_data
         )
         label_qos = QoSProfile(
             depth=1,
@@ -188,6 +199,20 @@ class PerceptionNode(Node):
         conf_msg.header.stamp = stamp
         conf_msg.header.frame_id = frame
         self._confidence_pub.publish(conf_msg)
+
+        # Overlay: 50/50 blend of BGR with per-class tint where mask > 0.
+        overlay = bgr.copy()
+        for cid, color in self._class_colors_bgr.items():
+            sel = result.mask == cid
+            if sel.any():
+                overlay[sel] = (
+                    0.5 * overlay[sel].astype(np.float32)
+                    + 0.5 * np.array(color, dtype=np.float32)
+                ).astype(np.uint8)
+        overlay_msg = self._bridge.cv2_to_imgmsg(overlay, encoding='bgr8')
+        overlay_msg.header.stamp = stamp
+        overlay_msg.header.frame_id = frame
+        self._overlay_pub.publish(overlay_msg)
 
         # Relay the organized cloud under our namespace, stamped identically
         # to the mask so kiwicampus's time-sync passes.
