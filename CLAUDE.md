@@ -63,33 +63,6 @@ ros2 topic pub --once /avros/actuator_command avros_msgs/msg/ActuatorCommand \
 
 ---
 
-## Workspace Structure
-
-```
-IGVC/                             # Jetson workspace root (GitHub: IGVC_ROS2)
-├── CLAUDE.md
-├── avros.repos                   # vcstool manifest — source dependencies
-├── requirements.txt              # pip deps: osmnx, fastapi, uvicorn, websockets
-├── src/
-│   ├── avros_msgs/               # ament_cmake — ActuatorCommand, ActuatorState, PlanRoute
-│   ├── avros_bringup/            # ament_python — launch, config, URDF, RViz
-│   │   ├── launch/               # sensors, localization, actuator, navigation, teleop, webui
-│   │   ├── config/               # ekf, navsat, nav2, actuator, velodyne, realsense, xsens, webui, cyclonedds
-│   │   ├── urdf/                 # avros.urdf.xacro
-│   │   └── rviz/                 # avros.rviz
-│   ├── avros_control/            # ament_python — actuator_node (cmd_vel → Teensy serial → SparkMAX over CAN)
-│   ├── avros_webui/              # ament_python — webui_node (phone joystick → ActuatorCommand)
-│   │   └── static/               # index.html, app.js (nipplejs joystick UI)
-│   └── avros_navigation/         # ament_python — generate_graph.py (offline OSMnx → GeoJSON)
-├── firmware/
-│   ├── teensy_diff_drive/        # Teensy 4.1 USB-serial ↔ CAN bridge for SparkMAX FW 26.1.4
-│   │                             # + bench-test phase scripts (phase1-7), teensy_bridge.py helper
-│   └── teensy_diag/              # passive CAN sniffer sketch for protocol verification
-└── docs/
-```
-
----
-
 ## Packages
 
 | Package | Build Type | Purpose |
@@ -112,7 +85,6 @@ No `avros_sensors` — upstream drivers used directly. Source dependencies are m
 | 192.168.13.10 | Jetson Orin | — | Compute platform, runs all ROS2 nodes |
 | 192.168.13.11 | Velodyne VLP-16 | 60:76:88:38:0F:20 | Reconfigured from factory 192.168.1.201 |
 | 192.168.13.31 | Gateway/router | — | Network gateway |
-| ~~192.168.13.177~~ | ~~Teensy (PJRC)~~ | — | **Deprecated.** Teensy now USB-serial to Jetson at `/dev/ttyACM0` (115200 baud), not UDP. See "Actuator Control" below. |
 
 ---
 
@@ -238,37 +210,7 @@ Sensor mount positions in URDF (`avros.urdf.xacro`) are approximate — measure 
 
 ## Messages
 
-### ActuatorCommand.msg
-```
-std_msgs/Header header
-bool estop
-float32 throttle      # 0.0-1.0
-string mode           # N, D, S, R
-float32 brake         # 0.0-1.0
-float32 steer         # -1.0-1.0 (normalized)
-```
-
-### ActuatorState.msg
-```
-std_msgs/Header header
-bool estop
-float32 throttle
-string mode
-float32 brake
-float32 steer
-bool watchdog_active
-```
-
-### PlanRoute.srv
-```
-float64 destination_lat
-float64 destination_lon
----
-bool success
-string message
-float64 distance_meters
-uint32 num_waypoints
-```
+`ActuatorCommand`, `ActuatorState`, `PlanRoute` — see `src/avros_msgs/msg/*.msg` and `src/avros_msgs/srv/*.srv` for field definitions.
 
 ---
 
@@ -362,6 +304,58 @@ Phone-based joystick controller for bench testing. FastAPI + WebSocket + nipplej
 
 ---
 
+## Remote Desktop (NoMachine)
+
+NoMachine 9.4.14 installed on the Jetson — full GNOME desktop over Tailscale with hardware H.264 encoding on the Jetson Orin GPU.
+
+- **Server:** Jetson, listening on port `4000` (NX protocol)
+- **Connect from laptop:** NoMachine client → host `100.93.121.3` (Tailscale) → port `4000` → user `dinosaur` (same password as `ssh jetson`)
+- **Headless config:** `gdm.service` is stopped + disabled. NoMachine creates its own virtual X display on demand (`:1001` typical), so there's no GDM greeter to mirror — connections always get a fresh GNOME session via `DefaultDesktopCommand`.
+- **Why GDM is disabled:** if GDM is running but no user is logged in graphically, NoMachine attaches to the empty greeter and shows a black screen. See [NoMachine KB AR03P00973](https://kb.nomachine.com/AR03P00973). Bring it back with `sudo systemctl enable --now gdm` only if you attach a real monitor + want auto-login.
+
+### Launching GUI apps from this host (Claude or user) into the live NoMachine session
+
+Anything sent with `DISPLAY=:1001` renders inside the active NoMachine window. `setsid` + redirected I/O detaches the child so it survives SSH closing.
+
+```bash
+# Pattern
+ssh jetson "DISPLAY=:1001 setsid <command> >/tmp/<name>.log 2>&1 < /dev/null &"
+
+# RViz with a saved config (sources ROS env first)
+ssh jetson "DISPLAY=:1001 setsid bash -c 'source /opt/ros/humble/setup.bash && source /home/dinosaur/IGVC/install/setup.bash && export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp && exec rviz2 -d /home/dinosaur/IGVC/src/avros_bringup/rviz/three_cam.rviz' >/tmp/rviz.log 2>&1 < /dev/null &"
+
+# Quick gnome-terminal in the session
+ssh jetson "DISPLAY=:1001 setsid gnome-terminal >/dev/null 2>&1 < /dev/null &"
+```
+
+The display number `:1001` is the default for the first NoMachine virtual session; verify with `ls /tmp/.X11-unix/` (look for `X1001`). It changes if you're using multi-user / multiple parallel NoMachine sessions.
+
+### Works / doesn't work on the virtual display
+
+| Works | Broken on virtual display |
+|---|---|
+| gnome-terminal, file manager, browsers, gedit, rqt, rqt_image_view | ZED_Explorer / ZED_Depth_Viewer / anything Argus-based |
+| RViz2 (uses software OpenGL via llvmpipe — fine for TF + costmaps + small clouds, slow with dense clouds) | Gazebo, Isaac Sim |
+| Foxglove Studio (if you'd rather run it on the Jetson than the laptop) | Anything needing CUDA-EGL interop |
+
+ZED tools fail because Argus needs GPU-backed EGL which NoMachine's virtual display doesn't provide (`No current CUDA context available; nvbufsurface: Failed to create EGLImage`). Fix: HDMI dummy plug on the Jetson — Jetson then runs a real DRM display, NoMachine mirrors that, and CUDA-EGL works. For routine perception verification, just use the ZED ROS wrapper + Foxglove instead — same data, no GPU-display issue.
+
+### NoMachine install reference
+
+```bash
+# Server (Jetson, arm64) — current as of 2026-04-27
+wget https://web9001.nomachine.com/download/9.4/Arm/nomachine_9.4.14_1_arm64.deb -O /tmp/nm_arm64.deb
+sudo dpkg -i /tmp/nm_arm64.deb
+# postinst hangs in `nxserver --subscription` on ARM — kill it after a few minutes,
+# then `sudo dpkg --configure -a` to finalize. Daemon is functional once port 4000 listens.
+
+# Client (laptop, amd64)
+wget https://web9001.nomachine.com/download/9.4/Linux/nomachine_9.4.14_1_amd64.deb -O /tmp/nm_amd64.deb
+sudo dpkg -i /tmp/nm_amd64.deb     # CUDA-init warning is harmless — laptop has no NVIDIA GPU
+```
+
+---
+
 ## Launch Files
 
 | Launch File | What it starts |
@@ -410,55 +404,18 @@ CycloneDDS (`cyclonedds.xml`):
 
 ---
 
-## Ported Code
-
-| AV2.1-API Source | IGVC_ROS2 Destination |
-|------------------|-------------------|
-| `actuators/udp.py` | **Replaced.** actuator_node uses pyserial to Teensy now (see `firmware/teensy_diff_drive/` for protocol) |
-| `control/pid.py` | **Replaced.** Velocity PID runs on the SparkMAX (gains pushed at startup), not the Jetson |
-| `control/ackermann_vehicle.py` | **Replaced.** Diff-drive inverse kinematics in `avros_control/actuator_node.py` (new chassis is a track robot, not Ackermann) |
-| `planning/navigator.py` | `nav2_route` route_server + `avros_navigation/scripts/generate_graph.py` |
-| `config/default.yaml` | Split into per-component YAML in `avros_bringup/config/` |
-| `webui/server_standalone.py` | `avros_webui/webui_node.py` (ROS2 ActuatorCommand instead of raw UDP) |
-| `webui/static/` | `avros_webui/static/` (voice features removed) |
-
----
-
-## Replaced by Upstream
-
-| AV2.1-API | Upstream Package |
-|-----------|-----------------|
-| `sensors/xsens_receiver.py` | `xsens_mti_ros2_driver` |
-| `sensors/lidar_interface.py` | `velodyne` |
-| `sensors/camera_interface.py` | `realsense2_camera` |
-| `perception/occupancy_grid.py` | `nav2_costmap_2d` VoxelLayer |
-| `perception/costmap.py` | `nav2_costmap_2d` InflationLayer |
-| `control/pure_pursuit.py` | Nav2 Regulated Pure Pursuit |
-| `planning/dwa.py` | Nav2 SmacPlannerHybrid |
-| `runner_*.py` | Nav2 Behavior Trees + launch files |
-
----
-
 ## Known Issues & Fixes
+
+SparkMAX FW 26.1.4 CAN protocol gotchas (cls=14 PARAMETER_WRITE, cls=0 VELOCITY_SETPOINT, STATUS_2 enable): see `firmware/teensy_diff_drive/CLAUDE.md`. RealSense one-time install issues: see `docs/REALSENSE_SETUP.md`.
 
 | Issue | Fix |
 |-------|-----|
-| `rclpy.time.Time()` clock type mismatch | Use `rclpy.time.Time(clock_type=self.get_clock().clock_type)` |
-| Starlette StaticFiles 404 with `--symlink-install` | Add `follow_symlink=True` to `StaticFiles()` |
-| sensors.launch.py xacro YAML parse error (Humble) | Wrap in `ParameterValue(Command([...]), value_type=str)` |
 | Port 8000 held after webui crash/disconnect | `fuser -k 8000/tcp` before relaunch |
-| RealSense D455 `bad_optional_access` crash | Downgrade FW to 5.13.0.50 + use RSUSB backend (see RealSense Setup Guide below) |
-| realsense-ros 4.57.6 compile error (`RS2_STREAM_SAFETY`) | Use 4.56.4 — 4.57.x adds D457 safety features not in librealsense 2.57.6 |
-| realsense-ros compiled version mismatch warning | Apt `ros-humble-librealsense2` headers shadow `/usr/local/include/` headers — remove apt package (see below) |
 | RealSense USB interface busy on relaunch | `pkill -f realsense2_camera_node` + wait 2s before relaunching |
-| `control_transfer returned error` warnings | Normal with RSUSB backend on JetPack 6 — non-fatal, does not affect streaming |
-| `No HID info provided, IMU is disabled` | Expected — D455 HID/IMU not available with RSUSB backend; use Xsens for IMU |
-| `rgb_camera.power_line_frequency` range error | D455 FW 5.13.0.50 supports range [0,2] but driver sends 3 — cosmetic, no effect |
 | Xsens driver package name | Correct name is `xsens_mti_ros2_driver` (not `xsens_ros_mti_driver`) |
 | Xsens driver missing deps | `ros-humble-mavros-msgs` and `ros-humble-nmea-msgs` must be installed via apt |
 | CycloneDDS iceoryx/RouDi errors on launch | SharedMemory must be disabled in `cyclonedds.xml` unless RouDi daemon is running — set `<SharedMemory><Enable>false</Enable></SharedMemory>` |
 | numpy binary incompatibility on Jetson | Pin `numpy<2` — numpy 2.x breaks system matplotlib/scipy on JetPack 6 |
-| Camera topics have double prefix | Topics are at `/camera/camera/...` (e.g. `/camera/camera/color/image_raw`) due to `camera_name:=camera` config — both namespace and node name are "camera" |
 | RMW_IMPLEMENTATION not set | Must export `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` in addition to `CYCLONEDDS_URI` — defaults to FastDDS otherwise |
 | CLI commands get (0,0) goals / RMW mismatch | Launch file sets `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` for nav2 nodes, but `ros2` CLI tools use the shell default (FastDDS). FastDDS→CycloneDDS interop corrupts action goal payloads (poses arrive zeroed). Fix: `export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` in `.bashrc` or before any `ros2` CLI command |
 | route_server "Failed to transform from '' to map" | `global_frame` param missing from route_server config — defaults to empty string, so `getRobotPose()` uses empty frame_id. Fix: add `global_frame: "map"` to route_server params |
@@ -467,14 +424,9 @@ CycloneDDS (`cyclonedds.xml`):
 | **Jetson crashes randomly during motor testing** | Shared 12 V rail — Jetson and SparkMAXes both fed from the 48V→12V buck. Motor inrush (~200A transient) sags the rail below Jetson brown-out threshold. Fix: dedicated 48V→19V buck for Jetson, separate from motor rail. Persistent journald now enabled for post-crash forensics. |
 | SparkMAX velocity mode caps at ~2450 RPM | Not `kOutputMax_0` — it's velocity-PID + Brake-idle oscillation. Slew-rate limit in actuator_node + proper kFF (= 1/max_loaded_RPM) fixes it. |
 | Motors spin opposite directions under `L+ R+` | Mirror-mounted motors. Fix: check "Motor Inverted" on ONE SparkMAX via REV Hardware Client (Basic tab). Inverts both output and encoder sign so firmware sees consistent direction. |
-| Motors "coast forever" on S command | SparkMAX default idle mode is Coast. Fix: set Idle Mode = Brake in REV Hardware Client → LED turns cyan → near-instant regen brake on any zero-duty command. |
-| Hard-brake feel under velocity mode | When cmd_vel drops to 0, velocity PID commands ~60% reverse duty. Fix: slew-rate limit in actuator_node (`max_linear_decel_mps2`) ramps the setpoint smoothly. |
 | Blinking magenta on SparkMAX | "Brushless + Coast + NO valid signal" — heartbeat gap > 100 ms. Most commonly caused by overly aggressive `!Serial` gating on the Teensy during USB CDC traffic. Current firmware has no `!Serial` guard. |
 | Hardware Client unreachable over CAN | Unplug CAN wire from the SparkMAX before USB-C config — Hardware Client and Teensy fight for the bus otherwise. |
-| kP writes "succeed" but have no effect (FW 26.1.4) | PARAMETER_WRITE was cls=48 idx=0 in FW 24.x — in FW 25+ this frame doesn't exist. Correct frame per REV-Specs 2.1.0: **cls=14 idx=0**, DLC=5, `[param_id, float32 LE]`. Verify by writing a sentinel value and reading back in Hardware Client. |
-| Velocity setpoint has no effect (FW 26.1.4) | VELOCITY_SETPOINT was cls=1 idx=2 (legacy `CmdApiSpdSet`) — REV-Specs authoritative for FW 25+ is **cls=0 idx=0**. Firmware uses the new path. |
-| STATUS_2 never arrives | Disabled by default on FW 25+. Send SET_STATUSES_ENABLED (cls=1 idx=0, mask=0x0004, enable=0x0004, DLC=8) once per device — firmware keepalives this every 1 s to survive SparkMAX power cycles. |
-| kiwicampus/semantic_segmentation_layer fails to build on Humble | `humble` branch depends on modern Nav2 imported CMake targets that don't exist on Humble, and is missing `#include <deque>`. Apply [PR #1](https://github.com/kiwicampus/semantic_segmentation_layer/pull/1) via `scripts/apply_kiwicampus_patches.sh` after `vcs import`. When upstream merges the PR, delete the patch script + `src/avros_bringup/patches/kiwicampus_pr1.patch` and advance the `avros.repos` pin to the merged commit. |
+| kiwicampus/semantic_segmentation_layer fails to build on Humble | `humble` branch depends on modern Nav2 imported CMake targets that don't exist on Humble, and is missing `#include <deque>`. Apply [PR #1](https://github.com/kiwicampus/semantic_segmentation_layer/pull/1) via `scripts/apply_kiwicampus_patches.sh` after `vcs import`. |
 | kiwicampus layer silently ignores frames | Usually a topic-contract mismatch. Mask and pointcloud MUST share `header.stamp` (avros_perception uses the image stamp on both); pointcloud MUST be organized (`height > 1`); `vision_msgs/LabelInfo` MUST be published with `transient_local` + `reliable` QoS so late-joining plugin gets the latched message. Also the mask HxW MUST equal the cloud HxW — they diverge by default (cloud uses `point_cloud_res: COMPACT` independent of image downscale), so `perception_node` resizes the image to the cloud shape before running the pipeline. |
 | kiwicampus error: "no class types defined for source X" | `class_types: [...]` + per-type blocks must live **inside** the per-source block (`semantic_front.front.class_types`), not at the plugin top level. README formatting is ambiguous; the plugin source declares them under `layer_name.source.class_types` only. |
 | ZED wrapper launches a "libexec directory not found" error | `zed_wrapper` is a metapackage — the camera is a composable component (`stereolabs::ZedCamera`) in `zed_components`, loaded by `zed_wrapper/launch/zed_camera.launch.py`. Use `IncludeLaunchDescription` of that file, not a raw `Node(package='zed_wrapper', executable='zed_wrapper')`. |
@@ -486,101 +438,7 @@ CycloneDDS (`cyclonedds.xml`):
 
 ---
 
-## RealSense D455 Setup Guide (Jetson Orin, JetPack 6)
-
-This documents the full procedure to get the RealSense D455 working on the Jetson Orin running JetPack 6 (R36.x, kernel 5.15-tegra). The standard apt packages do not work due to HID/V4L2 incompatibilities.
-
-### Problem
-
-The D455 crashes with `std::bad_optional_access` when launched via the ROS2 node. Root cause: firmware 5.16+ presents HID descriptors that the RSUSB userspace backend cannot handle on JetPack 6. The `ds-motion-common.cpp` code logs "No HID info provided, IMU is disabled" then a `std::optional::value()` call on an empty optional throws, crashing the entire device initialization.
-
-References:
-- [librealsense #14169](https://github.com/IntelRealSense/librealsense/issues/14169) — D455 + RSUSB + FW 5.16+
-- [librealsense #13341](https://github.com/IntelRealSense/librealsense/issues/13341) — JetPack 6 removed HID/hidraw
-- [realsense-ros #3416](https://github.com/realsenseai/realsense-ros/issues/3416) — exact crash report
-
-### Step 1: Build librealsense 2.57.6 from source with RSUSB
-
-```bash
-cd ~/librealsense
-mkdir -p build && cd build
-cmake .. \
-  -DFORCE_RSUSB_BACKEND=ON \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DBUILD_EXAMPLES=true \
-  -DBUILD_WITH_CUDA=true
-make -j6    # -j6 not -j8 to avoid OOM on Orin
-sudo make install
-sudo ldconfig
-```
-
-Installs to `/usr/local/lib/` and `/usr/local/include/`.
-
-### Step 2: Downgrade D455 firmware to 5.13.0.50
-
-```bash
-# Download firmware
-wget https://librealsense.intel.com/Releases/RS4xx/FW/D4XX_FW_Image-5.13.0.50.bin -O ~/D4XX_FW_Image-5.13.0.50.bin
-
-# Flash (camera must be connected via USB)
-rs-fw-update -f ~/D4XX_FW_Image-5.13.0.50.bin
-
-# Verify
-rs-enumerate-devices --compact
-# Should show: Intel RealSense D455  5.13.0.50  USB 3.2
-```
-
-### Step 3: Remove apt librealsense (prevents header/library conflicts)
-
-The apt package `ros-humble-librealsense2` installs v2.56.4 headers at `/opt/ros/humble/include/librealsense2/` which shadow the correct v2.57.6 headers at `/usr/local/include/librealsense2/`. CMake's ament include path ordering puts apt headers first, causing realsense-ros to compile with stale version strings even when `-Drealsense2_DIR` points to the local build.
-
-```bash
-sudo apt remove ros-humble-librealsense2 ros-humble-librealsense2-dbgsym
-# This also removes ros-humble-realsense2-camera (apt version) — we use source build anyway
-```
-
-After removal, only `/usr/local/` provides librealsense2 headers and libraries.
-
-### Step 4: Build realsense-ros 4.56.4 from source
-
-```bash
-# Clone via vcstool (preferred) or manually:
-cd ~/IGVC
-vcs import src < avros.repos   # clones realsense-ros 4.56.4 + xsens_mti
-
-colcon build --symlink-install \
-  --packages-select realsense2_camera_msgs realsense2_description realsense2_camera \
-  --cmake-args -Drealsense2_DIR=/usr/local/lib/cmake/realsense2
-source install/setup.bash
-```
-
-**Why 4.56.4 and not 4.57.6?** Tag 4.57.6 adds D457 safety camera features (`RS2_STREAM_SAFETY`, `RS2_STREAM_LABELED_POINT_CLOUD`, `RS2_STREAM_OCCUPANCY`) that don't exist in librealsense 2.57.6 — the build fails with undeclared identifier errors. Tag 4.56.4 requires `find_package(realsense2 2.56)` which is satisfied by 2.57.6.
-
-### Step 5: Verify
-
-```bash
-source /opt/ros/humble/setup.bash
-source ~/IGVC/install/setup.bash
-
-ros2 launch realsense2_camera rs_launch.py \
-  camera_name:=camera enable_color:=true enable_depth:=true \
-  enable_gyro:=false enable_accel:=false
-
-# Expected output:
-#   Built with LibRealSense v2.57.6
-#   Running with LibRealSense v2.57.6
-#   Device Name: Intel RealSense D455
-#   Device FW version: 5.13.0.50
-#   RealSense Node Is Up!
-```
-
-### Pitfalls encountered
-
-1. **Stale build artifacts** — After checking out a new librealsense version, `make` can use old `.o` files. Always `rm -rf build/` or `make clean` before rebuilding.
-2. **CMake finding apt before local** — Even with `-Drealsense2_DIR=/usr/local/lib/cmake/realsense2`, the ament build system adds `-isystem /opt/ros/humble/include` before the local include path. The compiler finds apt headers first. Removing the apt package is the only reliable fix.
-3. **`--allow-overriding` flag** — Colcon on Humble doesn't support this flag. Not needed if the apt realsense2_camera package is removed.
-4. **Symlink conflicts in install/** — If rebuilding after a failed build, stale symlinks can cause "File exists" errors. Fix: `rm -rf build/<pkg> install/<pkg>` before rebuilding.
-5. **USB interface busy** — A previous camera node holds the USB interface. Always `pkill -f realsense2_camera_node && sleep 2` before relaunching.
+RealSense D455 install procedure (RSUSB build, FW 5.13.0.50 downgrade, apt removal): see `docs/REALSENSE_SETUP.md`.
 
 ---
 
@@ -589,21 +447,11 @@ ros2 launch realsense2_camera rs_launch.py \
 ### Sensors / perception
 - [ ] Measure physical sensor mount positions on vehicle (URDF imu_link, velodyne, camera_link)
 - [ ] Calibrate GNSS lever arm in xsens.yaml (antenna offset from IMU)
-- [x] Test full sensors.launch.py (all sensors together) — DONE, all 3 sensors working: camera 30fps, velodyne ~20Hz, IMU 100Hz
-- [x] Verify RealSense D455 camera working (FW 5.13.0.50, librealsense 2.57.6, realsense-ros 4.56.4)
-- [x] Verify Xsens MTi-680G on /dev/ttyUSB0 — DONE, device ID 0080005BF5, FW 1.12.0, 100Hz IMU
 - [ ] Test localization stack (EKF + navsat)
 - [ ] Configure NTRIP credentials in ntrip_params.yaml (mountpoint, username, password)
 - [ ] Verify RTK FIXED/FLOAT status with NTRIP corrections enabled
 
-### Actuator / drivetrain (new, 2026-04-23)
-- [x] Rewrite actuator_node for diff-drive (Raptor track chassis, was Ackermann bicycle)
-- [x] Write Teensy firmware for SparkMAX FW 26.1.4 (REV-Specs 2.1.0 CAN frames)
-- [x] Phase 1-6 bench bring-up (stiction, duty-vs-RPM, stability, PID tune) — see `firmware/teensy_diff_drive/FINDINGS.md`
-- [x] Verify cls=14 PARAMETER_WRITE landed via sentinel kP=0.00042069 readback in Hardware Client
-- [x] IMU heading-hold + gyro-stabilized turns in actuator_node
-- [x] Slew-rate limiter in actuator_node (protects 12V rail + passengers)
-- [x] WebUI working on Jetson with full throttle range (0-1.5 m/s)
+### Actuator / drivetrain
 - [ ] **Dedicated 48V→19V buck for Jetson** (separate from motor rail) — blocks safe field testing
 - [ ] Phase 7 BURN persistence verification (manual power-cycle readback)
 - [ ] Ground-drive test with `/imu/data` active (launch sensors.launch.py alongside webui)
@@ -613,27 +461,9 @@ ros2 launch realsense2_camera rs_launch.py \
 ### Navigation / integration
 - [ ] Test full Nav2 navigation stack after power rail is fixed
 - [ ] Commit SSL cert paths for Jetson (currently only set locally)
-- [ ] Run `vcs import src < avros.repos` on Jetson to standardize source deps (replaces old `src/xsens_ros_mti_driver/` with `src/xsens_mti/`)
+- [ ] Run `vcs import src < avros.repos` on Jetson to standardize source deps
 
-### Perception / semantic segmentation (Phases 0–3 done in code, pending Jetson verification)
-- [x] Pin `zed-ros2-wrapper` to `v5.2.2` in `avros.repos` (verify matches installed ZED SDK on Jetson — bump tag if needed)
-- [x] `zed_front.yaml` config + URDF `zed_front_camera_center` frame
-- [x] `enable_zed_front` launch arg plumbed through sensors/localization/navigation launches (default false)
-- [x] `avros_perception` package with swappable Pipeline interface + `StubPipeline` (zero mask + runtime-tunable stripe injection)
-- [x] `kiwicampus/semantic_segmentation_layer` added to `avros.repos` (humble branch) + PR #1 carry patch + `scripts/apply_kiwicampus_patches.sh`
-- [x] `semantic_front` plugin block added to `nav2_params.yaml` + `nav2_params_humble.yaml`
-- [x] `enable_perception` launch arg in `navigation.launch.py` including `perception.launch.py`
-- [x] **Jetson verification:** ZED SDK 5.2.0 confirmed; wrapper rebuilt; Phase 1 exit criteria all green (`/zed_front/zed_node/rgb/color/rect/image` + `point_cloud/cloud_registered` @ 15 Hz, organized 256×448, TF chain via `zed_macro.urdf.xacro`)
-- [x] **Jetson verification:** Phase 2 stub end-to-end — `inject_stripe_width 200` produced 51,200 non-zero mask pixels (exactly `200 cols × 256 rows`)
-- [x] **Jetson verification:** Phase 3 — stripe injection produces 2,400+ `max_cost=100` cells in `/local_costmap/costmap`; baseline 0
+### Perception / semantic segmentation
 - [ ] Re-tighten `max_obstacle_distance` (currently 100m for bench-test) back to ~5–8m before field tests
 - [ ] Measure + commit real `zed_front` mount offset in URDF (currently placeholder `1.0 0 0.9`)
-- [ ] Phase 4: replace `StubPipeline` with `HSVPipeline` (white lanes + orange barrels)
 - [ ] Phase 5: scale to 3 cameras (front + left + right); decide whether to drop RealSense from VoxelLayer
-
-### Reference docs
-- `docs/CHANGELOG_2026-04-23.md` — full session log of the diff-drive commissioning
-- `docs/CHANGELOG_2026-04-24.md` — semantic segmentation layer (Phases 0–3): avros_perception scaffold + kiwicampus wiring + ZED X front
-- `firmware/teensy_diff_drive/CLAUDE.md` — firmware architecture + CAN protocol details
-- `firmware/teensy_diff_drive/BRING_UP.md` — bench-test procedure
-- `firmware/teensy_diff_drive/FINDINGS.md` — empirical results (voltages, gains, RPMs)
