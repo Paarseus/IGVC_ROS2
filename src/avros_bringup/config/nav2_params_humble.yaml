@@ -182,9 +182,13 @@ local_costmap:
       # instance, multiple observation_sources nested under it. Three separate
       # plugin instances do NOT propagate tiles to the master grid.
       #
-      # tile_map_decay_time: 5.0 is REQUIRED on Humble — the default 1.5s is
-      # too short, observations get purged before the master-grid write cycle
-      # sees them, leaving 90% of update cycles with degenerate bounds.
+      # tile_map_decay_time: 1.5 — kiwicampus / upstream default. Safe with
+      # patches/kiwicampus_pr2_mutex.patch applied. Pre-patch this value was
+      # broken (master grid empty 90% of cycles); workaround was 5.0s.
+      # Decay sweep on Jetson 2026-04-27 confirmed stable cells from 0.15s
+      # up to 5s post-patch; below the 1/grab_frame_rate frame interval
+      # (~67ms at 15 Hz) cells flicker as observations are purged faster
+      # than they're refreshed.
       semantic_layer:
         plugin: "semantic_segmentation_layer::SemanticSegmentationLayer"
         enabled: true
@@ -196,7 +200,7 @@ local_costmap:
           labels_topic: /perception/front/label_info
           max_obstacle_distance: 5.0
           min_obstacle_distance: 0.3
-          tile_map_decay_time: 5.0
+          tile_map_decay_time: 1.5
           observation_persistence: 0.0
           expected_update_rate: 0.0
           visualize_tile_map: true
@@ -216,7 +220,7 @@ local_costmap:
           labels_topic: /perception/left/label_info
           max_obstacle_distance: 5.0
           min_obstacle_distance: 0.3
-          tile_map_decay_time: 5.0
+          tile_map_decay_time: 1.5
           observation_persistence: 0.0
           expected_update_rate: 0.0
           visualize_tile_map: false
@@ -236,7 +240,7 @@ local_costmap:
           labels_topic: /perception/right/label_info
           max_obstacle_distance: 5.0
           min_obstacle_distance: 0.3
-          tile_map_decay_time: 5.0
+          tile_map_decay_time: 1.5
           observation_persistence: 0.0
           expected_update_rate: 0.0
           visualize_tile_map: false

@@ -25,11 +25,19 @@
       min_depth: 0.3
       max_depth: 15.0
       point_cloud_freq: 15.0            # match image rate for ApproximateTime sync
+      # depth_stabilization=1 (minimum smoothing) instead of SDK-default (-1).
+      # SDK default forces pos_tracking on AND runs heavier temporal filter -> 34% mean GPU.
+      # Setting to 1 keeps the wrapper happy (cloud still publishes) at 27% mean GPU.
+      # Setting to 0 disables cloud generation entirely on this wrapper version.
+      # See docs/CHANGELOG_2026-04-27.md for diagnosis (forced pos_tracking via warning).
+      depth_stabilization: 1
 
-    # Disable unused subsystems — EKF+Xsens+GPS owns localization,
-    # avros_perception does its own classification.
+    # EKF+Xsens+GPS owns localization, but pos_tracking MUST be on for the
+    # ZED wrapper to publish the organized point_cloud (cloud breaks if pos_tracking
+    # is off, regardless of depth_mode). Set explicitly to true so the wrapper
+    # doesn't print the misleading "forced to ENABLE" warning every launch.
     pos_tracking:
-      pos_tracking_enabled: false
+      pos_tracking_enabled: true
     mapping:
       mapping_enabled: false
     object_detection:

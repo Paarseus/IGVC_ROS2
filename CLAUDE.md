@@ -1,11 +1,13 @@
-# AVROS - Autonomous Vehicle ROS2 Platform
+# IGVC_ROS2 - Autonomous Vehicle ROS2 Platform
 
 ## Project Overview
 
 Migration of the AV2.1-API autonomous vehicle codebase to ROS2 (Humble). Five custom packages + upstream drivers (Velodyne, RealSense, Xsens) + Nav2 + robot_localization.
 
+**Naming:** the GitHub repo is `IGVC_ROS2` (https://github.com/Paarseus/IGVC_ROS2). The live Jetson workspace lives at `~/IGVC/`. The older `~/AVROS/` directory on the Jetson is a dead feature branch — do **not** use it; all work goes through `~/IGVC/`.
+
 **Source reference:** `~/AV2.1-API`
-**Build:** `cd ~/AVROS && colcon build --symlink-install`
+**Build:** `cd ~/IGVC && colcon build --symlink-install`
 **Source overlay:** `source install/setup.bash`
 **Target hardware:** NVIDIA Jetson Orin (Ubuntu, `ssh jetson` = 100.93.121.3 via Tailscale, user `dinosaur`)
 **SSH shortcut:** `ssh jetson` (configured in `~/.ssh/config`)
@@ -16,7 +18,7 @@ Migration of the AV2.1-API autonomous vehicle codebase to ROS2 (Humble). Five cu
 
 ```bash
 # Clone source dependencies (one-time setup, requires python3-vcstool)
-cd ~/AVROS
+cd ~/IGVC
 vcs import src < avros.repos
 # Clones src/realsense-ros/ (4.56.4) and src/xsens_mti/ (ros2 branch, includes xsens_mti_ros2_driver + ntrip)
 
@@ -64,7 +66,7 @@ ros2 topic pub --once /avros/actuator_command avros_msgs/msg/ActuatorCommand \
 ## Workspace Structure
 
 ```
-AVROS/
+IGVC/                             # Jetson workspace root (GitHub: IGVC_ROS2)
 ├── CLAUDE.md
 ├── avros.repos                   # vcstool manifest — source dependencies
 ├── requirements.txt              # pip deps: osmnx, fastapi, uvicorn, websockets
@@ -128,7 +130,7 @@ No `avros_sensors` — upstream drivers used directly. Source dependencies are m
 
 ### Intel RealSense D455
 
-- **Package:** Built from source — `realsense-ros` 4.56.4 in `~/AVROS/src/realsense-ros/` + librealsense 2.57.6 at `/usr/local/` (built from `~/librealsense` with RSUSB backend)
+- **Package:** Built from source — `realsense-ros` 4.56.4 in `~/IGVC/src/realsense-ros/` + librealsense 2.57.6 at `/usr/local/` (built from `~/librealsense` with RSUSB backend)
 - **Firmware:** 5.13.0.50 (downgraded from 5.17.0.9)
 - **Serial:** 215122251311
 - **USB:** 3.2
@@ -410,7 +412,7 @@ CycloneDDS (`cyclonedds.xml`):
 
 ## Ported Code
 
-| AV2.1-API Source | AVROS Destination |
+| AV2.1-API Source | IGVC_ROS2 Destination |
 |------------------|-------------------|
 | `actuators/udp.py` | **Replaced.** actuator_node uses pyserial to Teensy now (see `firmware/teensy_diff_drive/` for protocol) |
 | `control/pid.py` | **Replaced.** Velocity PID runs on the SparkMAX (gains pushed at startup), not the Jetson |
@@ -543,7 +545,7 @@ After removal, only `/usr/local/` provides librealsense2 headers and libraries.
 
 ```bash
 # Clone via vcstool (preferred) or manually:
-cd ~/AVROS
+cd ~/IGVC
 vcs import src < avros.repos   # clones realsense-ros 4.56.4 + xsens_mti
 
 colcon build --symlink-install \
@@ -558,7 +560,7 @@ source install/setup.bash
 
 ```bash
 source /opt/ros/humble/setup.bash
-source ~/AVROS/install/setup.bash
+source ~/IGVC/install/setup.bash
 
 ros2 launch realsense2_camera rs_launch.py \
   camera_name:=camera enable_color:=true enable_depth:=true \

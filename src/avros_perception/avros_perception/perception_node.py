@@ -311,15 +311,12 @@ class PerceptionNode(Node):
         conf_msg.header.frame_id = frame
         self._confidence_pub.publish(conf_msg)
 
-        # Overlay: 50/50 blend of BGR with per-class tint where mask > 0.
+        # Overlay: solid per-class color where mask > 0 (was 50/50 blend; too subtle).
         overlay = bgr.copy()
         for cid, color in self._class_colors_bgr.items():
             sel = result.mask == cid
             if sel.any():
-                overlay[sel] = (
-                    0.5 * overlay[sel].astype(np.float32)
-                    + 0.5 * np.array(color, dtype=np.float32)
-                ).astype(np.uint8)
+                overlay[sel] = np.array(color, dtype=np.uint8)
         overlay_msg = self._bridge.cv2_to_imgmsg(overlay, encoding='bgr8')
         overlay_msg.header.stamp = stamp
         overlay_msg.header.frame_id = frame
