@@ -182,9 +182,12 @@ local_costmap:
       # instance, multiple observation_sources nested under it. Three separate
       # plugin instances do NOT propagate tiles to the master grid.
       #
-      # tile_map_decay_time: 1.5 — kiwicampus / upstream default. Safe with
-      # patches/kiwicampus_pr2_mutex.patch applied. Pre-patch this value was
-      # broken (master grid empty 90% of cycles); workaround was 5.0s.
+      # tile_map_decay_time: 5.0 — bumped from 1.5 after 2026-04-28 testing.
+      # Even with patches/kiwicampus_pr2_mutex.patch applied, the dual-clock
+      # purge (cloud stamp in bufferSegmentation, node->now() in updateBounds)
+      # left only ~7 LETHAL cells in a 200x200 master grid. 5.0s gives both
+      # purges enough headroom and produces ~990 LETHAL cells from the same
+      # 22k pothole-pixel input.
       # Decay sweep on Jetson 2026-04-27 confirmed stable cells from 0.15s
       # up to 5s post-patch; below the 1/grab_frame_rate frame interval
       # (~67ms at 15 Hz) cells flicker as observations are purged faster
@@ -200,7 +203,7 @@ local_costmap:
           labels_topic: /perception/front/label_info
           max_obstacle_distance: 5.0
           min_obstacle_distance: 0.3
-          tile_map_decay_time: 1.5
+          tile_map_decay_time: 5.0
           observation_persistence: 0.0
           expected_update_rate: 0.0
           visualize_tile_map: true
@@ -220,7 +223,7 @@ local_costmap:
           labels_topic: /perception/left/label_info
           max_obstacle_distance: 5.0
           min_obstacle_distance: 0.3
-          tile_map_decay_time: 1.5
+          tile_map_decay_time: 5.0
           observation_persistence: 0.0
           expected_update_rate: 0.0
           visualize_tile_map: false
@@ -240,7 +243,7 @@ local_costmap:
           labels_topic: /perception/right/label_info
           max_obstacle_distance: 5.0
           min_obstacle_distance: 0.3
-          tile_map_decay_time: 1.5
+          tile_map_decay_time: 5.0
           observation_persistence: 0.0
           expected_update_rate: 0.0
           visualize_tile_map: false

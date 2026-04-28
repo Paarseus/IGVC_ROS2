@@ -168,6 +168,25 @@ class ActuatorNode(Node):
         )
         self._odom_pub = self.create_publisher(Odometry, '/wheel_odom', 10)
 
+        # Diagonal covariance for 2D diff-drive wheel odometry.
+        # Trust velocity (wheels measure it directly), mark unobservable
+        # axes (z, roll, pitch) with effectively-infinite covariance so
+        # robot_localization ignores them.
+        self._pose_cov = [0.0] * 36
+        self._pose_cov[0]  = 0.001    # x
+        self._pose_cov[7]  = 0.001    # y
+        self._pose_cov[14] = 1e6      # z
+        self._pose_cov[21] = 1e6      # roll
+        self._pose_cov[28] = 1e6      # pitch
+        self._pose_cov[35] = 0.01     # yaw
+        self._twist_cov = [0.0] * 36
+        self._twist_cov[0]  = 0.0001  # vx
+        self._twist_cov[7]  = 1e6     # vy (no lateral slip on diff drive)
+        self._twist_cov[14] = 1e6     # vz
+        self._twist_cov[21] = 1e6     # vroll
+        self._twist_cov[28] = 1e6     # vpitch
+        self._twist_cov[35] = 0.0001  # vyaw
+
         # ---- threads / timers ----
         self._running = True
         self._reader_thread = threading.Thread(
@@ -323,9 +342,14 @@ class ActuatorNode(Node):
         v = (l_mps + r_mps) / 2.0
         w = (r_mps - l_mps) / self._track_w
 
-        self._odom_yaw = wrap_angle(self._odom_yaw + w * dt)
-        self._odom_x += v * math.cos(self._odom_yaw) * dt
-        self._odom_y += v * math.sin(self._odom_yaw) * dt
+        # Trapezoidal (midpoint) pose integration: use the average of
+        # old and new yaw for the position update. 2nd-order accurate;
+        # the previous forward-Euler form over-rotated displacement on turns.
+        yaw_delta = w * dt
+        yaw_avg = wrap_angle(self._odom_yaw + yaw_delta / 2.0)
+        self._odom_yaw = wrap_angle(self._odom_yaw + yaw_delta)
+        self._odom_x += v * math.cos(yaw_avg) * dt
+        self._odom_y += v * math.sin(yaw_avg) * dt
 
         odom = Odometry()
         odom.header.stamp = now.to_msg()
@@ -337,6 +361,8 @@ class ActuatorNode(Node):
         odom.pose.pose.orientation.w = math.cos(self._odom_yaw / 2.0)
         odom.twist.twist.linear.x = v
         odom.twist.twist.angular.z = w
+        odom.pose.covariance = self._pose_cov
+        odom.twist.covariance = self._twist_cov
         self._odom_pub.publish(odom)
 
     # ------------------------------------------------------------- serial I/O

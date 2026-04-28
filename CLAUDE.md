@@ -457,6 +457,7 @@ RealSense D455 install procedure (RSUSB build, FW 5.13.0.50 downgrade, apt remov
 - [ ] Ground-drive test with `/imu/data` active (launch sensors.launch.py alongside webui)
 - [ ] Tune heading_kp / yaw_rate_kp if drift or wobble under real driving
 - [ ] Loosen right track (optional) — Phase 3 showed 2× stiction asymmetry vs left
+- [ ] **5 m straight-line wheel-odom calibration test** — drive 5 m on a tape-measured line, compare EKF `pose.position.x` to actual. Validates `m_per_rev` (wheel diameter / gear ratio) and trans-velocity covariance. 360° spin already done 2026-04-28 — wheels +0.7% (effective track ~0.7416m vs configured 0.7366m); EKF fused result 358.34° (acceptable). Translational accuracy still untested.
 
 ### Navigation / integration
 - [ ] Test full Nav2 navigation stack after power rail is fixed
