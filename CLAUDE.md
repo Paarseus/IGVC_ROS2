@@ -450,6 +450,8 @@ RealSense D455 install procedure (RSUSB build, FW 5.13.0.50 downgrade, apt remov
 - [ ] Test localization stack (EKF + navsat)
 - [ ] Configure NTRIP credentials in ntrip_params.yaml (mountpoint, username, password)
 - [ ] Verify RTK FIXED/FLOAT status with NTRIP corrections enabled
+- [ ] **Re-evaluate `twist0: /filter/twist` removal from `ekf.yaml`** — removed 2026-04-28 on the assumption it was broken (CLI `ros2 topic echo` refused the topic due to dual-publisher type conflict). On reflection that was a CLI limitation, not a confirmed runtime fault; EKF subscription showed it had bound to the correct `TwistWithCovarianceStamped` publisher. Re-add the block, A/B test EKF position accuracy with vs without it (compare `/odometry/filtered` to `/odometry/global` GPS-anchored ground truth over a fixed drive path). Decide based on data, not the earlier inference.
+- [ ] **Investigate `/filter/twist` dual-publisher origin** — `ros2 topic info /filter/twist --verbose` should name both nodes. Likely the legitimate one is the Xsens driver (`TwistWithCovarianceStamped`); the other is some accidental relay or duplicate config. Tied to the previous TODO — once we know which publisher is which, removal/keep decision becomes obvious.
 
 ### Actuator / drivetrain
 - [ ] **Dedicated 48V→19V buck for Jetson** (separate from motor rail) — blocks safe field testing
@@ -465,6 +467,9 @@ RealSense D455 install procedure (RSUSB build, FW 5.13.0.50 downgrade, apt remov
 - [ ] Run `vcs import src < avros.repos` on Jetson to standardize source deps
 
 ### Perception / semantic segmentation
+- [ ] **Write `kiwicampus_align_purge_clocks.patch`** — proper architectural fix for the dual-clock decay bug we worked around 2026-04-28 by bumping `tile_map_decay_time: 1.5 → 5.0`. `bufferSegmentation` purges with `cloud_time_seconds` (sensor stamp); `updateBounds` purges with `node->now()` (wall clock); same observation gets evaluated against two different "now"s. Standard fix: change `semantic_segmentation_layer.cpp:339` to use the buffer's last-observation cloud stamp instead of `node->now()`. Once applied, decay can revert to kiwicampus default 1.5 in both `perception_test_params.yaml` and `nav2_params_humble.yaml` (×3). Add to `scripts/apply_kiwicampus_patches.sh` after `kiwicampus_pr2_mutex.patch`.
+- [ ] **Tighten HSV `pothole_*` thresholds in `pipelines/hsv.py`** — concrete walkway is being misclassified as pothole at ~14% of frame in outdoor field tests (verified 2026-04-28 by overlay snapshot). Pipeline supports live tuning via dynamic params per `ace533e` ("Live-tune HSV params"). Tighten H/S/V ranges to exclude medium-gray concrete shadows.
+- [ ] **Document kiwicampus tile_map `frame_id="map"` mislabel** — the `/local_costmap/<source>/tile_map` viz topic is published with hardcoded `frame_id: "map"` regardless of the buffer's actual `global_frame_` (which is `odom` for a local_costmap). Coordinates *in* the message are correct, the frame_id label is just wrong. Add to `patches/README.md` (or create one) so the next person debugging spatial issues in Foxglove/RViz doesn't waste time on this.
 - [ ] Re-tighten `max_obstacle_distance` (currently 100m for bench-test) back to ~5–8m before field tests
 - [ ] Measure + commit real `zed_front` mount offset in URDF (currently placeholder `1.0 0 0.9`)
 - [ ] Phase 5: scale to 3 cameras (front + left + right); decide whether to drop RealSense from VoxelLayer
