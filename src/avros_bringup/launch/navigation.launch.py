@@ -33,24 +33,29 @@ def generate_launch_description():
     actuator_config = os.path.join(pkg_dir, 'config', 'actuator_params.yaml')
     graph_file = os.path.join(pkg_dir, 'config', 'cpp_campus_graph.geojson')
 
-    # Select distro-specific config (params + BT XML)
+    # Select distro-specific config (params + default BT XML)
     ros_distro = os.environ.get('ROS_DISTRO', 'humble')
     if ros_distro == 'humble':
         nav2_config = os.path.join(pkg_dir, 'config', 'nav2_params_humble.yaml')
-        bt_xml = os.path.join(pkg_dir, 'config', 'navigate_route_graph_humble.xml')
+        default_bt = 'navigate_route_graph_humble.xml'
     else:
         nav2_config = os.path.join(pkg_dir, 'config', 'nav2_params.yaml')
-        bt_xml = os.path.join(pkg_dir, 'config', 'navigate_route_graph.xml')
+        default_bt = 'navigate_route_graph.xml'
 
     use_sim_time = LaunchConfiguration('use_sim_time')
+    # bt_xml is the FILENAME (relative to config/), not the full path. Lets you
+    # swap between e.g. 'navigate_route_graph_humble.xml' (default — graph-based
+    # routing) and 'navigate_to_pose_simple_humble.xml' (ComputePathToPose-based
+    # for arbitrary-goal testing) without editing the launch file.
+    bt_xml_filename = LaunchConfiguration('bt_xml')
 
     # Rewrite nav2 params with resolved paths and use_sim_time
     configured_params = RewrittenYaml(
         source_file=nav2_config,
         param_rewrites={
             'use_sim_time': use_sim_time,
-            'default_nav_to_pose_bt_xml': bt_xml,
-            'default_nav_through_poses_bt_xml': bt_xml,
+            'default_nav_to_pose_bt_xml': [pkg_dir, '/config/', bt_xml_filename],
+            'default_nav_through_poses_bt_xml': [pkg_dir, '/config/', bt_xml_filename],
             'graph_filepath': graph_file,
         },
         convert_types=True,
@@ -87,6 +92,14 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'use_sim_time', default_value='false',
             description='Use simulation clock'
+        ),
+
+        DeclareLaunchArgument(
+            'bt_xml', default_value=default_bt,
+            description='Behavior tree XML filename (in config/ dir). '
+                        'Default routes via cpp_campus_graph; pass '
+                        'navigate_to_pose_simple_humble.xml for arbitrary-goal '
+                        'ComputePathToPose-based navigation.'
         ),
 
         DeclareLaunchArgument(
