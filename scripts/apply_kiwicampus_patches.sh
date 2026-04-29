@@ -9,6 +9,11 @@
 #   pr1 — Humble build fix (CMakeLists modernization, missing <deque>)
 #   pr2 — temporal_tile_map_ mutex fix in updateBounds (data race that left
 #         master grid empty 90% of cycles; see CHANGELOG_2026-04-25 §3)
+#   pr3 — raytrace-clear stale LETHAL cells (mirrors nav2 ObstacleLayer
+#         raytraceFreespace). Without this, cells stay LETHAL until rolling
+#         window scroll or service call. With it, cells clear within one
+#         update cycle when the camera "sees through" them. Adds per-source
+#         params clearing/raytrace_max_range/raytrace_min_range.
 
 set -euo pipefail
 
@@ -19,6 +24,7 @@ PATCH_DIR="$REPO_ROOT/src/avros_bringup/patches"
 PATCHES=(
   "kiwicampus_pr1.patch"
   "kiwicampus_pr2_mutex.patch"
+  "kiwicampus_pr3_raytrace_clear.patch"
 )
 
 if [[ ! -d "$PKG_DIR" ]]; then

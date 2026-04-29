@@ -72,6 +72,13 @@ local_costmap:
           tile_map_decay_time: 5.0
           observation_persistence: 0.0
           expected_update_rate: 0.0
+          # PR3 raytrace clearing: walk Bresenham rays from sensor origin to
+          # each observed point, marking cells along the way as FREE_SPACE.
+          # This is the architecturally-correct fix for stale LETHAL cells
+          # not decaying — see kiwicampus_pr3_raytrace_clear.patch.
+          clearing: true
+          raytrace_max_range: 8.0
+          raytrace_min_range: 0.0
           visualize_tile_map: true
           use_cost_selection: false
           class_types: ["danger"]
