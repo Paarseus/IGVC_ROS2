@@ -23,8 +23,7 @@ These are blockers, have measurable impact on field-test accuracy, or are requir
 
 ### Sensors / GPS
 
-- [ ] **Configure NTRIP credentials in `ntrip_params.yaml`** (mountpoint, username, password). Currently `mountpoint: CHANGE_ME`. Without this, no RTK corrections — GPS is single-fix accuracy (~2 m) instead of RTK (~2 cm).
-- [ ] **Verify RTK FIXED/FLOAT status with NTRIP corrections enabled.** After credentials are in, watch `/gnss` `status.status` go from 0 (no fix) → 1 (single) → 2 (RTK FLOAT) → 4 (RTK FIXED) over a few minutes outdoors with sky view. Required before relying on GPS-anchored map frame.
+- [ ] **Verify RTK FIXED/FLOAT status outdoors.** NTRIP creds are configured (`ntrip.earthscope.org:2101`, mountpoint `PSDM_RTCM3P3`) and `/rtcm` is streaming at ~5 Hz, but indoors `/gnss` `status.status: -1` (no satellites). Outside, watch the status climb from -1 → 0 (single) → 1 (DGPS) → 2 (RTK FLOAT) → 4 (RTK FIXED) over a few minutes with sky view. Required before relying on GPS-anchored map frame.
 
 ### Perception accuracy
 
