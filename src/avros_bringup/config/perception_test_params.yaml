@@ -9,7 +9,8 @@
 #   - inflation_radius reduced to 0.3 m so a small number of detections
 #     produces an obvious cluster of cells (1.5 m radius would smear it
 #     across the whole map for testing)
-#   - tile_map_decay_time bumped to 5.0 — Phase 5 experiment 2026-04-28
+#   - tile_map_decay_time at kiwicampus default 1.5 — safe with PR3 raytrace
+#     clear (was briefly 5.0 on 2026-04-28 as a pre-PR3 workaround)
 #   - controller plugins kept as no-op placeholders so controller_server
 #     starts cleanly; nothing should ever send a path here
 
@@ -69,7 +70,7 @@ local_costmap:
           labels_topic: /perception/front/label_info
           max_obstacle_distance: 8.0
           min_obstacle_distance: 0.3
-          tile_map_decay_time: 5.0
+          tile_map_decay_time: 1.5
           observation_persistence: 0.0
           expected_update_rate: 0.0
           # PR3 raytrace clearing: walk Bresenham rays from sensor origin to

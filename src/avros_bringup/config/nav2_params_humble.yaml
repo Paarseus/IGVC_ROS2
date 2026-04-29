@@ -24,7 +24,8 @@ bt_navigator:
       plugin: "nav2_bt_navigator::NavigateThroughPosesNavigator"
     # Humble requires explicit BT plugin list (Jazzy auto-discovers)
     plugin_lib_names:
-      - nav2_compute_route_bt_node
+      - nav2_compute_path_to_pose_action_bt_node    # for navigate_to_pose_simple_humble.xml (ComputePathToPose)
+      - nav2_compute_route_bt_node                  # for navigate_route_graph_humble.xml (ComputeRoute)
       - nav2_follow_path_action_bt_node
       - nav2_is_path_valid_condition_bt_node
       - nav2_wait_action_bt_node
@@ -182,16 +183,14 @@ local_costmap:
       # instance, multiple observation_sources nested under it. Three separate
       # plugin instances do NOT propagate tiles to the master grid.
       #
-      # tile_map_decay_time: 5.0 — bumped from 1.5 after 2026-04-28 testing.
-      # Even with patches/kiwicampus_pr2_mutex.patch applied, the dual-clock
-      # purge (cloud stamp in bufferSegmentation, node->now() in updateBounds)
-      # left only ~7 LETHAL cells in a 200x200 master grid. 5.0s gives both
-      # purges enough headroom and produces ~990 LETHAL cells from the same
-      # 22k pothole-pixel input.
-      # Decay sweep on Jetson 2026-04-27 confirmed stable cells from 0.15s
-      # up to 5s post-patch; below the 1/grab_frame_rate frame interval
-      # (~67ms at 15 Hz) cells flicker as observations are purged faster
-      # than they're refreshed.
+      # tile_map_decay_time: 1.5 — kiwicampus default. Stable with the
+      # patches/kiwicampus_pr3_raytrace_clear.patch applied: the raytrace
+      # pass actively writes FREE_SPACE through cells the camera "sees
+      # through", so cells don't depend on a long decay window to clear.
+      # 2026-04-28 we briefly bumped this to 5.0 as a workaround when the
+      # plugin had no clearing path; PR3 reverts it.
+      # Below the 1/grab_frame_rate frame interval (~67ms at 15 Hz) cells
+      # flicker as observations are purged faster than they're refreshed.
       semantic_layer:
         plugin: "semantic_segmentation_layer::SemanticSegmentationLayer"
         enabled: true
@@ -203,7 +202,7 @@ local_costmap:
           labels_topic: /perception/front/label_info
           max_obstacle_distance: 5.0
           min_obstacle_distance: 0.3
-          tile_map_decay_time: 5.0
+          tile_map_decay_time: 1.5
           observation_persistence: 0.0
           clearing: true
           raytrace_max_range: 8.0
@@ -226,7 +225,7 @@ local_costmap:
           labels_topic: /perception/left/label_info
           max_obstacle_distance: 5.0
           min_obstacle_distance: 0.3
-          tile_map_decay_time: 5.0
+          tile_map_decay_time: 1.5
           observation_persistence: 0.0
           clearing: true
           raytrace_max_range: 8.0
@@ -249,7 +248,7 @@ local_costmap:
           labels_topic: /perception/right/label_info
           max_obstacle_distance: 5.0
           min_obstacle_distance: 0.3
-          tile_map_decay_time: 5.0
+          tile_map_decay_time: 1.5
           observation_persistence: 0.0
           clearing: true
           raytrace_max_range: 8.0
