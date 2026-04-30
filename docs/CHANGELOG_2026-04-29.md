@@ -400,4 +400,272 @@ Added (new):
 
 ---
 
-*Last updated: 2026-04-29 by session covering kiwicampus PR3 raytrace-clear patch + Nav2 BT bring-up + combined-launch + HSV calibration. See commits `4e4d562`, `052ee4e`, `8680313`, `f1657f1`, plus upstream draft PR [kiwicampus#5](https://github.com/kiwicampus/semantic_segmentation_layer/pull/5).*
+---
+
+# Evening session addendum (2026-04-29 night)
+
+After the morning's PR3 + Nav2 BT bring-up landed, end-to-end smoke testing revealed the master `/local_costmap/costmap` was **still all-FREE** despite the layer's internal `tile_map` debug topic clearly showing 8–13 marked tiles per frame. PR3 had fixed the *clearing* path but did not fix the *marking* path — that bug had been hidden by the morning's `tile_map_decay_time=5.0` workaround, and only surfaced once decay reverted to 1.5. This second session diagnosed the real root cause, fixed it, forked the upstream package, and switched the repo onto our fork.
+
+## 10. Costmap-empty bug — root cause was a clock-domain mismatch, not a propagation bug
+
+### 10.1 Symptom
+
+With PR3 applied, `tile_map_decay_time: 1.5`, perception detecting 240 lane pixels per frame, all three sync topics sharing identical `header.stamp` (verified 87/87 triplets):
+
+- `/local_costmap/front/tile_map` (kiwicampus debug PointCloud2): **8–13 entries**, class=1 lane, conf=255, world coords correctly placed 1.5 m in front of the robot
+- `/local_costmap/costmap_raw` (master grid, raw cost values): **62500 cells, all 0**
+- `/local_costmap/costmap` (OccupancyGrid for RViz): **all FREE**
+
+The layer was processing observations but the master grid never received any cost.
+
+### 10.2 Multi-phase agent investigation (3 phases, 5 agents)
+
+Strategy: parallelise hypothesis testing instead of serial guess-and-check.
+
+**Phase 1 — triangulation, 3 agents in parallel.**
+
+| Agent | Method | Verdict |
+|---|---|---|
+| Code Tracer (Explore subagent) | Read every silent-skip / early-return between `tile_map → costmap_[idx] → updateWithMax → master_grid`, source-cited. | Top hypothesis: bounds-scope drift between `updateBounds` and `updateCosts`. Confidence MED — ruled out later. |
+| Git Forensics (general-purpose) | `gh api` + `WebFetch` over kiwicampus issues, PRs, upstream demo configs. | No upstream PR after our PR3 fork-point fixes anything similar. Suggested `expected_update_rate: 2.0` as smallest config experiment — wrong, but useful negative. |
+| Live Debugger (general-purpose) | Added `RCLCPP_INFO_THROTTLE` to `updateBounds` entry/exit, every `worldToMap` call, the `costmap_[index]=` write, and `updateCosts` entry. Built, killed nav stack (kept RViz alive on `:1001`), relaunched, captured 142 cycles, reverted source. | **Definitive.** `updateBounds` ran healthily; `updateCosts` called `updateWithMax` every cycle with the correct master grid; **but 141/142 cycles had `tiles=0`**. The layer's internal `temporal_tile_map_` was empty when `updateBounds` entered. The bug was upstream of the propagation path. |
+
+**Phase 2 — narrow the wipe.** One agent instrumented `bufferSegmentation` (entry, observation push count, before/after the buffer's own `purgeOldObservations`). Findings:
+
+- `bufferSegmentation` entry fires at 14.9 Hz (matches ZED rate)
+- 10–13 observations pushed per frame (correct — matches the 240 lane pixels condensed to ~12 unique tiles after `best_observations_idxs` dedup)
+- The buffer's own purge at `segmentation_buffer.cpp:241` shows `before == after` every call — **buffer is not the wiper**
+- **Between two buffer cycles 67 ms apart, `temporal_tile_map_->size()` goes from 10–13 → 0** — something else wipes the map
+
+**Phase 3 — find the wiper.** Static analysis enumerated every code path that can shrink `tile_map_`:
+
+| File:line | Path | Time argument |
+|---|---|---|
+| `segmentation_buffer.cpp:241` | Buffer's `purgeOldObservations(cloud_time_seconds)` | cloud header stamp |
+| `semantic_segmentation_layer.cpp:368` | Layer's `purgeOldObservations(current_time)` in `updateBounds` | `node->now().seconds()` (wall-clock) |
+
+Instrumented both. Empirical log (one cycle):
+
+```
+buf entry:           cloud_stamp=1777513411.351
+buf purge:           t=1777513411.351 before=10 after=10           # buffer call: in-domain, all kept
+tm_layer_purge_call: current_time=1777513415.699 size_before=10
+tm_purge:            t=1777513415.699 decay=1.5 ... n_after=0      # layer call: 4.35 s newer, all purged
+```
+
+`current_time - cloud_time_seconds = 4.35 s`. With `decay_time = 1.5 s`, every observation has age 4.35 > 1.5 → **purged on every layer cycle**. The cloud's `header.stamp` was 4.35 s behind wall-clock — apparent ZED publish-pipeline latency on this Jetson configuration (HD1080 @ 15 fps + NEURAL_LIGHT depth + organized cloud).
+
+### 10.3 Fix — one line, two purges in the same time domain
+
+`src/segmentation_buffer.cpp:141`:
+
+```diff
+- double cloud_time_seconds = rclcpp::Time(cloud.header.stamp.sec, cloud.header.stamp.nanosec).seconds();
++ double cloud_time_seconds = clock_->now().seconds();  // wall-clock; matches layer's purge in updateBounds
+```
+
+After this change, observations are stored stamped with wall-clock, both purge sites operate in the same domain, `decay_time` works as documented:
+
+| Topic | Before fix | After fix |
+|---|---|---|
+| `/local_costmap/front/tile_map` size | 10–13 every cycle | 10–13 every cycle |
+| `/local_costmap/costmap_raw` LETHAL count | **0 / 62500** | **9–10 / 62500** |
+| Master grid total non-zero cost cells | 0 | 92 (with new inflation params, see §13) |
+
+### 10.4 Why PR3's morning A/B test passed despite this bug
+
+The morning A/B comparing pre-PR3 to post-PR3 measured "cells held LETHAL while observations were live; dropped to 0 within one cycle after suppressing input." Both pre and post tests in that comparison observed `0 LETHAL` cells when actually checked end-to-end on the master grid — only the kiwicampus internal `tile_map` debug topic showed marks, and the morning's instrumentation focused there. The morning kept `tile_map_decay_time = 5.0` s as a workaround for the previously-known dual-clock decay bug; 5.0 s happens to be wider than the ~4.35 s ZED lag, while 1.5 s is narrower. PR3's "correct" decay revert to 1.5 s exposed the latent clock-domain mismatch.
+
+The morning changelog's claim that PR3 "fixes clearing" remains correct: PR3 implements the clearing path that was previously missing. The clock-domain fix in §10.3 is independent and additionally required to populate the master grid at all.
+
+---
+
+## 11. Fork — `Paarseus/semantic_segmentation_layer`, branch `avros-fixes`
+
+Forked `kiwicampus/semantic_segmentation_layer` to `Paarseus/semantic_segmentation_layer`. New branch `avros-fixes` stacks all four of our patches as separate well-documented commits on top of upstream `274c713` (Apache-2.0 license switch):
+
+| SHA | Title | Body summary |
+|---|---|---|
+| `83ef090` | Backport to Humble (Colcon builds successfully) | Inherited from upstream PR #1; body is sparse — TODO improve |
+| `76fdf92` | Lock temporal_tile_map in updateBounds | PR2: data-race fix between `bufferSegmentation` (~15 Hz) and `updateBounds`; without it 90% of cycles passed degenerate bounds |
+| `b357882` | Raytrace-clear stale LETHAL cells (PR3) | Mirrors `nav2_costmap_2d::ObstacleLayer::raytraceFreespace`; adds `clearing` / `raytrace_max_range` / `raytrace_min_range` params |
+| `ffb3c7d` | Stamp observations with wall-clock instead of cloud header stamp | Today's fix; stops the layer's wall-clock purge from wiping cloud-stamped observations when the sensor lags |
+
+Branch URL: <https://github.com/Paarseus/semantic_segmentation_layer/tree/avros-fixes>
+
+`gh repo fork` discovered the fork already existed (presumably from an earlier session). Pushed the new branch from this dev box (the Jetson's stored github credentials are for a different account so a direct push from there 403'd). Branch went up first push, no conflicts.
+
+---
+
+## 12. Repo refactor — clone the fork, retire the patch script
+
+`avros.repos` now points at the fork:
+
+```diff
+-  semantic_segmentation_layer:
+-    type: git
+-    url: https://github.com/kiwicampus/semantic_segmentation_layer.git
+-    version: humble
++  semantic_segmentation_layer:
++    type: git
++    url: https://github.com/Paarseus/semantic_segmentation_layer.git
++    version: avros-fixes
+```
+
+After `vcs import src < avros.repos`, the tree is build-ready immediately — no `git am` / patch step. Removed:
+
+- `scripts/apply_kiwicampus_patches.sh`
+- `src/avros_bringup/patches/kiwicampus_pr1.patch`
+- `src/avros_bringup/patches/kiwicampus_pr2_mutex.patch`
+- `src/avros_bringup/patches/kiwicampus_pr3_raytrace_clear.patch`
+- `src/avros_bringup/patches/` (empty dir, removed)
+
+Patch content is preserved in git history if anyone needs to reconstruct it. The Jetson workspace was migrated to the fork via `rm -rf src/semantic_segmentation_layer && git clone -b avros-fixes https://github.com/Paarseus/...` — direct clone over the Jetson's HTTPS path was hitting `tmp_pack_*` errors mid-fetch (likely a credential-helper interaction), so the clone was done on the dev box and rsync'd to the Jetson.
+
+---
+
+## 13. Costmap inflation + RViz visualisation polish
+
+Once cells started landing in the master grid, the default 1.8 m inflation radius made everything render as a black blob in the default RViz `map` colormap. Tightened both:
+
+`nav2_params_humble.yaml`:
+
+```diff
+       inflation_layer:
+         plugin: "nav2_costmap_2d::InflationLayer"
+-        cost_scaling_factor: 2.5
+-        inflation_radius: 1.8
++        cost_scaling_factor: 5.0
++        inflation_radius: 0.5
+```
+
+Applied to **both** local and global costmap blocks. Result on a frame with 9 LETHAL cells:
+
+| Setting | Total non-zero cost cells |
+|---|---|
+| 1.8 m / 2.5 (before) | 441 (smeared blob) |
+| 0.5 m / 5.0 (after)  | 92  (tight halo, stripes visible) |
+
+`avros.rviz` updated to use the proper `costmap` colormap (the default `map` colormap renders LETHAL as black, indistinguishable from inflation):
+
+```diff
+     - Class: rviz_default_plugins/Map
+       Name: LocalCostmap
+       Topic:
+         Value: /local_costmap/costmap
++      Color Scheme: costmap
++      Alpha: 0.7
++      Draw Behind: false
+     - Class: rviz_default_plugins/Map
+       Name: GlobalCostmap
+       Topic:
+         Value: /global_costmap/costmap
++      Color Scheme: costmap
++      Alpha: 0.5
++      Draw Behind: true
+```
+
+`costmap` colormap renders LETHAL=bright pink, INSCRIBED=red, then orange→yellow→blue gradient through inflation falloff. Now LETHAL is visually distinct from inflation in RViz.
+
+Also added two new RViz displays earlier in the session for sanity-checking the perception pipeline directly:
+
+```diff
+     - Class: rviz_default_plugins/Image
+       Name: Camera
+-        Value: /camera/camera/color/image_raw
++        Value: /perception/front/overlay   # was RealSense; switched to ZED + the
++                                           # avros_perception overlay (RGB blended
++                                           # with semantic_mask) so the user can
++                                           # see what's classified in real-time
++    - Class: rviz_default_plugins/PointCloud2
++      Name: SemanticPoints
++      Topic:
++        Value: /perception/front/semantic_points
++      Color Transformer: FlatColor
++      Color: 255; 0; 255          # magenta — projects classified obstacles in 3D
+```
+
+---
+
+## 14. nav2_params polish — drop voxel_layer, single source, kiwicampus param tweaks
+
+While debugging, several nav2 changes turned out to be unrelated to the root cause but worth keeping.
+
+```diff
+-      plugins: ["voxel_layer", "semantic_layer", "inflation_layer"]
++      plugins: ["semantic_layer", "inflation_layer"]
+```
+
+Velodyne is currently disabled in field testing (no LiDAR fitted to the chassis as of this session). Without `velodyne_points` arriving, `voxel_layer` was a no-op consuming a slot in the `updateBounds` chain. Removing it eliminates a per-cycle no-op and one source of confusion when chasing the empty-master-grid bug. Re-add when LiDAR is back.
+
+```diff
+       semantic_layer:
+         plugin: "semantic_segmentation_layer::SemanticSegmentationLayer"
+         enabled: true
+-        observation_sources: front left right
++        observation_sources: front
+```
+
+Left/right ZEDs are not yet wired up. Declaring them as sources but never publishing on their topics has no functional impact, but it generates noisy "no observations" warnings and adds startup latency while the sync filters time out. Restore the three-camera list once Phase 5 (multi-camera) lands.
+
+```diff
+       danger:
+-        mark_confidence: 0
+-        samples_to_max_cost: 0
++        mark_confidence: 1
++        samples_to_max_cost: 1
+```
+
+Both were 0 from a copy-paste; the kiwicampus plugin treats `samples_to_max_cost == 0` ambiguously (some code paths divide by it and skip the mark). Setting both to 1 makes "first observation marks the cell to base_cost (254)" the documented behaviour. Did not by itself fix the empty-grid problem — that took the §10.3 clock fix — but it removed one ambiguity from the matrix while diagnosing.
+
+---
+
+## 15. HSV night calibration
+
+The morning's daylight calibration (`lane_low V = 120`, `S = 120`, `sky_roi_poly` top 60% mask) produced **0 detected lane pixels** under floodlight illumination at night. Sampled the bottom-40% ROI of a live frame — 99th-percentile V was only ~90 (vs 200+ in daylight), max V in the brightest 1% was 95.
+
+```diff
+-    lane_low:    [0,   0, 120]
++    lane_low:    [0,   0,  80]   # 2026-04-29 night cal: V floor dropped from 120, scene max V~95
+```
+
+After this single change, `lane_pixels (class=1) = 203` per frame, and the overlay clearly highlighted both edge stripes of the walkway in cyan — the user's "two lines in front of the car" visible in one shot. No iteration needed.
+
+`adaptive_k = 0.0` and the `sky_roi_poly` (top 60% masked out) were retained from the daylight calibration; both still apply.
+
+This is a night-only value. The daylight value (`V = 120`) needs to be restored, or the calibration made adaptive (e.g. revive `adaptive_k` non-zero), before driving outdoors during the day. TODO entry added.
+
+---
+
+## 16. TODO additions (evening)
+
+Removed (resolved tonight):
+- ~~Wait for kiwicampus maintainer feedback on draft PR #5; rebase to rolling API when they confirm direction~~ — superseded by our own fork at `Paarseus/semantic_segmentation_layer:avros-fixes` which we now use directly. Upstream PRs left open as a courtesy.
+
+Added (new):
+- Improve PR1 commit message body on `Paarseus/semantic_segmentation_layer:avros-fixes` (currently "Backport to Humble (Colcon builds successfully)" — bare; rebase to rewrite, then force-push)
+- Open PRs upstream for the clock-domain fix (PR4 in our stack, not yet on kiwicampus). The mutex fix (PR2 in our stack) is also unfiled upstream.
+- Restore daylight HSV `lane_low V = 120` before next day-time outdoor test, OR reintroduce an adaptive V floor (`adaptive_k > 0`) so a single config works in both lighting regimes.
+- Verify RTK FIXED outdoors with the new nav stack composition — none of tonight's changes touched NTRIP / Xsens, but field testing lapsed early once the costmap was found empty.
+
+---
+
+## 17. Files touched (evening)
+
+```
+M  avros.repos                                            (kiwicampus → Paarseus fork)
+D  scripts/apply_kiwicampus_patches.sh                    (no longer needed)
+D  src/avros_bringup/patches/kiwicampus_pr1.patch         (now a commit on the fork)
+D  src/avros_bringup/patches/kiwicampus_pr2_mutex.patch   (now a commit on the fork)
+D  src/avros_bringup/patches/kiwicampus_pr3_raytrace_clear.patch  (now a commit on the fork)
+M  src/avros_bringup/config/nav2_params_humble.yaml       (inflation + plugins list + observation_sources + mark/samples)
+M  src/avros_bringup/rviz/avros.rviz                      (overlay topic + costmap colormap + SemanticPoints)
+M  src/avros_perception/config/perception.yaml            (V floor 120 → 80 night cal)
+M  docs/CHANGELOG_2026-04-29.md                           (this addendum)
+```
+
+On the fork (`Paarseus/semantic_segmentation_layer:avros-fixes`), the new commit is `ffb3c7d` "Stamp observations with wall-clock instead of cloud header stamp."
+
+---
+
+*Last updated: 2026-04-29 by morning + evening sessions covering kiwicampus PR3 raytrace-clear, Nav2 BT bring-up, combined-launch, HSV calibration, and tonight's clock-domain root-cause + fork migration. Morning commits: `4e4d562`, `052ee4e`, `8680313`, `f1657f1`. Evening commit forthcoming. Upstream PRs: [kiwicampus#5](https://github.com/kiwicampus/semantic_segmentation_layer/pull/5) (raytrace-clear, draft); clock-domain fix not yet filed upstream — see TODO §16.*
