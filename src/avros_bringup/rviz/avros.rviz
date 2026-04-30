@@ -30,17 +30,48 @@ Visualization Manager:
       Enabled: true
       Name: Camera
       Topic:
-        Value: /camera/camera/color/image_raw
+        Value: /perception/front/overlay
+        Depth: 5
+        Reliability Policy: Best Effort
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Name: SemanticMask
+      Topic:
+        Value: /perception/front/semantic_mask
+        Depth: 5
+        Reliability Policy: Best Effort
+      Normalize Range: false
+      Min Value: 0
+      Max Value: 5
+      Median window: 1
+    - Class: rviz_default_plugins/PointCloud2
+      Enabled: true
+      Name: SemanticPoints
+      Topic:
+        Value: /perception/front/semantic_points
+        Depth: 5
+        Reliability Policy: Best Effort
+      Size (m): 0.1
+      Style: Spheres
+      Color Transformer: FlatColor
+      Color: 255; 0; 255
+      Use Fixed Frame: true
     - Class: rviz_default_plugins/Map
       Enabled: true
       Name: LocalCostmap
       Topic:
         Value: /local_costmap/costmap
+      Color Scheme: costmap
+      Alpha: 0.7
+      Draw Behind: false
     - Class: rviz_default_plugins/Map
       Enabled: true
       Name: GlobalCostmap
       Topic:
         Value: /global_costmap/costmap
+      Color Scheme: costmap
+      Alpha: 0.5
+      Draw Behind: true
     - Class: rviz_default_plugins/Path
       Enabled: true
       Name: GlobalPath

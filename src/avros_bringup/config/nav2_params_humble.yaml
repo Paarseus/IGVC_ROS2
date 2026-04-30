@@ -139,7 +139,7 @@ local_costmap:
       height: 50
       resolution: 0.2
       robot_radius: 0.8
-      plugins: ["voxel_layer", "semantic_layer", "inflation_layer"]
+      plugins: ["semantic_layer", "inflation_layer"]
 
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
@@ -194,7 +194,7 @@ local_costmap:
       semantic_layer:
         plugin: "semantic_segmentation_layer::SemanticSegmentationLayer"
         enabled: true
-        observation_sources: front left right
+        observation_sources: front
         front:
           segmentation_topic: /perception/front/semantic_mask
           pointcloud_topic: /perception/front/semantic_points
@@ -215,8 +215,8 @@ local_costmap:
             classes: ["lane_white", "barrel_orange", "pothole"]
             base_cost: 254
             max_cost: 254
-            mark_confidence: 0
-            samples_to_max_cost: 0
+            mark_confidence: 1
+            samples_to_max_cost: 1
             dominant_priority: false
         left:
           segmentation_topic: /perception/left/semantic_mask
@@ -238,8 +238,8 @@ local_costmap:
             classes: ["lane_white", "barrel_orange", "pothole"]
             base_cost: 254
             max_cost: 254
-            mark_confidence: 0
-            samples_to_max_cost: 0
+            mark_confidence: 1
+            samples_to_max_cost: 1
             dominant_priority: false
         right:
           segmentation_topic: /perception/right/semantic_mask
@@ -261,14 +261,14 @@ local_costmap:
             classes: ["lane_white", "barrel_orange", "pothole"]
             base_cost: 254
             max_cost: 254
-            mark_confidence: 0
-            samples_to_max_cost: 0
+            mark_confidence: 1
+            samples_to_max_cost: 1
             dominant_priority: false
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 2.5
-        inflation_radius: 1.8
+        cost_scaling_factor: 5.0
+        inflation_radius: 0.5
 
 global_costmap:
   global_costmap:
@@ -303,8 +303,8 @@ global_costmap:
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 2.5
-        inflation_radius: 1.8
+        cost_scaling_factor: 5.0
+        inflation_radius: 0.5
 
 velocity_smoother:
   ros__parameters:

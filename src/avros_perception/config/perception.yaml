@@ -38,11 +38,20 @@
     # HSV is in OpenCV convention: H in [0, 179], S and V in [0, 255].
     blur_iters: 3               # 3x 5x5 box-blur preprocessing (Sooner 2023)
     adaptive_period: 5          # V-floor refresh every N frames (iscumd)
-    adaptive_k: 3.0             # V-floor = mean + k*std; k=3 keeps ~top 3%
+    adaptive_k: 0.0             # V-floor = mean + k*std; k=0 disables the
+                                # adaptive bright filter — use absolute
+                                # lane_low V threshold instead. Calibrated
+                                # 2026-04-29 daylight where the painted
+                                # stripes were too dim relative to bright
+                                # concrete to pass mean+k*std for k>=0.5.
 
-    # White lane paint: low saturation, high value, hue irrelevant
-    lane_low:    [0,   0, 180]
-    lane_high:   [179, 60, 255]
+    # White lane paint: low saturation, high value, hue irrelevant.
+    # V floor 120 catches dim painted stripes under camera auto-exposure
+    # for a bright scene; S ceiling 120 (was 60) catches stripes that
+    # have picked up a slight color tint from JPEG/lens. Calibrated
+    # 2026-04-29 daylight at the CPP campus walkway.
+    lane_low:    [0,   0,  80]   # 2026-04-29 night cal: V floor dropped from 120, scene max V~95
+    lane_high:   [179, 120, 255]
     class_id_lane: 1
 
     # Orange safety barrels: narrow H band around 15 deg, saturated+bright
@@ -57,6 +66,9 @@
 
     # ROI polygon — pixels inside the polygon are zeroed (class=free).
     # Flat [x1, y1, x2, y2, ...] array of normalized 0..1 coordinates
-    # (ROS2 params don't support list-of-lists). Default: top 35% of the
-    # frame (sky + distant trees). Empty list disables the ROI.
-    sky_roi_poly: [0.0, 0.0,  1.0, 0.0,  1.0, 0.35,  0.0, 0.35]
+    # (ROS2 params don't support list-of-lists). Default: top 60% of the
+    # frame masked (sky + buildings + distant trees). Calibrated 2026-04-29
+    # — top 35% wasn't aggressive enough to fully kill blue sky and
+    # distant tree-glare; 60% safely covers everything above the path
+    # horizon at typical mounting height. Empty list disables the ROI.
+    sky_roi_poly: [0.0, 0.0,  1.0, 0.0,  1.0, 0.6,  0.0, 0.6]
