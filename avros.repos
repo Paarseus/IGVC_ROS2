@@ -14,11 +14,18 @@ repositories:
     type: git
     url: https://github.com/stereolabs/zed-ros2-wrapper.git
     version: v5.2.2
-  # Humble branch of kiwicampus/semantic_segmentation_layer. The branch builds
-  # on Jazzy/Rolling as-is; Humble needs the patch in
-  # src/avros_bringup/patches/kiwicampus_pr1.patch (run scripts/apply_kiwicampus_patches.sh
-  # after vcs import). Drop the patch when upstream merges PR #1.
+  # Paarseus fork of kiwicampus/semantic_segmentation_layer with our four
+  # patches stacked as commits on branch `avros-fixes` (in order):
+  #   1. Humble backport (CMake modernization, missing <deque>)        — upstream PR #1
+  #   2. Lock temporal_tile_map in updateBounds (data-race purge)      — open
+  #   3. Raytrace-clear stale LETHAL cells (PR3)                       — upstream PR #5
+  #   4. Stamp observations with wall-clock instead of cloud header    — open
+  #
+  # Cloning this branch gives a build-ready tree — no `git am` step needed.
+  # See docs/CHANGELOG_2026-04-29.md §3-§5 for why patch #4 is required;
+  # without it the master costmap stays empty when the sensor's
+  # cloud.header.stamp lags wall-clock by more than tile_map_decay_time.
   semantic_segmentation_layer:
     type: git
-    url: https://github.com/kiwicampus/semantic_segmentation_layer.git
-    version: humble
+    url: https://github.com/Paarseus/semantic_segmentation_layer.git
+    version: avros-fixes
