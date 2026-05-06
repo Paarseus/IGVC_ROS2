@@ -18,7 +18,11 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    IncludeLaunchDescription,
+    SetEnvironmentVariable,
+)
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -28,8 +32,23 @@ def generate_launch_description():
     pkg_dir = get_package_share_directory('avros_bringup')
     ekf_config = os.path.join(pkg_dir, 'config', 'ekf.yaml')
     navsat_config = os.path.join(pkg_dir, 'config', 'navsat.yaml')
+    cyclonedds_file = os.path.join(pkg_dir, 'config', 'cyclonedds.xml')
 
     return LaunchDescription([
+        # Force CycloneDDS for every node spawned from this launch (and any
+        # child includes). Without this, directly-instantiated nodes (EKFs,
+        # navsat_transform) come up on the shell default — usually FastDDS —
+        # which doesn't interop cleanly with the CycloneDDS sensor stack and
+        # corrupts action goal payloads. See CLAUDE.md known-issues.
+        SetEnvironmentVariable(
+            name='RMW_IMPLEMENTATION',
+            value='rmw_cyclonedds_cpp'
+        ),
+        SetEnvironmentVariable(
+            name='CYCLONEDDS_URI',
+            value='file://' + cyclonedds_file
+        ),
+
         DeclareLaunchArgument(
             'use_sim_time', default_value='false',
             description='Use simulation clock'

@@ -15,7 +15,7 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, SetEnvironmentVariable
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -23,8 +23,20 @@ from launch_ros.actions import Node
 def generate_launch_description():
     pkg_dir = get_package_share_directory('avros_bringup')
     actuator_config = os.path.join(pkg_dir, 'config', 'actuator_params.yaml')
+    cyclonedds_file = os.path.join(pkg_dir, 'config', 'cyclonedds.xml')
 
     return LaunchDescription([
+        # Force CycloneDDS so teleop_twist_keyboard reaches the actuator
+        # node and the actuator sees /imu/data from the sensor stack.
+        SetEnvironmentVariable(
+            name='RMW_IMPLEMENTATION',
+            value='rmw_cyclonedds_cpp'
+        ),
+        SetEnvironmentVariable(
+            name='CYCLONEDDS_URI',
+            value='file://' + cyclonedds_file
+        ),
+
         DeclareLaunchArgument(
             'use_sim_time', default_value='false',
             description='Use simulation clock'

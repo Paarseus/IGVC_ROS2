@@ -399,8 +399,13 @@ CycloneDDS (`cyclonedds.xml`):
 - Socket receive buffer: 10 MB minimum
 - Shared memory: **disabled** (iceoryx RouDi daemon not running; `<SharedMemory><Enable>false</Enable></SharedMemory>`)
 - Network: auto-detect interface
-- Set via: `CYCLONEDDS_URI=file://<path>` in sensors.launch.py
-- **Must also set** `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` (defaults to FastDDS otherwise)
+- **Every launch file in `avros_bringup/launch/` sets `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` and `CYCLONEDDS_URI=file://...cyclonedds.xml`** at the top of its `LaunchDescription` via `SetEnvironmentVariable`, so any `ros2 launch avros_bringup ...` command brings nodes up on CycloneDDS regardless of the user's shell.
+- **CLI tools (`ros2 topic`, `ros2 action send_goal`, `rviz2`, `rqt`, standalone Python scripts) still read the shell env** — they don't see the launch-file's env vars. Put the export in `~/.bashrc` so CLI tools match the launch stack:
+  ```bash
+  export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+  export CYCLONEDDS_URI=file:///home/dinosaur/IGVC/install/avros_bringup/share/avros_bringup/config/cyclonedds.xml
+  ```
+  Without this, CLI commands default to FastDDS and either don't see CycloneDDS topics or corrupt action goals (poses arrive zeroed).
 
 ---
 
@@ -416,8 +421,7 @@ SparkMAX FW 26.1.4 CAN protocol gotchas (cls=14 PARAMETER_WRITE, cls=0 VELOCITY_
 | Xsens driver missing deps | `ros-humble-mavros-msgs` and `ros-humble-nmea-msgs` must be installed via apt |
 | CycloneDDS iceoryx/RouDi errors on launch | SharedMemory must be disabled in `cyclonedds.xml` unless RouDi daemon is running — set `<SharedMemory><Enable>false</Enable></SharedMemory>` |
 | numpy binary incompatibility on Jetson | Pin `numpy<2` — numpy 2.x breaks system matplotlib/scipy on JetPack 6 |
-| RMW_IMPLEMENTATION not set | Must export `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` in addition to `CYCLONEDDS_URI` — defaults to FastDDS otherwise |
-| CLI commands get (0,0) goals / RMW mismatch | Launch file sets `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` for nav2 nodes, but `ros2` CLI tools use the shell default (FastDDS). FastDDS→CycloneDDS interop corrupts action goal payloads (poses arrive zeroed). Fix: `export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` in `.bashrc` or before any `ros2` CLI command |
+| CLI commands get (0,0) goals / RMW mismatch | All `avros_bringup` launches now set `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` + `CYCLONEDDS_URI` themselves, so nodes spawned by `ros2 launch` are always on CycloneDDS. **CLI tools (`ros2 topic`, `ros2 action send_goal`, `rviz2`) still use the shell default** — FastDDS→CycloneDDS interop corrupts action goal payloads (poses arrive zeroed). Fix: `export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` + `CYCLONEDDS_URI=file://.../cyclonedds.xml` in `~/.bashrc`, or prefix every CLI command. |
 | route_server "Failed to transform from '' to map" | `global_frame` param missing from route_server config — defaults to empty string, so `getRobotPose()` uses empty frame_id. Fix: add `global_frame: "map"` to route_server params |
 | NTRIP client no data | Verify credentials and mountpoint in `ntrip_params.yaml`; check internet access from Jetson; try `enable_ntrip:=false` to isolate |
 | NTRIP `mountpoint` still `CHANGE_ME` | Edit `ntrip_params.yaml` — pick a nearby mountpoint from your caster (e.g. rtk2go.com mount list) |

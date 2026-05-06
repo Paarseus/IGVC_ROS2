@@ -20,7 +20,11 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    IncludeLaunchDescription,
+    SetEnvironmentVariable,
+)
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
@@ -32,6 +36,7 @@ def generate_launch_description():
     pkg_dir = get_package_share_directory('avros_bringup')
     actuator_config = os.path.join(pkg_dir, 'config', 'actuator_params.yaml')
     graph_file = os.path.join(pkg_dir, 'config', 'cpp_campus_graph.geojson')
+    cyclonedds_file = os.path.join(pkg_dir, 'config', 'cyclonedds.xml')
 
     # Select distro-specific config (params + default BT XML)
     ros_distro = os.environ.get('ROS_DISTRO', 'humble')
@@ -89,6 +94,21 @@ def generate_launch_description():
     ]
 
     return LaunchDescription([
+        # Force CycloneDDS for every node spawned from this launch (and any
+        # child includes). Without this, directly-instantiated Nav2 servers
+        # come up on the shell default — usually FastDDS — which doesn't
+        # interop cleanly with the CycloneDDS sensor stack and corrupts
+        # action goal payloads (poses arrive zeroed). See CLAUDE.md
+        # known-issues.
+        SetEnvironmentVariable(
+            name='RMW_IMPLEMENTATION',
+            value='rmw_cyclonedds_cpp'
+        ),
+        SetEnvironmentVariable(
+            name='CYCLONEDDS_URI',
+            value='file://' + cyclonedds_file
+        ),
+
         DeclareLaunchArgument(
             'use_sim_time', default_value='false',
             description='Use simulation clock'
