@@ -16,9 +16,9 @@ actuator_node:
     # Time to reach max_linear_mps from 0 = max_linear_mps / max_linear_accel_mps2
     # Example: 1.5 m/s target, accel 1.0 m/s² → 1.5 s to reach top speed.
     # Decel cap can be higher for quicker stops without hard regen brake.
-    max_linear_accel_mps2: 1.0
+    max_linear_accel_mps2: 0.5
     max_linear_decel_mps2: 1.5
-    max_angular_accel_rps2: 2.0
+    max_angular_accel_rps2: 1.0
 
     # ---- IMU-based straight-line assist ----
     heading_hold_deadband: 0.05    # rad/s — |ω_cmd| below this engages heading-hold
