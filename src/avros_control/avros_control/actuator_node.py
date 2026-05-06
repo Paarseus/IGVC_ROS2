@@ -33,6 +33,7 @@ from rclpy.node import Node
 from geometry_msgs.msg import Twist, TransformStamped
 from sensor_msgs.msg import Imu
 from nav_msgs.msg import Odometry
+from std_msgs.msg import Float32MultiArray, MultiArrayDimension
 from avros_msgs.msg import ActuatorCommand, ActuatorState
 
 
@@ -167,6 +168,21 @@ class ActuatorNode(Node):
             ActuatorState, '/avros/actuator_state', 10
         )
         self._odom_pub = self.create_publisher(Odometry, '/wheel_odom', 10)
+        # Raw per-wheel telemetry for offline motor-sync analysis.
+        # Layout (16 floats): see _control_loop end-of-tick publish.
+        self._wheel_debug_pub = self.create_publisher(
+            Float32MultiArray, '/avros/wheel_debug', 50
+        )
+        self._wheel_debug_labels = [
+            'L_cmd_rpm', 'R_cmd_rpm',
+            'L_meas_rpm', 'R_meas_rpm',
+            'L_pos_rev', 'R_pos_rev',
+            'v_target', 'w_target',
+            'v_slewed', 'w_slewed',
+            'v_after_imu', 'w_after_imu',
+            'yaw', 'yaw_rate',
+            'heading_locked', 'estop',
+        ]
 
         # Diagonal covariance for 2D diff-drive wheel odometry.
         # Trust velocity (wheels measure it directly), mark unobservable
@@ -268,8 +284,10 @@ class ActuatorNode(Node):
             self._slew_v += max(-max_dv, min(max_dv, dv))
             self._slew_w += max(-max_dw, min(max_dw, dw))
 
-        v = self._slew_v
-        w = self._slew_w
+        v_slewed = self._slew_v
+        w_slewed = self._slew_w
+        v = v_slewed
+        w = w_slewed
 
         # IMU-based filters on ω
         if self._imu_fresh:
@@ -295,10 +313,42 @@ class ActuatorNode(Node):
         r_rpm = r_mps / self._m_per_rev * 60.0
 
         # Send setpoint (or S on idle/estop)
-        if self._estop or (not has_actuator and not has_cmd_vel and abs(v) < 1e-6 and abs(w) < 1e-6):
+        sent_stop = self._estop or (
+            not has_actuator and not has_cmd_vel and abs(v) < 1e-6 and abs(w) < 1e-6
+        )
+        if sent_stop:
             self._serial_write('S')
+            l_rpm_sent = 0.0
+            r_rpm_sent = 0.0
         else:
             self._serial_write(f'L{l_rpm:.0f} R{r_rpm:.0f}')
+            l_rpm_sent = l_rpm
+            r_rpm_sent = r_rpm
+
+        # Publish raw per-wheel telemetry for offline analysis
+        with self._fb_lock:
+            l_meas = self._l_meas_rpm
+            r_meas = self._r_meas_rpm
+            l_pos = self._l_meas_pos
+            r_pos = self._r_meas_pos
+        dbg = Float32MultiArray()
+        dbg.layout.dim.append(MultiArrayDimension(
+            label=','.join(self._wheel_debug_labels),
+            size=len(self._wheel_debug_labels),
+            stride=len(self._wheel_debug_labels),
+        ))
+        dbg.data = [
+            float(l_rpm_sent), float(r_rpm_sent),
+            float(l_meas), float(r_meas),
+            float(l_pos), float(r_pos),
+            float(v_req), float(w_req),
+            float(v_slewed), float(w_slewed),
+            float(v), float(w),
+            float(self._current_yaw), float(self._current_yaw_rate),
+            1.0 if self._heading_locked else 0.0,
+            1.0 if self._estop else 0.0,
+        ]
+        self._wheel_debug_pub.publish(dbg)
 
     # ------------------------------------------------------------- publishing
     def _publish_state(self):
