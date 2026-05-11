@@ -42,7 +42,7 @@ def generate_launch_description():
     ros_distro = os.environ.get('ROS_DISTRO', 'humble')
     if ros_distro == 'humble':
         nav2_config = os.path.join(pkg_dir, 'config', 'nav2_params_humble.yaml')
-        default_bt = 'navigate_route_graph_humble.xml'
+        default_bt = 'navigate_to_pose_simple_humble.xml'
     else:
         nav2_config = os.path.join(pkg_dir, 'config', 'nav2_params.yaml')
         default_bt = 'navigate_route_graph.xml'
@@ -117,9 +117,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'bt_xml', default_value=default_bt,
             description='Behavior tree XML filename (in config/ dir). '
-                        'Default routes via cpp_campus_graph; pass '
-                        'navigate_to_pose_simple_humble.xml for arbitrary-goal '
-                        'ComputePathToPose-based navigation.'
+                        'Default (humble) is navigate_to_pose_simple_humble.xml '
+                        '(ComputePathToPose-based, arbitrary goals). '
+                        'Pass navigate_route_graph_humble.xml to route via '
+                        'cpp_campus_graph instead.'
         ),
 
         DeclareLaunchArgument(
