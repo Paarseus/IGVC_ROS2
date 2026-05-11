@@ -8,3 +8,17 @@ __pycache__/
 src/xsens_mti/
 src/zed-ros2-wrapper/
 src/semantic_segmentation_layer/
+
+# Claude Code working dirs
+.claude/
+.playwright-mcp/
+
+# Stray screenshots at repo root (Claude/playwright artefacts that
+# get dropped here from unrelated sessions). Legitimate images live
+# under docs/ — keep this list explicit instead of blanket /*.png
+# so we don't silently swallow real assets.
+/amazon-*.png
+/at-b3.png
+/scale-page.png
+/sheet-*.png
+/solidremote.png
