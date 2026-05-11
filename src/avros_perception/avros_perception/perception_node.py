@@ -57,6 +57,9 @@ _PIPELINE_PARAM_NAMES = (
     'pothole_low', 'pothole_high', 'class_id_pothole',
     # hsv ROI polygon (normalized coords)
     'sky_roi_poly',
+    # sooner25 pipeline params
+    'sooner25_lower', 'sooner25_upper',
+    'sooner25_blur_weight', 'sooner25_blur_iters',
 )
 
 _HSV_BOUND_NAMES = frozenset((
@@ -133,6 +136,13 @@ class PerceptionNode(Node):
             'sky_roi_poly',
             [0.0, 0.0, 1.0, 0.0, 1.0, 0.35, 0.0, 0.35],
         )
+        # Sooner Robotics 2025 pipeline — single-class inverted threshold.
+        # Lower/upper bound the asphalt (low S, mid V); inverter flags paint
+        # + saturated objects as obstacles. See pipelines/sooner25.py.
+        self.declare_parameter('sooner25_lower', [0,   0,   0])
+        self.declare_parameter('sooner25_upper', [255, 95, 210])
+        self.declare_parameter('sooner25_blur_weight', 5)
+        self.declare_parameter('sooner25_blur_iters', 3)
 
         cam = self.get_parameter('camera_name').value
         # zed-ros2-wrapper v5.x topic names:

@@ -1,5 +1,6 @@
 from avros_perception.pipelines.base import Pipeline, PipelineResult
 from avros_perception.pipelines.hsv import HSVPipeline
+from avros_perception.pipelines.sooner25 import Sooner25Pipeline
 from avros_perception.pipelines.stub import StubPipeline
 
 __all__ = [
@@ -7,6 +8,7 @@ __all__ = [
     'PipelineResult',
     'StubPipeline',
     'HSVPipeline',
+    'Sooner25Pipeline',
     'PIPELINES',
     'build_pipeline',
 ]
@@ -14,6 +16,7 @@ __all__ = [
 PIPELINES = {
     'stub': StubPipeline,
     'hsv': HSVPipeline,
+    'sooner25': Sooner25Pipeline,
 }
 
 
