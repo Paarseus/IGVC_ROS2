@@ -46,7 +46,7 @@ ssh $JETSON "cd $AVROS_DIR && source /opt/ros/humble/setup.bash && colcon build 
 echo "=== Launching ($MODE) ==="
 case $MODE in
     nav)
-        ssh $JETSON "source /opt/ros/humble/setup.bash && source $AVROS_DIR/install/setup.bash && export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp && export CYCLONEDDS_URI=file://\$(ros2 pkg prefix avros_bringup)/share/avros_bringup/config/cyclonedds.xml && ros2 launch avros_bringup navigation.launch.py enable_velodyne:=false enable_realsense:=false"
+        ssh $JETSON "source /opt/ros/humble/setup.bash && source $AVROS_DIR/install/setup.bash && export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp && export CYCLONEDDS_URI=file://\$(ros2 pkg prefix avros_bringup)/share/avros_bringup/config/cyclonedds.xml && ros2 launch avros_bringup navigation.launch.py enable_velodyne:=false"
         ;;
     webui)
         ssh $JETSON "source /opt/ros/humble/setup.bash && source $AVROS_DIR/install/setup.bash && export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp && export CYCLONEDDS_URI=file://\$(ros2 pkg prefix avros_bringup)/share/avros_bringup/config/cyclonedds.xml && ros2 launch avros_bringup webui.launch.py"

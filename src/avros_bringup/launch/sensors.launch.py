@@ -3,7 +3,6 @@
 Launches:
   - robot_state_publisher (URDF -> static TF)
   - velodyne VLP-16 driver + pointcloud transform
-  - realsense D455 camera (color + depth + pointcloud)
   - xsens MTi-680G IMU/GNSS
   - NTRIP client for RTK corrections (optional)
 """
@@ -29,7 +28,6 @@ def generate_launch_description():
     urdf_file = os.path.join(pkg_dir, 'urdf', 'avros.urdf.xacro')
     cyclonedds_file = os.path.join(pkg_dir, 'config', 'cyclonedds.xml')
     velodyne_config = os.path.join(pkg_dir, 'config', 'velodyne.yaml')
-    realsense_config = os.path.join(pkg_dir, 'config', 'realsense.yaml')
     zed_front_config = os.path.join(pkg_dir, 'config', 'zed_front.yaml')
     zed_left_config = os.path.join(pkg_dir, 'config', 'zed_left.yaml')
     zed_right_config = os.path.join(pkg_dir, 'config', 'zed_right.yaml')
@@ -60,11 +58,6 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'enable_velodyne', default_value='true',
             description='Enable Velodyne VLP-16 LiDAR'
-        ),
-
-        DeclareLaunchArgument(
-            'enable_realsense', default_value='true',
-            description='Enable RealSense D455 camera'
         ),
 
         DeclareLaunchArgument(
@@ -113,16 +106,6 @@ def generate_launch_description():
             parameters=[velodyne_config],
             output='screen',
             condition=IfCondition(LaunchConfiguration('enable_velodyne')),
-        ),
-
-        # RealSense D455 (built from source, RSUSB backend)
-        Node(
-            package='realsense2_camera',
-            executable='realsense2_camera_node',
-            name='camera',
-            parameters=[realsense_config],
-            output='screen',
-            condition=IfCondition(LaunchConfiguration('enable_realsense')),
         ),
 
         # ZED X Front (GMSL via ZED Link Quad). Launched via the wrapper's own

@@ -24,24 +24,6 @@
       </ros>
     </device>
 
-    <!-- Color camera → /camera/camera/color/image_raw -->
-    <device reference="camera_color" type="Camera">
-      <ros>
-        <topicName>/camera/camera/color/image_raw</topicName>
-        <frameName>camera_color_optical_frame</frameName>
-        <alwaysOn>true</alwaysOn>
-      </ros>
-    </device>
-
-    <!-- Depth camera → /camera/camera/aligned_depth_to_color/image_raw -->
-    <device reference="camera_depth" type="RangeFinder">
-      <ros>
-        <topicName>/camera/camera/aligned_depth_to_color/image_raw</topicName>
-        <frameName>camera_depth_optical_frame</frameName>
-        <alwaysOn>true</alwaysOn>
-      </ros>
-    </device>
-
     <!-- GPS → /gnss -->
     <device reference="gps" type="GPS">
       <ros>
