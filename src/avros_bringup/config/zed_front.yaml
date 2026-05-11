@@ -17,14 +17,19 @@
     # camera_name / serial_number / camera_model are set by launch args.
     general:
       grab_resolution: 'HD1080'
-      grab_frame_rate: 15
-      pub_frame_rate: 15.0
+      grab_frame_rate: 15           # ZED X HD1080 only accepts 15 or 30 — keep grab at 15
+      pub_frame_rate: 10.0          # ROS publish downsampled to 10 Hz to relieve semantic layer
 
     depth:
       depth_mode: 'NEURAL_LIGHT'        # v5.2 enum: NONE | NEURAL_LIGHT | NEURAL | NEURAL_PLUS
       min_depth: 0.3
       max_depth: 15.0
-      point_cloud_freq: 15.0            # match image rate for ApproximateTime sync
+      point_cloud_freq: 10.0            # match pub_frame_rate for ApproximateTime sync
+      point_cloud_res: 'REDUCED'        # half-res (128x224, ~28k pts) vs COMPACT 256x448.
+                                        # ZED wrapper only accepts COMPACT or REDUCED — no MEDIUM.
+                                        # 4x fewer points for the kiwicampus layer to project,
+                                        # which is the local_costmap CPU bottleneck (single-core
+                                        # bound at COMPACT). 2026-05-06 measurement.
       # depth_stabilization=1 (minimum smoothing) instead of SDK-default (-1).
       # SDK default forces pos_tracking on AND runs heavier temporal filter -> 34% mean GPU.
       # Setting to 1 keeps the wrapper happy (cloud still publishes) at 27% mean GPU.
