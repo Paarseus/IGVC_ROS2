@@ -17,7 +17,10 @@
     cloud_topic: ''
 
     # Pipeline selector: 'stub' | 'hsv' | 'sooner25' | 'onnx' (onnx lands in Phase 6).
-    pipeline: 'hsv'
+    # 'sooner25' is the Sooner Robotics 2025 IGVC AutoNav winning approach —
+    # see pipelines/sooner25.py. Switched from 'hsv' 2026-05-11 PM after the
+    # legacy per-class HSV pipeline kept misclassifying bright concrete.
+    pipeline: 'sooner25'
 
     # message_filters ApproximateTimeSynchronizer
     sync_slop: 0.02        # seconds; ZED sensors_image_sync:=true keeps pairs tight
@@ -46,12 +49,16 @@
                                 # concrete to pass mean+k*std for k>=0.5.
 
     # White lane paint: low saturation, high value, hue irrelevant.
-    # V floor 120 catches dim painted stripes under camera auto-exposure
-    # for a bright scene; S ceiling 120 (was 60) catches stripes that
-    # have picked up a slight color tint from JPEG/lens. Calibrated
-    # 2026-04-29 daylight at the CPP campus walkway.
-    lane_low:    [0,   0,  80]   # 2026-04-29 night cal: V floor dropped from 120, scene max V~95
-    lane_high:   [179, 120, 255]
+    # V floor 222, S ceiling 35 — recalibrated 2026-05-11 PM #2 on walkway with
+    # two parallel painted stripes. Lower-half V mean=182, p90=217, max=255.
+    # V=222 gives a solid trace on the near stripe (~0.5% of mask) with no
+    # walkway creep; V=215 explodes the mask to 5%; V=235 catches nothing.
+    # Far stripes don't survive 3x3 erosion at 128x224 mask resolution —
+    # they get detected when the car gets closer.
+    # NOTE: threshold is scene-dependent. Expect re-tuning under different
+    # lighting / camera position until ONNX perception lands.
+    lane_low:    [0,   0, 222]
+    lane_high:   [179, 35, 255]
     class_id_lane: 1
 
     # Orange safety barrels: narrow H band around 15 deg, saturated+bright
@@ -59,9 +66,13 @@
     barrel_high: [25, 255, 255]
     class_id_barrel: 2
 
-    # Pothole marker: white paint ring (similar to lane but stricter V)
-    pothole_low:  [0,   0, 200]
-    pothole_high: [179, 40, 255]
+    # Pothole marker: white paint ring (similar to lane but stricter V).
+    # Neutered 2026-05-11 — pothole detection isn't a priority right now and
+    # the previous [0,0,200]..[179,40,255] band overlapped with bright
+    # concrete, painting the whole walkway magenta. Set V floor 250 and
+    # S ceiling 15 so only near-pure-white pixels match; effectively off.
+    pothole_low:  [0,   0, 250]
+    pothole_high: [179, 15, 255]
     class_id_pothole: 3
 
     # ROI polygon — pixels inside the polygon are zeroed (class=free).
