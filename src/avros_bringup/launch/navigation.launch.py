@@ -133,11 +133,6 @@ def generate_launch_description():
         ),
 
         DeclareLaunchArgument(
-            'enable_realsense', default_value='true',
-            description='Enable RealSense D455 camera'
-        ),
-
-        DeclareLaunchArgument(
             'enable_zed_front', default_value='false',
             description='Enable front ZED X camera'
         ),
@@ -171,7 +166,6 @@ def generate_launch_description():
                 'use_sim_time': use_sim_time,
                 'enable_ntrip': LaunchConfiguration('enable_ntrip'),
                 'enable_velodyne': LaunchConfiguration('enable_velodyne'),
-                'enable_realsense': LaunchConfiguration('enable_realsense'),
                 'enable_zed_front': LaunchConfiguration('enable_zed_front'),
                 'enable_zed_left': LaunchConfiguration('enable_zed_left'),
                 'enable_zed_right': LaunchConfiguration('enable_zed_right'),

@@ -67,7 +67,7 @@ Tasks that aren't blocking field testing but improve correctness, simplicity, or
 Useful but not on any critical path.
 
 - [ ] **Document kiwicampus `tile_map` `frame_id="map"` mislabel.** The `/local_costmap/<source>/tile_map` viz topic is published with hardcoded `frame_id: "map"` regardless of the buffer's actual `global_frame_` (which is `odom` for a local_costmap). Coordinates *in* the message are correct; the label is wrong. Add to `patches/README.md` (or create one) so the next person debugging spatial issues in Foxglove/RViz doesn't waste time on this.
-- [ ] **Phase 5: scale perception to 3 cameras (front + left + right)** with kiwicampus semantic_layer. Decide whether to drop RealSense from VoxelLayer once ZED coverage is full.
+- [ ] **Phase 5: scale perception to 3 cameras (front + left + right)** with kiwicampus semantic_layer.
 - [ ] **Replace forward-Euler pose integration upstream** if you ever encounter it in another diff-drive publisher. (We already fixed it in `actuator_node.py:_publish_odom` 2026-04-28.)
 
 ---

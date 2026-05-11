@@ -36,7 +36,7 @@ def generate_launch_description():
             description='Launch RViz (set false for headless)'
         ),
 
-        # Sensors: robot_state_publisher + velodyne + realsense + xsens
+        # Sensors: robot_state_publisher + velodyne + xsens
         # Also sets RMW_IMPLEMENTATION and CYCLONEDDS_URI env vars
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(

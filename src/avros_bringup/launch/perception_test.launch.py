@@ -1,8 +1,8 @@
 """Front camera -> perception -> semantic_segmentation_layer -> costmap.
 
 Standalone launch for verifying the camera-only path into the local costmap.
-Drops sensors we don't need for that test: no Velodyne, no RealSense, no
-Xsens, no NTRIP, no EKF/navsat, no planner/route/BT/behaviors/smoother.
+Drops sensors we don't need for that test: no Velodyne, no Xsens, no NTRIP,
+no EKF/navsat, no planner/route/BT/behaviors/smoother.
 
 Optionally includes the actuator + WebUI joystick (`enable_drive:=true`,
 default true) so you can drive the robot outdoors while watching the

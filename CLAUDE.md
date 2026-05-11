@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Migration of the AV2.1-API autonomous vehicle codebase to ROS2 (Humble). Five custom packages + upstream drivers (Velodyne, RealSense, Xsens) + Nav2 + robot_localization.
+Migration of the AV2.1-API autonomous vehicle codebase to ROS2 (Humble). Five custom packages + upstream drivers (Velodyne, ZED, Xsens) + Nav2 + robot_localization.
 
 **Naming:** the GitHub repo is `IGVC_ROS2` (https://github.com/Paarseus/IGVC_ROS2). The live Jetson workspace lives at `~/IGVC/`. The older `~/AVROS/` directory on the Jetson is a dead feature branch — do **not** use it; all work goes through `~/IGVC/`.
 
@@ -20,7 +20,7 @@ Migration of the AV2.1-API autonomous vehicle codebase to ROS2 (Humble). Five cu
 # Clone source dependencies (one-time setup, requires python3-vcstool)
 cd ~/IGVC
 vcs import src < avros.repos
-# Clones src/realsense-ros/ (4.56.4) and src/xsens_mti/ (ros2 branch, includes xsens_mti_ros2_driver + ntrip)
+# Clones src/xsens_mti/ (ros2 branch, includes xsens_mti_ros2_driver + ntrip), src/zed-ros2-wrapper/, and src/semantic_segmentation_layer/
 
 # Build all packages (avros_msgs must build first for message generation)
 colcon build --symlink-install --packages-select avros_msgs
@@ -74,7 +74,7 @@ ros2 topic pub --once /avros/actuator_command avros_msgs/msg/ActuatorCommand \
 | `avros_navigation` | ament_python | `generate_graph.py`: offline OSMnx → nav2_route GeoJSON graph tool |
 | `avros_perception` | ament_python | `perception_node`: ZED X RGB/cloud → swappable Pipeline (stub/HSV/ONNX) → mono8 mask + organized cloud + LabelInfo for `kiwicampus/semantic_segmentation_layer` |
 
-No `avros_sensors` — upstream drivers used directly. Source dependencies are managed via `avros.repos` (vcstool manifest) and git-ignored. `vcs import src < avros.repos` clones `realsense-ros` (4.56.4), the Xsens monorepo (`xsens_mti_ros2_driver` + `ntrip`), `zed-ros2-wrapper`, and `semantic_segmentation_layer` (kiwicampus, humble branch — requires patch, see `scripts/apply_kiwicampus_patches.sh`). Velodyne uses `ros-humble-velodyne` (apt).
+No `avros_sensors` — upstream drivers used directly. Source dependencies are managed via `avros.repos` (vcstool manifest) and git-ignored. `vcs import src < avros.repos` clones the Xsens monorepo (`xsens_mti_ros2_driver` + `ntrip`), `zed-ros2-wrapper`, and `semantic_segmentation_layer` (kiwicampus, humble branch — requires patch, see `scripts/apply_kiwicampus_patches.sh`). Velodyne uses `ros-humble-velodyne` (apt).
 
 ---
 
@@ -99,19 +99,6 @@ No `avros_sensors` — upstream drivers used directly. Source dependencies are m
 - **Nodes:** `velodyne_driver_node` (raw UDP → packets), `velodyne_convert_node` (packets → PointCloud2)
 - **Range filter:** min 1.0m (car body), max 50.0m
 - **Verified working** — data confirmed via tcpdump and topic echo
-
-### Intel RealSense D455
-
-- **Package:** Built from source — `realsense-ros` 4.56.4 in `~/IGVC/src/realsense-ros/` + librealsense 2.57.6 at `/usr/local/` (built from `~/librealsense` with RSUSB backend)
-- **Firmware:** 5.13.0.50 (downgraded from 5.17.0.9)
-- **Serial:** 215122251311
-- **USB:** 3.2
-- **Config:** `avros_bringup/config/realsense.yaml`
-- **Resolution:** 1280x720 @ 30fps (color + depth)
-- **Features:** depth align enabled, pointcloud disabled (Nav2 uses VoxelLayer instead)
-- **IMU:** Disabled (`enable_gyro: false`, `enable_accel: false`) — D455 HID/IMU fails with RSUSB backend on JetPack 6; Xsens provides IMU instead
-- **Verified working** — color 30fps, depth streaming, rqt_image_view confirmed
-- **Visualization:** `~/Desktop/visualize_camera.sh` on Jetson (launches camera + rqt_image_view)
 
 ### Xsens MTi-680G (IMU + GNSS)
 
@@ -138,7 +125,7 @@ No `avros_sensors` — upstream drivers used directly. Source dependencies are m
 - **Credentials:** edit `ntrip_params.yaml` — set `mountpoint`, `username`, `password` for your NTRIP caster
 - **Default caster:** rtk2go.com:2101 (free, requires mountpoint selection)
 - **Setup:** Included in `avros.repos` — `vcs import src < avros.repos` clones the full Xsens monorepo to `src/xsens_mti/`, which contains both `xsens_mti_ros2_driver` and `ntrip` packages. Then `colcon build` discovers both automatically.
-- **Not tracked in git** — `src/xsens_mti/` is in `.gitignore`, built from source like `src/realsense-ros/`
+- **Not tracked in git** — `src/xsens_mti/` is in `.gitignore`, built from source like `src/zed-ros2-wrapper/`
 
 ### ZED X Front Camera (GMSL2)
 
@@ -171,9 +158,6 @@ map                                    ← navsat_transform_node
       └── base_link                    ← robot_state_publisher (URDF)
            ├── imu_link                ← static (URDF) — TODO: measure mount position
            ├── velodyne                ← static (URDF) — TODO: measure mount position
-           ├── camera_link             ← static (URDF, RealSense) — TODO: measure mount
-           │    ├── camera_color_optical_frame  ← realsense driver
-           │    └── camera_depth_optical_frame  ← realsense driver
            ├── zed_front_camera_link   ← static (URDF, via zed_macro.urdf.xacro) — TODO: measure mount
            │    ├── zed_front_camera_center
            │    ├── zed_front_left_camera_frame
@@ -201,8 +185,6 @@ Sensor mount positions in URDF (`avros.urdf.xacro`) are approximate — measure 
 | `/imu/data` | `sensor_msgs/Imu` | xsens_mti_node (100 Hz) |
 | `/gnss` | `sensor_msgs/NavSatFix` | xsens_mti_node |
 | `/odometry/filtered` | `nav_msgs/Odometry` | EKF (robot_localization) |
-| `/camera/camera/color/image_raw` | `sensor_msgs/Image` | realsense2_camera_node |
-| `/camera/camera/aligned_depth_to_color/image_raw` | `sensor_msgs/Image` | realsense2_camera_node |
 | `/nmea` | `nmea_msgs/Sentence` | xsens_mti_node (GPGGA ~4 Hz) |
 | `/rtcm` | `mavros_msgs/RTCM` | ntrip_client (RTCM3 corrections) |
 
@@ -360,7 +342,7 @@ sudo dpkg -i /tmp/nm_amd64.deb     # CUDA-init warning is harmless — laptop ha
 
 | Launch File | What it starts |
 |-------------|---------------|
-| `sensors.launch.py` | robot_state_publisher + velodyne driver/convert + realsense + **zed_front (conditional)** + xsens + ntrip |
+| `sensors.launch.py` | robot_state_publisher + velodyne driver/convert + **zed_front (conditional)** + xsens + ntrip |
 | `actuator.launch.py` | actuator_node only |
 | `teleop.launch.py` | actuator_node + teleop_twist_keyboard |
 | `webui.launch.py` | actuator_node + webui_node |
@@ -376,7 +358,6 @@ sudo dpkg -i /tmp/nm_amd64.deb     # CUDA-init warning is harmless — laptop ha
 |--------|---------|
 | `actuator_params.yaml` | actuator_node — serial port, track width, speed/accel limits, IMU heading-hold gains, SparkMAX PID gains pushed on startup |
 | `velodyne.yaml` | velodyne_driver_node + velodyne_convert_node |
-| `realsense.yaml` | realsense2_camera_node |
 | `xsens.yaml` | xsens_mti_node — IMU/GNSS, lever arm, output rate |
 | `webui_params.yaml` | webui_node — port, SSL, max throttle |
 | `ekf.yaml` | robot_localization EKF |
@@ -411,12 +392,11 @@ CycloneDDS (`cyclonedds.xml`):
 
 ## Known Issues & Fixes
 
-SparkMAX FW 26.1.4 CAN protocol gotchas (cls=14 PARAMETER_WRITE, cls=0 VELOCITY_SETPOINT, STATUS_2 enable): see `firmware/teensy_diff_drive/CLAUDE.md`. RealSense one-time install issues: see `docs/REALSENSE_SETUP.md`.
+SparkMAX FW 26.1.4 CAN protocol gotchas (cls=14 PARAMETER_WRITE, cls=0 VELOCITY_SETPOINT, STATUS_2 enable): see `firmware/teensy_diff_drive/CLAUDE.md`.
 
 | Issue | Fix |
 |-------|-----|
 | Port 8000 held after webui crash/disconnect | `fuser -k 8000/tcp` before relaunch |
-| RealSense USB interface busy on relaunch | `pkill -f realsense2_camera_node` + wait 2s before relaunching |
 | Xsens driver package name | Correct name is `xsens_mti_ros2_driver` (not `xsens_ros_mti_driver`) |
 | Xsens driver missing deps | `ros-humble-mavros-msgs` and `ros-humble-nmea-msgs` must be installed via apt |
 | CycloneDDS iceoryx/RouDi errors on launch | SharedMemory must be disabled in `cyclonedds.xml` unless RouDi daemon is running — set `<SharedMemory><Enable>false</Enable></SharedMemory>` |
@@ -439,10 +419,6 @@ SparkMAX FW 26.1.4 CAN protocol gotchas (cls=14 PARAMETER_WRITE, cls=0 VELOCITY_
 | ZED `InvalidParameterValueException` during init | v5.2 deprecated the old depth-mode and ZED-X resolution enums. `depth_mode` must be `NONE | NEURAL_LIGHT | NEURAL | NEURAL_PLUS` (no more `PERFORMANCE/QUALITY/ULTRA`); `grab_resolution` for ZED X must be `HD1200 | HD1080 | SVGA | AUTO` (no `HD720`). Verify the wrapper's own `config/zedx.yaml` for the authoritative enum. |
 | ZED v5 topic names differ from v4 | v5 uses `/rgb/color/rect/image` and `/rgb/color/rect/camera_info`. Older examples / tutorials may reference `/rgb/image_rect_color` which was v4. Downstream subscribers (perception_node) default to the v5 path. |
 | ZED `serial_number` in YAML appears ignored | It's a **launch arg**, not a YAML param — the wrapper's launch overrides any YAML value. Pass `'serial_number': '<N>'` inside the `launch_arguments` dict on the `IncludeLaunchDescription`; don't put it in the override YAML. |
-
----
-
-RealSense D455 install procedure (RSUSB build, FW 5.13.0.50 downgrade, apt removal): see `docs/REALSENSE_SETUP.md`.
 
 ---
 

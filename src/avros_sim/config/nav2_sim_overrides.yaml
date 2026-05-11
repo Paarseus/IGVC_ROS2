@@ -1,8 +1,7 @@
 # Sim-specific Nav2 parameter overrides for Webots simulation.
 #
 # Overrides: slower speed, relaxed progress checker, no collision detection
-# (VelodynePuck sees ground as obstacles), no camera_depth (Webots
-# RangeFinder doesn't publish PointCloud2), larger local costmap.
+# (VelodynePuck sees ground as obstacles), larger local costmap.
 
 controller_server:
   ros__parameters:
@@ -19,5 +18,3 @@ local_costmap:
       width: 100
       height: 100
       resolution: 0.5
-      voxel_layer:
-        observation_sources: velodyne_points   # no camera_depth in sim (Webots RangeFinder != PointCloud2)

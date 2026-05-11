@@ -35,7 +35,7 @@ A ROS 2 (Jazzy/Humble) autonomous vehicle stack for a custom drive-by-wire platf
 
 - **Compute:** NVIDIA Jetson Orin (JetPack 6)
 - **LiDAR:** Velodyne VLP-16
-- **Camera:** Intel RealSense D455
+- **Camera:** Stereolabs ZED X (GMSL2 via ZED Link Quad)
 - **IMU/GNSS:** Xsens MTi-680G with RTK corrections (NTRIP)
 - **Actuator:** Teensy MCU over CAN bus (steering, throttle, brake, gear)
 

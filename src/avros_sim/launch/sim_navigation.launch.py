@@ -6,7 +6,7 @@ Includes:
   - navsat_transform — GPS to Cartesian odometry
   - Nav2 servers launched directly (with route_server + lifecycle manager)
 
-Does NOT start: actuator_node, velodyne, realsense, xsens, ntrip, foxglove
+Does NOT start: actuator_node, velodyne, xsens, ntrip, foxglove
 (Webots provides all sensor data; Car physics handles actuation)
 
 Cross-distro: ROS_DISTRO selects the correct nav2 params and BT XML.
@@ -65,9 +65,8 @@ def generate_launch_description():
 
     lifecycle_nodes = [name for _, name in nav2_servers]
 
-    # Sim overrides: slower speed, no collision detection, no camera_depth,
-    # larger costmap.  Loaded as a second parameter file — values override
-    # the base nav2 params.
+    # Sim overrides: slower speed, no collision detection, larger costmap.
+    # Loaded as a second parameter file — values override the base nav2 params.
     sim_overrides = os.path.join(sim_pkg, 'config', 'nav2_sim_overrides.yaml')
     sim_override_params = RewrittenYaml(
         source_file=sim_overrides,
