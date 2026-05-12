@@ -57,6 +57,7 @@ _PIPELINE_PARAM_NAMES = (
     'pothole_low', 'pothole_high', 'class_id_pothole',
     # hsv ROI polygon (normalized coords)
     'sky_roi_poly',
+    'lane_erode_iters',
     # sooner25 pipeline params
     'sooner25_lower', 'sooner25_upper',
     'sooner25_blur_weight', 'sooner25_blur_iters',
@@ -133,6 +134,13 @@ class PerceptionNode(Node):
         self.declare_parameter('pothole_high', [179, 40, 255])
         self.declare_parameter('class_id_pothole', 3, cls_id_desc)
         self.declare_parameter(
+            'lane_erode_iters', 1,
+            ParameterDescriptor(
+                description='3x3 erode passes on the HSV lane mask; 0 disables (use for thin lines at low mask resolution)',
+                integer_range=[IntegerRange(from_value=0, to_value=5, step=1)],
+            ),
+        )
+        self.declare_parameter(
             'sky_roi_poly',
             [0.0, 0.0, 1.0, 0.0, 1.0, 0.35, 0.0, 0.35],
         )
@@ -143,6 +151,7 @@ class PerceptionNode(Node):
         self.declare_parameter('sooner25_upper', [255, 95, 210])
         self.declare_parameter('sooner25_blur_weight', 5)
         self.declare_parameter('sooner25_blur_iters', 3)
+        self.declare_parameter('process_at_full_res', False)
 
         cam = self.get_parameter('camera_name').value
         # zed-ros2-wrapper v5.x topic names:
@@ -289,26 +298,54 @@ class PerceptionNode(Node):
             self.get_logger().error(f'cv_bridge failed: {e}')
             return
 
-        # ZED wrapper may publish image and cloud at different resolutions
-        # (image respects pub_downscale_factor; cloud uses point_cloud_res).
-        # kiwicampus indexes cloud[v,u] to look up 3D per mask pixel, so mask
-        # and cloud MUST have identical HxW. Resize the image down to the
-        # cloud's shape when they differ — cloud is the costmap-side truth.
-        if bgr.shape[:2] != (cloud.height, cloud.width):
+        cloud_hw = (cloud.height, cloud.width)
+        full_res = bool(self.get_parameter('process_at_full_res').value)
+        if not full_res and bgr.shape[:2] != cloud_hw:
             bgr = cv2.resize(
                 bgr, (cloud.width, cloud.height),
                 interpolation=cv2.INTER_AREA,
             )
-        h, w = bgr.shape[:2]
+        proc_h, proc_w = bgr.shape[:2]
 
         result = self._pipeline.run(bgr)
-        if result.mask.shape != (h, w):
+        if result.mask.shape != (proc_h, proc_w):
             self.get_logger().error(
-                f'pipeline produced mask shape {result.mask.shape} != image {(h, w)}'
+                f'pipeline produced mask shape {result.mask.shape} != image {(proc_h, proc_w)}'
             )
             return
+        if result.mask.shape != cloud_hw:
+            mask_full = result.mask
+            conf_full = result.confidence
+            sy = mask_full.shape[0] // cloud.height
+            sx = mask_full.shape[1] // cloud.width
+            mask_down = cv2.resize(mask_full, (cloud.width, cloud.height),
+                                   interpolation=cv2.INTER_NEAREST)
+            if sy > 1 and sx > 1:
+                trim_h = (mask_full.shape[0] // sy) * sy
+                trim_w = (mask_full.shape[1] // sx) * sx
+                pooled = mask_full[:trim_h, :trim_w].reshape(
+                    trim_h // sy, sy, trim_w // sx, sx).max(axis=(1, 3))
+                if pooled.shape == mask_down.shape:
+                    mask_down = np.maximum(mask_down, pooled)
+            conf_down = cv2.resize(conf_full, (cloud.width, cloud.height),
+                                   interpolation=cv2.INTER_NEAREST)
+            result = type(result)(mask=mask_down, confidence=conf_down)
+        h, w = result.mask.shape
 
-        stamp = image.header.stamp
+        # 2026-05-12: REVERTED to canonical input-stamp after multi-agent
+        # research. Every reference ROS2 perception node (depthimage_to_laserscan,
+        # pointcloud_to_laserscan, image_proc, RTAB-Map) preserves the input
+        # sensor stamp. Use max() of the two synced inputs so the kiwicampus
+        # TimeSynchronizer still sees mask + cloud as a sync group. The earlier
+        # now() restamping introduced velocity*latency spatial error (~15-45cm
+        # at IGVC speeds) and was a workaround for full-res HSV's 100-300ms
+        # processing latency — now resolved by running HSV at cloud resolution.
+        img_stamp = image.header.stamp
+        cloud_stamp = cloud.header.stamp
+        if (cloud_stamp.sec, cloud_stamp.nanosec) > (img_stamp.sec, img_stamp.nanosec):
+            stamp = cloud_stamp
+        else:
+            stamp = img_stamp
         frame = image.header.frame_id
 
         mask_msg = self._bridge.cv2_to_imgmsg(result.mask, encoding='mono8')
@@ -321,8 +358,9 @@ class PerceptionNode(Node):
         conf_msg.header.frame_id = frame
         self._confidence_pub.publish(conf_msg)
 
-        # Overlay: solid per-class color where mask > 0 (was 50/50 blend; too subtle).
-        overlay = bgr.copy()
+        overlay_bgr = bgr if bgr.shape[:2] == result.mask.shape else cv2.resize(
+            bgr, (result.mask.shape[1], result.mask.shape[0]), interpolation=cv2.INTER_AREA)
+        overlay = overlay_bgr.copy()
         for cid, color in self._class_colors_bgr.items():
             sel = result.mask == cid
             if sel.any():

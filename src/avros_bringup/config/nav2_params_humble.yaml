@@ -47,6 +47,8 @@ bt_navigator:
       - nav2_pipeline_sequence_bt_node
       - nav2_round_robin_node_bt_node
       - nav2_goal_reached_condition_bt_node
+      - nav2_back_up_action_bt_node                 # for navigate_igvc_autonav_humble.xml (BackUp)
+      - nav2_drive_on_heading_bt_node        # for navigate_igvc_autonav_humble.xml (DriveOnHeading)
 
 controller_server:
   ros__parameters:
@@ -127,8 +129,8 @@ controller_server:
         enabled: true
         cost_power: 1
         cost_weight: 3.81
-        critical_cost: 300.0
-        consider_footprint: false    # use robot_radius (we don't define a footprint polygon)
+        critical_cost: 300.0        # 2026-05-12: REVERTED to canonical default after multi-agent research. critical_cost is a penalty MAGNITUDE added when pose_cost >= INSCRIBED_INFLATED_OBSTACLE (253), not a threshold.
+        consider_footprint: true     # 2026-05-12: sweep robot_radius along trajectory — center-only checking was letting MPPI drive over thin painted lanes
         collision_cost: 1000000.0
         near_goal_distance: 1.0
         trajectory_point_step: 2
@@ -182,10 +184,19 @@ behavior_server:
     global_footprint_topic: global_costmap/published_footprint
     cycle_frequency: 10.0
     behavior_plugins: ["backup", "drive_on_heading", "wait"]
+    # 2026-05-12: added accel/decel limits to backup + drive_on_heading.
+    # Without them, the behaviors emit "no acceleration or deceleration limits set"
+    # and Aborting handle instantly. Limits matched to actuator_node slew caps.
     backup:
       plugin: "nav2_behaviors/BackUp"               # Humble: '/' (has name= in plugin.xml)
+      acceleration_limit: 1.5      # m/s^2 — matches actuator_node max_linear_decel
+      deceleration_limit: -1.5     # m/s^2
+      minimum_speed: 0.05          # m/s — below this the behavior reports success
     drive_on_heading:
       plugin: "nav2_behaviors/DriveOnHeading"        # Humble: '/'
+      acceleration_limit: 1.0      # m/s^2 — matches actuator_node max_linear_accel
+      deceleration_limit: -1.0     # m/s^2
+      minimum_speed: 0.05          # m/s
     wait:
       plugin: "nav2_behaviors/Wait"                  # Humble: '/'
 
@@ -202,6 +213,9 @@ local_costmap:
       height: 50
       resolution: 0.2
       robot_radius: 0.8
+      # 2026-05-12: explicit rectangular footprint required by MPPI CostCritic.consider_footprint=true.
+      # Dimensions match BT comment (1.0m x 0.74m); origin at base_link center, +X forward.
+      footprint: "[[0.5, 0.37], [-0.5, 0.37], [-0.5, -0.37], [0.5, -0.37]]"
       plugins: ["semantic_layer", "inflation_layer"]
 
       voxel_layer:
@@ -213,7 +227,7 @@ local_costmap:
         z_voxels: 10
         max_obstacle_height: 2.0
         mark_threshold: 0
-        observation_sources: velodyne_points
+        observation_sources: velodyne_points camera_depth
         velodyne_points:
           topic: /velodyne_points
           max_obstacle_height: 2.0
@@ -225,6 +239,18 @@ local_costmap:
           data_type: "PointCloud2"
           raytrace_max_range: 20.0
           raytrace_min_range: 1.0
+        camera_depth:
+          topic: /camera/camera/depth/color/points
+          sensor_frame: camera_depth_optical_frame
+          max_obstacle_height: 1.5
+          min_obstacle_height: -0.5
+          obstacle_max_range: 5.0
+          obstacle_min_range: 0.3
+          clearing: false
+          marking: true
+          data_type: "PointCloud2"
+          raytrace_max_range: 5.0
+          raytrace_min_range: 0.3
 
       # kiwicampus/semantic_segmentation_layer — consumes the avros_perception 3-topic contract
       # from the front ZED X. Additive to voxel_layer; it writes cost from camera-classified
@@ -319,7 +345,7 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0     # smoother gradient — required by MPPI per Macenski
-        inflation_radius: 0.4        # 2026-05-11 dropped from 1.0 — scattered single-line
+        inflation_radius: 0.65       # 2026-05-12: bumped from 0.4 (was < inscribed radius 0.5 — disabled MPPI fast-path & emitted warning). Original 1.0 was over-aggressive; 0.65 = inscribed + small margin.
                                      # detections accumulated into a lethal blob that boxed
                                      # in the robot. 0.4 < inscribed_radius (0.794) so Nav2
                                      # will warn; accepted trade-off until lane detection
@@ -337,6 +363,9 @@ global_costmap:
       height: 100
       resolution: 0.2
       robot_radius: 0.8
+      # 2026-05-12: explicit rectangular footprint required by MPPI CostCritic.consider_footprint=true.
+      # Dimensions match BT comment (1.0m x 0.74m); origin at base_link center, +X forward.
+      footprint: "[[0.5, 0.37], [-0.5, 0.37], [-0.5, -0.37], [0.5, -0.37]]"
       track_unknown_space: false
       plugins: ["obstacle_layer", "semantic_layer", "inflation_layer"]
 
@@ -397,7 +426,7 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0     # smoother gradient — required by MPPI per Macenski
-        inflation_radius: 0.4        # 2026-05-11 dropped from 1.0 — scattered single-line
+        inflation_radius: 0.65       # 2026-05-12: bumped from 0.4 (was < inscribed radius 0.5 — disabled MPPI fast-path & emitted warning). Original 1.0 was over-aggressive; 0.65 = inscribed + small margin.
                                      # detections accumulated into a lethal blob that boxed
                                      # in the robot. 0.4 < inscribed_radius (0.794) so Nav2
                                      # will warn; accepted trade-off until lane detection

@@ -20,11 +20,11 @@
     # 'sooner25' is the Sooner Robotics 2025 IGVC AutoNav winning approach —
     # see pipelines/sooner25.py. Switched from 'hsv' 2026-05-11 PM after the
     # legacy per-class HSV pipeline kept misclassifying bright concrete.
-    pipeline: 'sooner25'
+    pipeline: 'hsv'
 
     # message_filters ApproximateTimeSynchronizer
     sync_slop: 0.02        # seconds; ZED sensors_image_sync:=true keeps pairs tight
-    sync_queue: 10
+    sync_queue: 2          # 2026-05-12: down from 10 — old pairs were accumulating ~10s of lag, causing costmap Message Filter drops
 
     # Leave blank to fall back to avros_perception/share/config/class_map.yaml
     class_map_path: ''
@@ -39,7 +39,7 @@
     # -------- HSV-pipeline parameters --------
     # Field-calibrate these per-camera on grass at the actual course.
     # HSV is in OpenCV convention: H in [0, 179], S and V in [0, 255].
-    blur_iters: 3               # 3x 5x5 box-blur preprocessing (Sooner 2023)
+    blur_iters: 0               # 3x 5x5 box-blur preprocessing (Sooner 2023)
     adaptive_period: 5          # V-floor refresh every N frames (iscumd)
     adaptive_k: 0.0             # V-floor = mean + k*std; k=0 disables the
                                 # adaptive bright filter — use absolute
@@ -57,8 +57,13 @@
     # they get detected when the car gets closer.
     # NOTE: threshold is scene-dependent. Expect re-tuning under different
     # lighting / camera position until ONNX perception lands.
-    lane_low:    [0,   0, 222]
-    lane_high:   [179, 35, 255]
+    lane_low:    [0,   0, 180]
+    lane_high:   [179, 50, 255]
+    # 3x3 erode on lane mask: 0 disables (line is <3px wide at 128x224 mask res)
+    lane_erode_iters: 0
+    # Run pipeline at incoming image resolution, downsample binary mask
+    # to cloud shape with max-pooling (preserves thin lanes that mean-resize loses).
+    process_at_full_res: false
     class_id_lane: 1
 
     # Orange safety barrels: narrow H band around 15 deg, saturated+bright

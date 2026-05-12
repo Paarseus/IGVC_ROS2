@@ -25,7 +25,7 @@
       min_depth: 0.3
       max_depth: 15.0
       point_cloud_freq: 10.0            # match pub_frame_rate for ApproximateTime sync
-      point_cloud_res: 'REDUCED'        # half-res (128x224, ~28k pts) vs COMPACT 256x448.
+      point_cloud_res: 'COMPACT'        # half-res (128x224, ~28k pts) vs COMPACT 256x448.
                                         # ZED wrapper only accepts COMPACT or REDUCED — no MEDIUM.
                                         # 4x fewer points for the kiwicampus layer to project,
                                         # which is the local_costmap CPU bottleneck (single-core

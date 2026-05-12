@@ -108,6 +108,7 @@ class HSVPipeline(Pipeline):
         id_lane = int(self.params.get('class_id_lane', cid['lane']))
         id_barrel = int(self.params.get('class_id_barrel', cid['barrel']))
         id_pothole = int(self.params.get('class_id_pothole', cid['pothole']))
+        lane_erode_iters = int(self.params.get('lane_erode_iters', 1))
 
         # Sooner 2023 preprocessing — N iterations of 5x5 box blur
         blurred = bgr
@@ -130,7 +131,9 @@ class HSVPipeline(Pipeline):
 
         # Cleanup — erode lane to kill grass speckle, open barrel/pothole
         # to kill pepper noise without closing narrow features.
-        lane = cv2.erode(lane, self._morph_kernel)
+        if lane_erode_iters > 0:
+            lane = cv2.erode(lane, self._morph_kernel,
+                             iterations=lane_erode_iters)
         barrel = cv2.morphologyEx(barrel, cv2.MORPH_OPEN, self._morph_kernel)
         pothole = cv2.morphologyEx(pothole, cv2.MORPH_OPEN, self._morph_kernel)
 
