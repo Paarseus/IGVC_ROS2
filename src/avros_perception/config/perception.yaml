@@ -57,7 +57,7 @@
     # they get detected when the car gets closer.
     # NOTE: threshold is scene-dependent. Expect re-tuning under different
     # lighting / camera position until ONNX perception lands.
-    lane_low:    [0,   0, 210]
+    lane_low:    [0,   0, 150]
     lane_high:   [179, 50, 255]
     # 3x3 erode on lane mask: 0 disables (line is <3px wide at 128x224 mask res)
     lane_erode_iters: 0
