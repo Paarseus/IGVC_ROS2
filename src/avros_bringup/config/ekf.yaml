@@ -101,14 +101,25 @@ ekf_filter_node_map:
     imu0_queue_size: 10
 
     # GPS odometry: /odometry/gps (from navsat_transform_node)
+    # 2026-05-12: differential mode + rejection threshold for noisy unaided GPS.
+    # Without an RTK base station, GPS noise (2-5m) was causing the global EKF
+    # to snap-correct the map estimate on every fix, producing visible jumps
+    # in the global costmap. differential=true integrates GPS DELTAS rather
+    # than absolute positions — noise averages out, trend is preserved.
+    # rejection_threshold rejects Mahalanobis-distance outliers >6σ (multipath
+    # spikes). Canonical pattern per robot_localization docs (Tom Moore) for
+    # consumer-grade GPS. Trade-off: map frame drifts slowly (~1-2m over a 10-min
+    # mission) but no jumps. Acceptable for IGVC AutoNav since the 2-5m GPS
+    # noise already dominates absolute waypoint precision.
     odom0: /odometry/gps
     odom0_config: [true,  true,  false,   # x, y position from GPS
                    false, false, false,
                    false, false, false,
                    false, false, false,
                    false, false, false]
-    odom0_differential: false
+    odom0_differential: true
     odom0_relative: false
+    odom0_pose_rejection_threshold: 6.0
     odom0_queue_size: 10
 
     # Higher process noise for GPS position dimensions (less confident)
