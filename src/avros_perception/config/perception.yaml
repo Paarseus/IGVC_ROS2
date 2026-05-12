@@ -57,7 +57,7 @@
     # they get detected when the car gets closer.
     # NOTE: threshold is scene-dependent. Expect re-tuning under different
     # lighting / camera position until ONNX perception lands.
-    lane_low:    [0,   0, 180]
+    lane_low:    [0,   0, 210]
     lane_high:   [179, 50, 255]
     # 3x3 erode on lane mask: 0 disables (line is <3px wide at 128x224 mask res)
     lane_erode_iters: 0
@@ -87,7 +87,7 @@
     # — top 35% wasn't aggressive enough to fully kill blue sky and
     # distant tree-glare; 60% safely covers everything above the path
     # horizon at typical mounting height. Empty list disables the ROI.
-    sky_roi_poly: [0.0, 0.0,  1.0, 0.0,  1.0, 0.6,  0.0, 0.6]
+    sky_roi_poly: [0.0, 0.0,  1.0, 0.0,  1.0, 0.65,  0.0, 0.65]
 
     # -------- Sooner Robotics 2025 pipeline (selected via pipeline:='sooner25')
     # Copy-pasted from autonav_software_2025/transformations.py.

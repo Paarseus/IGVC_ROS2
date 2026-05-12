@@ -260,7 +260,7 @@ local_costmap:
       # instance, multiple observation_sources nested under it. Three separate
       # plugin instances do NOT propagate tiles to the master grid.
       #
-      # tile_map_decay_time: 1.5 — kiwicampus default. Stable with the
+      # tile_map_decay_time: 0.3 — kiwicampus default. Stable with the
       # patches/kiwicampus_pr3_raytrace_clear.patch applied: the raytrace
       # pass actively writes FREE_SPACE through cells the camera "sees
       # through", so cells don't depend on a long decay window to clear.
@@ -279,7 +279,7 @@ local_costmap:
           labels_topic: /perception/front/label_info
           max_obstacle_distance: 5.0
           min_obstacle_distance: 0.3
-          tile_map_decay_time: 1.5
+          tile_map_decay_time: 0.3
           observation_persistence: 0.0
           clearing: true
           raytrace_max_range: 8.0
@@ -302,7 +302,7 @@ local_costmap:
           labels_topic: /perception/left/label_info
           max_obstacle_distance: 5.0
           min_obstacle_distance: 0.3
-          tile_map_decay_time: 1.5
+          tile_map_decay_time: 0.3
           observation_persistence: 0.0
           clearing: true
           raytrace_max_range: 8.0
@@ -325,7 +325,7 @@ local_costmap:
           labels_topic: /perception/right/label_info
           max_obstacle_distance: 5.0
           min_obstacle_distance: 0.3
-          tile_map_decay_time: 1.5
+          tile_map_decay_time: 0.3
           observation_persistence: 0.0
           clearing: true
           raytrace_max_range: 8.0
@@ -406,7 +406,7 @@ global_costmap:
           # map-frame position; old cells stayed lethal for 1.5 s and
           # accumulated into phantom blobs. Shorter decay + wider raytrace
           # range catches stale cells via the new observation's clearing ray.
-          tile_map_decay_time: 0.5
+          tile_map_decay_time: 0.3
           observation_persistence: 0.0
           clearing: true
           raytrace_max_range: 30.0
