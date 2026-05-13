@@ -1,0 +1,14 @@
+# IGVC AutoNav waypoints — list of lat/lon points the mission_manager
+# walks through in order, popping each on 2.0 m proximity (per IGVC 2026
+# Rules §III.D.4: waypoint acceptance radius).
+#
+# Datum reference: 34.059270, -117.820934 (CPP, matches navsat.yaml).
+# These 4 stub points are CPP-datum-adjacent and exist only to exercise
+# the orchestrator pipeline. Replace with the actual competition list
+# (provided on the day of competition) before the run.
+
+waypoints:
+  - {lat: 34.059270, lon: -117.820934}   # at datum
+  - {lat: 34.059320, lon: -117.820900}   # NE
+  - {lat: 34.059320, lon: -117.820960}   # NW
+  - {lat: 34.059270, lon: -117.820990}   # W (back near datum)

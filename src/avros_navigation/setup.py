@@ -23,6 +23,8 @@ setup(
         ],
     },
     entry_points={
-        'console_scripts': [],
+        'console_scripts': [
+            'mission_manager = avros_navigation.mission_manager:main',
+        ],
     },
 )
