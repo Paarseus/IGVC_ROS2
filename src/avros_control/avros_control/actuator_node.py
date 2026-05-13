@@ -26,15 +26,44 @@ Publishes:
 import math
 import threading
 import time
+from typing import List
 
 import rclpy
 import serial
+from rcl_interfaces.msg import SetParametersResult
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from geometry_msgs.msg import Twist, TransformStamped
 from sensor_msgs.msg import Imu
 from nav_msgs.msg import Odometry
 from std_msgs.msg import Float32MultiArray, MultiArrayDimension
 from avros_msgs.msg import ActuatorCommand, ActuatorState
+
+
+# Runtime-tunable parameters: `ros2 param set /actuator_node <name> <value>`
+# applies immediately. Mapping: `ros_param_name -> self attr`.
+#
+# Any param NOT listed here is init-only — `ros2 param set` on it is rejected
+# with a clear reason so the caller knows to relaunch. Validation in
+# `_on_param_change` keeps the values non-negative.
+#
+# Why the split:
+#   - geometry / serial / frames: hardware-defining; runtime change is unsafe
+#   - timer rates: create_timer is fixed at construction; needs relaunch
+#   - SparkMAX gains (kFF/kP/kI/kD): written to flash via Teensy on startup;
+#     updating in memory wouldn't re-send them
+#   - clamps + slew + heading-hold gains: pure software state, safe to mutate
+_DYNAMIC_PARAMS = {
+    'max_linear_mps':         '_max_v',
+    'max_angular_rps':        '_max_w',
+    'max_linear_accel_mps2':  '_accel_v',
+    'max_linear_decel_mps2':  '_decel_v',
+    'max_angular_accel_rps2': '_accel_w',
+    'heading_hold_deadband':  '_hh_deadband',
+    'heading_kp':             '_heading_kp',
+    'yaw_rate_kp':            '_yaw_rate_kp',
+    'cmd_timeout_s':          '_cmd_timeout',
+}
 
 
 def yaw_from_quaternion(q) -> float:
@@ -214,6 +243,11 @@ class ActuatorNode(Node):
         self.create_timer(self._ctrl_dt, self._control_loop)
         self.create_timer(1.0 / state_rate, self._publish_state)
 
+        # Runtime parameter callback — see _DYNAMIC_PARAMS at module top.
+        # Registered AFTER initial parameter reads so launch-time yaml
+        # overrides don't trip the validator.
+        self.add_on_set_parameters_callback(self._on_param_change)
+
         self.get_logger().info('Actuator node ready — diff-drive with heading-hold')
 
     # ------------------------------------------------------------- callbacks
@@ -242,6 +276,37 @@ class ActuatorNode(Node):
         self._current_yaw = yaw_from_quaternion(msg.orientation)
         self._current_yaw_rate = msg.angular_velocity.z
         self._imu_fresh = True
+
+    def _on_param_change(self, params: List[Parameter]) -> SetParametersResult:
+        """Apply runtime parameter updates to the live node.
+
+        Two-pass validate-then-apply so a partial mutation never lands:
+        if any param in the batch is rejected, NONE are applied.
+        """
+        for p in params:
+            if p.name not in _DYNAMIC_PARAMS:
+                return SetParametersResult(
+                    successful=False,
+                    reason=f'{p.name} is init-only — relaunch actuator_node to change',
+                )
+            try:
+                val = float(p.value)
+            except (TypeError, ValueError):
+                return SetParametersResult(
+                    successful=False,
+                    reason=f'{p.name}: expected a number, got {p.value!r}',
+                )
+            if val < 0.0:
+                return SetParametersResult(
+                    successful=False,
+                    reason=f'{p.name} must be non-negative, got {val}',
+                )
+        for p in params:
+            setattr(self, _DYNAMIC_PARAMS[p.name], float(p.value))
+            self.get_logger().info(
+                f'param updated: {p.name} = {p.value} (live)'
+            )
+        return SetParametersResult(successful=True)
 
     # ------------------------------------------------------------- control
     def _control_loop(self):

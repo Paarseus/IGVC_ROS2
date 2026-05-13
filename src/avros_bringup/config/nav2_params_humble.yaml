@@ -84,9 +84,20 @@ controller_server:
       vx_std: 0.2
       vy_std: 0.2
       wz_std: 0.4
-      vx_max: 0.5            # m/s forward — start conservative; bump after we see motion
-      vx_min: -0.35           # m/s reverse
+      # vx_max/vx_min: matches the firmware ceiling on grass per
+      # docs/F_firmware_characterization_report.md (2026-05-12). SparkMAX
+      # kOutputMax_0 ≈ 0.47 caps the wheel duty → ~0.70 m/s achievable
+      # regardless of /cmd_vel. MPPI samples rollouts up to vx_max; setting
+      # this higher than what the motors can deliver causes rollout trajectories
+      # MPPI believes-in-but-cannot-execute, which hurts tracking.
+      # Raise to 1.5 after bench-fixing kOutputMax via REV Hardware Client.
+      vx_max: 0.7             # m/s forward (was 0.5; raised after T3.3 confirmed motors reach 0.7)
+      vx_min: -0.4            # m/s reverse (symmetric scaling with vx_max)
       vy_max: 0.5             # not used on diff-drive but required field
+      # wz_max: actuator clamps angular at max_angular_rps=1.5 (raised from
+      # 1.0 on 2026-05-12); grass slip caps achievable ω at ~0.7 rad/s peak.
+      # Keeping wz_max high here lets MPPI sample full range — actuator
+      # will clamp downstream.
       wz_max: 1.9             # rad/s
       ax_max: 3.0
       ax_min: -3.0
