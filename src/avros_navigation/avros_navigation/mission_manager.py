@@ -5,10 +5,10 @@ NavigateToPose goals from a YAML waypoint list. The BT is "dumb" — it
 plans, follows, and recovers; this node owns the waypoint cursor and
 advances it on proximity.
 
-Phase M5 scope: add an /odometry/global subscriber and a 5 Hz
-proximity timer that pops the cursor when the robot enters
-acceptance_radius_m of the current waypoint, then dispatches the
-next one. Skip-on-failure and launch integration land in M6.
+Phase M6 scope: skip-on-failure for ABORTED/CANCELED of the current
+waypoint, and a 10 s "mission complete" heartbeat after the list is
+exhausted (so an operator can see the node is alive and idling).
+Launch-file integration lives in navigation.launch.py.
 """
 import math
 import sys
@@ -30,6 +30,7 @@ FROMLL_WAIT_TIMEOUT_S = 30.0
 FROMLL_CALL_TIMEOUT_S = 5.0
 NAV2_WAIT_TIMEOUT_S = 30.0
 PROXIMITY_TICK_HZ = 5.0
+DONE_HEARTBEAT_S = 10.0
 GOAL_FRAME_ID = 'map'
 
 
@@ -73,6 +74,7 @@ class MissionManager(Node):
         self._proximity_timer = self.create_timer(
             1.0 / PROXIMITY_TICK_HZ, self._on_proximity_tick
         )
+        self._done_timer = None
         self._send_goal(self._cursor)
 
     def _load_waypoints(self, path: str) -> List[Tuple[float, float]]:
@@ -171,18 +173,39 @@ class MissionManager(Node):
         if index != self._cursor:
             return
         self._goal_handle = None
-        # Advance on natural SUCCEEDED — the BT got there before our proximity
-        # tick fired (most common when the robot is already inside the radius
-        # at goal send time, e.g. starting at the datum for wp0).
-        # ABORTED / CANCELED behavior lands in M6 (skip-on-failure).
         if status == GoalStatus.STATUS_SUCCEEDED:
-            self._cursor += 1
-            if self._cursor >= len(self._map_waypoints):
-                self.get_logger().info(
-                    f'all {len(self._map_waypoints)} waypoints reached — mission complete'
-                )
-                return
-            self._send_goal(self._cursor)
+            # BT got there before our proximity tick fired — most common when
+            # the robot is already inside the radius at goal send time, e.g.
+            # starting at the datum for wp0.
+            self._advance_cursor(reason=f'wp{index} SUCCEEDED')
+        elif status in (GoalStatus.STATUS_ABORTED, GoalStatus.STATUS_CANCELED):
+            # BT gave up on this waypoint before we reached its acceptance
+            # radius. IGVC scores by waypoint count, not by no-failures, so
+            # skip-on-failure: log and advance to the next waypoint.
+            self.get_logger().warn(
+                f'wp{index} did not complete ({status_str}) — skip-on-failure, advancing'
+            )
+            self._advance_cursor(reason=f'wp{index} {status_str}')
+
+    def _advance_cursor(self, reason: str) -> None:
+        self._cursor += 1
+        if self._cursor >= len(self._map_waypoints):
+            self._enter_done_state(reason)
+            return
+        self._send_goal(self._cursor)
+
+    def _enter_done_state(self, reason: str) -> None:
+        self.get_logger().info(
+            f'all {len(self._map_waypoints)} waypoints reached — mission complete ({reason})'
+        )
+        if self._proximity_timer is not None:
+            self._proximity_timer.cancel()
+            self._proximity_timer = None
+        if self._done_timer is None:
+            self._done_timer = self.create_timer(DONE_HEARTBEAT_S, self._on_done_heartbeat)
+
+    def _on_done_heartbeat(self) -> None:
+        self.get_logger().info('mission complete — idling')
 
     def _on_odom(self, msg: Odometry) -> None:
         self._latest_robot_xy = (msg.pose.pose.position.x, msg.pose.pose.position.y)
@@ -204,16 +227,11 @@ class MissionManager(Node):
         self.get_logger().info(
             f'wp{self._cursor} reached (dist={dist:.2f} m < radius={self._radius:.2f} m), advancing'
         )
-        # Detach the result callback chain before cancel — we'll log status
-        # in _on_result for the canceled goal anyway, but the cursor advance
-        # happens here, not in _on_result.
+        # Cancel the in-flight goal; its eventual result lands in _on_result
+        # with index < self._cursor and is filtered out by the cursor check.
         self._goal_handle.cancel_goal_async()
         self._goal_handle = None
-        self._cursor += 1
-        if self._cursor >= len(self._map_waypoints):
-            self.get_logger().info(f'all {len(self._map_waypoints)} waypoints reached — mission complete')
-            return
-        self._send_goal(self._cursor)
+        self._advance_cursor(reason=f'wp{self._cursor} proximity')
 
 
 def main(args=None) -> None:

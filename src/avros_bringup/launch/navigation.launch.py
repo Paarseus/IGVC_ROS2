@@ -37,6 +37,7 @@ def generate_launch_description():
     actuator_config = os.path.join(pkg_dir, 'config', 'actuator_params.yaml')
     graph_file = os.path.join(pkg_dir, 'config', 'cpp_campus_graph.geojson')
     cyclonedds_file = os.path.join(pkg_dir, 'config', 'cyclonedds.xml')
+    waypoints_file = os.path.join(pkg_dir, 'config', 'waypoints.yaml')
 
     # Select distro-specific config (params + default BT XML)
     ros_distro = os.environ.get('ROS_DISTRO', 'humble')
@@ -158,6 +159,12 @@ def generate_launch_description():
             description='Comma-separated camera list for perception_node, e.g. "front,left,right"'
         ),
 
+        DeclareLaunchArgument(
+            'enable_mission_manager', default_value='false',
+            description='Enable mission_manager waypoint orchestrator '
+                        '(drives the BT through waypoints.yaml — robot will move)'
+        ),
+
         # Localization (sensors + EKF + navsat)
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
@@ -223,5 +230,21 @@ def generate_launch_description():
                 'use_sim_time': use_sim_time,
             }],
             output='screen',
+        ),
+
+        # mission_manager — gated off by default so a bare `ros2 launch ...`
+        # doesn't auto-drive the robot. Enable with enable_mission_manager:=true
+        # for a real run; the orchestrator owns the waypoint cursor and feeds
+        # NavigateToPose goals to the BT.
+        Node(
+            package='avros_navigation',
+            executable='mission_manager',
+            name='mission_manager',
+            parameters=[{
+                'waypoints_file': waypoints_file,
+                'use_sim_time': use_sim_time,
+            }],
+            output='screen',
+            condition=IfCondition(LaunchConfiguration('enable_mission_manager')),
         ),
     ])
