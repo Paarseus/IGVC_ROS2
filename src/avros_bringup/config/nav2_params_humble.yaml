@@ -367,7 +367,17 @@ global_costmap:
       # Dimensions match BT comment (1.0m x 0.74m); origin at base_link center, +X forward.
       footprint: "[[0.5, 0.37], [-0.5, 0.37], [-0.5, -0.37], [0.5, -0.37]]"
       track_unknown_space: false
-      plugins: ["obstacle_layer", "semantic_layer", "inflation_layer"]
+      # 2026-05-12: semantic_layer intentionally REMOVED from global_costmap.
+      # Rationale: painted-lane perception (camera, short range, no raytrace
+      # clearing, sensitive to map→odom drift) smears in the global costmap
+      # under unaided GPS. Matches TnTech IGVC 2026 + SoonerRobotics 2024+2025
+      # pattern: painted lanes live only in the LOCAL costmap (odom frame),
+      # MPPI handles all lane avoidance via its 3m planning horizon. Geometric
+      # 3D obstacles (LiDAR / Velodyne) continue to live in BOTH costmaps via
+      # obstacle_layer below — they have long range, raytrace clearing, and
+      # stable TF chains that justify routing-level awareness. The semantic_layer:
+      # block below is retained but DISABLED so the config is easy to revert.
+      plugins: ["obstacle_layer", "inflation_layer"]
 
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
@@ -385,13 +395,13 @@ global_costmap:
           raytrace_max_range: 50.0
           raytrace_min_range: 1.0
 
-      # Mirror of local_costmap.semantic_layer so SmacPlanner sees the same
-      # camera-marked obstacles (lanes/barrels/potholes). Without this the
-      # global plan crosses lanes the local controller then refuses, and
-      # navigation aborts. 2026-05-06.
+      # Mirror of local_costmap.semantic_layer — RETAINED BUT NOT IN PLUGINS LIST
+      # as of 2026-05-12 (see plugins-list comment above for full rationale).
+      # The block is left below for documentation + easy revert (just add back
+      # "semantic_layer" to the plugins list above).
       semantic_layer:
         plugin: "semantic_segmentation_layer::SemanticSegmentationLayer"
-        enabled: true
+        enabled: false
         observation_sources: front
         front:
           segmentation_topic: /perception/front/semantic_mask
