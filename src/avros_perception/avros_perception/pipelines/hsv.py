@@ -116,10 +116,24 @@ class HSVPipeline(Pipeline):
             blurred = cv2.blur(blurred, (5, 5))
         hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
 
-        # iscumd adaptive V-threshold, refreshed every N frames
+        # iscumd adaptive V-threshold, refreshed every N frames.
+        # 2026-05-12: sample ONLY the below-ROI region (where lanes live).
+        # Previously we averaged over the whole image, which let bright sky
+        # pull the adaptive floor above the lane's actual V, masking dim
+        # lanes in scenes with sky in the upper portion of the frame.
         v_channel = hsv[:, :, 2]
         if self._tick == 0 or self._v_floor is None:
-            self._v_floor = float(v_channel.mean() + adaptive_k * v_channel.std())
+            poly_for_stats = self._roi_polygon_px(*v_channel.shape)
+            if poly_for_stats is not None:
+                roi_mask = np.ones_like(v_channel, dtype=np.uint8)
+                cv2.fillPoly(roi_mask, [poly_for_stats], 0)
+                v_below = v_channel[roi_mask > 0]
+                # safety: empty selection falls back to full frame
+                if v_below.size == 0:
+                    v_below = v_channel
+            else:
+                v_below = v_channel
+            self._v_floor = float(v_below.mean() + adaptive_k * v_below.std())
         self._tick = (self._tick + 1) % max(adaptive_period, 1)
         bright = (v_channel >= self._v_floor).astype(np.uint8) * 255
 
