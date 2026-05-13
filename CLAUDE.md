@@ -153,8 +153,11 @@ No `avros_sensors` — upstream drivers used directly. Source dependencies are m
 ## TF Tree
 
 ```
-map                                    ← navsat_transform_node
- └── odom                              ← robot_localization EKF
+map                                    ← ekf_filter_node_map (global EKF)
+                                         (navsat_transform_node has
+                                          broadcast_cartesian_transform: false
+                                          — would otherwise create TF loop)
+ └── odom                              ← ekf_filter_node_odom (local EKF)
       └── base_link                    ← robot_state_publisher (URDF)
            ├── imu_link                ← static (URDF) — TODO: measure mount position
            ├── velodyne                ← static (URDF) — TODO: measure mount position
@@ -259,7 +262,7 @@ Unified (v, ω) target computed from whichever input is freshest:
 ## Nav2 Config
 
 - **Route Server:** nav2_route with GeoJSON campus road graph (52 nodes, 113 edges)
-- **Planner:** SmacPlannerHybrid (DUBIN, min radius 2.31 m) — fallback for off-graph planning
+- **Planner:** `nav2_navfn_planner/NavfnPlanner` (Dijkstra, holonomic, `tolerance: 0.5`, `allow_unknown: true`). Was SmacPlannerHybrid (DUBIN, 2.31 m turning radius) — reverted because Smac's 2.31 m turning circle physically cannot fit between IGVC's 2–3 m lane lines, and our tracked diff-drive has 0 m turning radius anyway → Navfn (holonomic) is the right tool
 - **Controller:** Regulated Pure Pursuit (lookahead 3-20 m)
 - **BT:** `navigate_route_graph.xml` — ComputeRoute → FollowPath (no spin/backup recovery)
 - **Local costmap:** VoxelLayer (LiDAR) + InflationLayer, 10x10 m
