@@ -44,18 +44,23 @@ ekf_filter_node_odom:
     odom0_relative: false
     odom0_queue_size: 10
 
-    # 2026-05-12: ZED VIO fusion. Camera-tracked pose is far more accurate than
-    # wheel odom over short distances (sub-decimeter for first ~100m), and the
-    # ZED's IMU is already merged in so the velocity estimates are robust.
-    # Use velocity-only fusion (not position) so VIO resets/jumps don't propagate
-    # into the odom→base_link transform.
+    # 2026-05-12: ZED VIO fusion. Canonical robot_localization + ZED pattern
+    # (see github.com/stereolabs/zed-ros2-examples robot_localization tutorial):
+    # fuse POSE with differential=true rather than twist directly. Reasoning:
+    #   - ZED's pose covariance is correctly computed by the SDK (~1e-8 mag).
+    #   - ZED's twist covariance is published as ZERO (the wrapper computes
+    #     twist via finite differences and doesn't propagate uncertainty).
+    #   - differential=true makes the EKF integrate consecutive pose DELTAS,
+    #     using the pose covariance to derive proper delta-velocity covariance.
+    # Result: smooth velocity-like fusion with mathematically sound uncertainty,
+    # no zero-covariance "infinite trust" trap, no relay/republisher needed.
     odom1: /zed_front/zed_node/odom
-    odom1_config: [false, false, false,    # x, y, z position — don't fuse (VIO can jump on reset)
-                   false, false, false,    # roll, pitch, yaw — IMU already covers these
-                   true,  true,  false,    # vx, vy — fuse linear velocity from VIO
-                   false, false, true,     # vyaw — fuse yaw rate
+    odom1_config: [true,  true,  false,    # x, y position — differential uses Δposition (= velocity)
+                   false, false, true,     # yaw — differential uses Δyaw (= angular velocity)
+                   false, false, false,    # twist not fused (covariance unreliable from ZED wrapper)
+                   false, false, false,
                    false, false, false]
-    odom1_differential: false
+    odom1_differential: true
     odom1_relative: false
     odom1_queue_size: 10
 
