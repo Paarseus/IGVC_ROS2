@@ -290,13 +290,27 @@ local_costmap:
           expected_update_rate: 0.0
           visualize_tile_map: true
           use_cost_selection: false
-          class_types: ["danger"]
+          class_types: ["danger", "ignored"]
           danger:
             classes: ["lane_white", "barrel_orange", "pothole"]
             base_cost: 254
             max_cost: 254
             mark_confidence: 1
             samples_to_max_cost: 1
+            dominant_priority: false
+          # 'free' (id 0) and 'unknown' (id 255) are advertised by perception_node's
+          # LabelInfo (see avros_perception/config/class_map.yaml) but must not mark
+          # any cells. Without an "ignored" class_type, kiwicampus logs
+          #   CRITICAL ERROR: Class '<name>' from label_info is not defined ...
+          # once per source on activation (segmentation_buffer.cpp:99).
+          # samples_to_max_cost: 999999 makes the marking gate at
+          # segmentation_buffer.cpp:387 unreachable, so cells are never painted.
+          ignored:
+            classes: ["free", "unknown"]
+            base_cost: 0
+            max_cost: 0
+            mark_confidence: 0
+            samples_to_max_cost: 999999
             dominant_priority: false
         left:
           segmentation_topic: /perception/left/semantic_mask
@@ -313,13 +327,27 @@ local_costmap:
           expected_update_rate: 0.0
           visualize_tile_map: false
           use_cost_selection: false
-          class_types: ["danger"]
+          class_types: ["danger", "ignored"]
           danger:
             classes: ["lane_white", "barrel_orange", "pothole"]
             base_cost: 254
             max_cost: 254
             mark_confidence: 1
             samples_to_max_cost: 1
+            dominant_priority: false
+          # 'free' (id 0) and 'unknown' (id 255) are advertised by perception_node's
+          # LabelInfo (see avros_perception/config/class_map.yaml) but must not mark
+          # any cells. Without an "ignored" class_type, kiwicampus logs
+          #   CRITICAL ERROR: Class '<name>' from label_info is not defined ...
+          # once per source on activation (segmentation_buffer.cpp:99).
+          # samples_to_max_cost: 999999 makes the marking gate at
+          # segmentation_buffer.cpp:387 unreachable, so cells are never painted.
+          ignored:
+            classes: ["free", "unknown"]
+            base_cost: 0
+            max_cost: 0
+            mark_confidence: 0
+            samples_to_max_cost: 999999
             dominant_priority: false
         right:
           segmentation_topic: /perception/right/semantic_mask
@@ -336,13 +364,27 @@ local_costmap:
           expected_update_rate: 0.0
           visualize_tile_map: false
           use_cost_selection: false
-          class_types: ["danger"]
+          class_types: ["danger", "ignored"]
           danger:
             classes: ["lane_white", "barrel_orange", "pothole"]
             base_cost: 254
             max_cost: 254
             mark_confidence: 1
             samples_to_max_cost: 1
+            dominant_priority: false
+          # 'free' (id 0) and 'unknown' (id 255) are advertised by perception_node's
+          # LabelInfo (see avros_perception/config/class_map.yaml) but must not mark
+          # any cells. Without an "ignored" class_type, kiwicampus logs
+          #   CRITICAL ERROR: Class '<name>' from label_info is not defined ...
+          # once per source on activation (segmentation_buffer.cpp:99).
+          # samples_to_max_cost: 999999 makes the marking gate at
+          # segmentation_buffer.cpp:387 unreachable, so cells are never painted.
+          ignored:
+            classes: ["free", "unknown"]
+            base_cost: 0
+            max_cost: 0
+            mark_confidence: 0
+            samples_to_max_cost: 999999
             dominant_priority: false
 
       inflation_layer:
@@ -427,13 +469,27 @@ global_costmap:
           expected_update_rate: 0.0
           visualize_tile_map: false
           use_cost_selection: false
-          class_types: ["danger"]
+          class_types: ["danger", "ignored"]
           danger:
             classes: ["lane_white", "barrel_orange", "pothole"]
             base_cost: 254
             max_cost: 254
             mark_confidence: 1
             samples_to_max_cost: 1
+            dominant_priority: false
+          # 'free' (id 0) and 'unknown' (id 255) are advertised by perception_node's
+          # LabelInfo (see avros_perception/config/class_map.yaml) but must not mark
+          # any cells. Without an "ignored" class_type, kiwicampus logs
+          #   CRITICAL ERROR: Class '<name>' from label_info is not defined ...
+          # once per source on activation (segmentation_buffer.cpp:99).
+          # samples_to_max_cost: 999999 makes the marking gate at
+          # segmentation_buffer.cpp:387 unreachable, so cells are never painted.
+          ignored:
+            classes: ["free", "unknown"]
+            base_cost: 0
+            max_cost: 0
+            mark_confidence: 0
+            samples_to_max_cost: 999999
             dominant_priority: false
 
       inflation_layer:
