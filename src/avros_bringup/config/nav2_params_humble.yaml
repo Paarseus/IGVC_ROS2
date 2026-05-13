@@ -245,16 +245,24 @@ local_costmap:
         velodyne_points:
           topic: /velodyne_points
           max_obstacle_height: 2.0
-          # Sensor measured at base_link z=0.715m (NOT 1.0 m as an earlier
-          # comment claimed — verified 2026-05-13 via tf_echo base_link velodyne).
-          # min_obstacle_height is in the velodyne frame: -0.5 filters points
-          # below z=0.215m absolute, which lets near-ground grass returns through.
-          # V3 field test 2026-05-13 confirmed the costmap LETHAL flood at this
-          # site is NOT grass (spatial heatmap showed structured 3-15m clusters,
-          # not a uniform near-field disc) — it's real objects in the environment,
-          # so this stayed at -0.5. Tighten to -0.2 or 0.0 on sites where grass
-          # tops are taller and the LiDAR is producing a uniform near-field flood.
-          min_obstacle_height: -0.5
+          # min_obstacle_height is in the GLOBAL frame (odom for local_costmap),
+          # NOT the sensor frame — confirmed in nav2_costmap_2d Humble source:
+          # ObservationBuffer::bufferCloud transforms cloud to global_frame_
+          # BEFORE the z check (lines 159-187 in observation_buffer.cpp).
+          # So 0 = ground level, positive = above ground, negative = below ground.
+          #
+          # 2026-05-13 V3 field tuning at CPP grass with the misinterpretation
+          # corrected: 0.2 filters under-ground multipath (~31% of returns) +
+          # ground hits + low grass while still marking short barrels (0.5+ m)
+          # and people (1+ m). Measured z-distribution at this site:
+          #   z<0     : 31% multipath/below-ground
+          #   0-0.2   : 18% ground + low grass
+          #   0.2-0.5 : 5%  tall grass / curbs
+          #   0.5-1   : 2%  barrels + at-sensor
+          #   1-2     : 8%  people / posts
+          #   >2      : 35% buildings / trees / high structures
+          # Set to 0.3 if grass is taller than 0.2 m at the test site.
+          min_obstacle_height: 0.2
           obstacle_max_range: 15.0
           obstacle_min_range: 1.0
           clearing: true
