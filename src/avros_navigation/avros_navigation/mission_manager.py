@@ -5,10 +5,12 @@ NavigateToPose goals from a YAML waypoint list. The BT is "dumb" — it
 plans, follows, and recovers; this node owns the waypoint cursor and
 advances it on proximity.
 
-Phase M4 scope: also wire a NavigateToPose ActionClient and send the
-first waypoint as a single-shot goal at startup. Cursor advance on
-proximity lands in M5.
+Phase M5 scope: add an /odometry/global subscriber and a 5 Hz
+proximity timer that pops the cursor when the robot enters
+acceptance_radius_m of the current waypoint, then dispatches the
+next one. Skip-on-failure and launch integration land in M6.
 """
+import math
 import sys
 from typing import List, Optional, Tuple
 
@@ -16,7 +18,8 @@ import rclpy
 import yaml
 from action_msgs.msg import GoalStatus
 from geographic_msgs.msg import GeoPoint
-from geometry_msgs.msg import Point, PoseStamped
+from geometry_msgs.msg import Point
+from nav_msgs.msg import Odometry
 from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionClient
 from rclpy.node import Node
@@ -26,6 +29,7 @@ from robot_localization.srv import FromLL
 FROMLL_WAIT_TIMEOUT_S = 30.0
 FROMLL_CALL_TIMEOUT_S = 5.0
 NAV2_WAIT_TIMEOUT_S = 30.0
+PROXIMITY_TICK_HZ = 5.0
 GOAL_FRAME_ID = 'map'
 
 
@@ -54,6 +58,8 @@ class MissionManager(Node):
 
         self._nav_client = ActionClient(self, NavigateToPose, '/navigate_to_pose')
         self._goal_handle = None
+        self._cursor = 0
+        self._latest_robot_xy: Optional[Tuple[float, float]] = None
         if not self._nav_client.wait_for_server(timeout_sec=NAV2_WAIT_TIMEOUT_S):
             self.get_logger().error(
                 f'/navigate_to_pose action server not available after '
@@ -61,7 +67,13 @@ class MissionManager(Node):
             )
             raise SystemExit(1)
 
-        self._send_goal(0)
+        self._odom_sub = self.create_subscription(
+            Odometry, self._odom_topic, self._on_odom, 10
+        )
+        self._proximity_timer = self.create_timer(
+            1.0 / PROXIMITY_TICK_HZ, self._on_proximity_tick
+        )
+        self._send_goal(self._cursor)
 
     def _load_waypoints(self, path: str) -> List[Tuple[float, float]]:
         if not path:
@@ -152,6 +164,49 @@ class MissionManager(Node):
         }.get(status, f'UNKNOWN({status})')
         self.get_logger().info(f'wp{index} result: {status_str}')
         self._goal_handle = None
+        # Advance on natural SUCCEEDED — the BT got there before our proximity
+        # tick fired (most common when the robot is already inside the radius
+        # at goal send time, e.g. starting at the datum for wp0).
+        # ABORTED / CANCELED behavior lands in M6 (skip-on-failure).
+        if status == GoalStatus.STATUS_SUCCEEDED and index == self._cursor:
+            self._cursor += 1
+            if self._cursor >= len(self._map_waypoints):
+                self.get_logger().info(
+                    f'all {len(self._map_waypoints)} waypoints reached — mission complete'
+                )
+                return
+            self._send_goal(self._cursor)
+
+    def _on_odom(self, msg: Odometry) -> None:
+        self._latest_robot_xy = (msg.pose.pose.position.x, msg.pose.pose.position.y)
+
+    def _on_proximity_tick(self) -> None:
+        if self._latest_robot_xy is None:
+            return
+        if self._cursor >= len(self._map_waypoints):
+            return
+        if self._goal_handle is None:
+            return
+
+        target = self._map_waypoints[self._cursor]
+        rx, ry = self._latest_robot_xy
+        dist = math.hypot(target.x - rx, target.y - ry)
+        if dist >= self._radius:
+            return
+
+        self.get_logger().info(
+            f'wp{self._cursor} reached (dist={dist:.2f} m < radius={self._radius:.2f} m), advancing'
+        )
+        # Detach the result callback chain before cancel — we'll log status
+        # in _on_result for the canceled goal anyway, but the cursor advance
+        # happens here, not in _on_result.
+        self._goal_handle.cancel_goal_async()
+        self._goal_handle = None
+        self._cursor += 1
+        if self._cursor >= len(self._map_waypoints):
+            self.get_logger().info(f'all {len(self._map_waypoints)} waypoints reached — mission complete')
+            return
+        self._send_goal(self._cursor)
 
 
 def main(args=None) -> None:
