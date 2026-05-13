@@ -5,23 +5,28 @@ NavigateToPose goals from a YAML waypoint list. The BT is "dumb" — it
 plans, follows, and recovers; this node owns the waypoint cursor and
 advances it on proximity.
 
-Phase M3 scope: load waypoints YAML, convert each lat/lon to a
-map-frame pose via robot_localization's /fromLL service. Action
-client + cursor advance land in M4-M6.
+Phase M4 scope: also wire a NavigateToPose ActionClient and send the
+first waypoint as a single-shot goal at startup. Cursor advance on
+proximity lands in M5.
 """
 import sys
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import rclpy
 import yaml
+from action_msgs.msg import GoalStatus
 from geographic_msgs.msg import GeoPoint
-from geometry_msgs.msg import Point
+from geometry_msgs.msg import Point, PoseStamped
+from nav2_msgs.action import NavigateToPose
+from rclpy.action import ActionClient
 from rclpy.node import Node
 from robot_localization.srv import FromLL
 
 
 FROMLL_WAIT_TIMEOUT_S = 30.0
 FROMLL_CALL_TIMEOUT_S = 5.0
+NAV2_WAIT_TIMEOUT_S = 30.0
+GOAL_FRAME_ID = 'map'
 
 
 class MissionManager(Node):
@@ -46,6 +51,17 @@ class MissionManager(Node):
         self._ll_waypoints = self._load_waypoints(self._waypoints_file)
         self._fromll_client = self.create_client(FromLL, '/fromLL')
         self._map_waypoints: List[Point] = self._convert_to_map_frame(self._ll_waypoints)
+
+        self._nav_client = ActionClient(self, NavigateToPose, '/navigate_to_pose')
+        self._goal_handle = None
+        if not self._nav_client.wait_for_server(timeout_sec=NAV2_WAIT_TIMEOUT_S):
+            self.get_logger().error(
+                f'/navigate_to_pose action server not available after '
+                f'{NAV2_WAIT_TIMEOUT_S}s — is bt_navigator running?'
+            )
+            raise SystemExit(1)
+
+        self._send_goal(0)
 
     def _load_waypoints(self, path: str) -> List[Tuple[float, float]]:
         if not path:
@@ -101,6 +117,41 @@ class MissionManager(Node):
                 f'Converted wp{i} ({lat:.6f}, {lon:.6f}) -> map frame ({point.x:.3f}, {point.y:.3f})'
             )
         return out
+
+    def _send_goal(self, index: int) -> None:
+        point = self._map_waypoints[index]
+        goal_msg = NavigateToPose.Goal()
+        goal_msg.pose.header.frame_id = GOAL_FRAME_ID
+        goal_msg.pose.header.stamp = self.get_clock().now().to_msg()
+        goal_msg.pose.pose.position = point
+        goal_msg.pose.pose.orientation.w = 1.0
+        self.get_logger().info(
+            f'Sending wp{index} -> NavigateToPose ({point.x:.3f}, {point.y:.3f}) in {GOAL_FRAME_ID}'
+        )
+        future = self._nav_client.send_goal_async(goal_msg)
+        future.add_done_callback(lambda f: self._on_goal_response(f, index))
+
+    def _on_goal_response(self, future, index: int) -> None:
+        goal_handle = future.result()
+        if not goal_handle.accepted:
+            self.get_logger().warn(f'wp{index} REJECTED by /navigate_to_pose')
+            self._goal_handle = None
+            return
+        self.get_logger().info(f'wp{index} accepted by /navigate_to_pose')
+        self._goal_handle = goal_handle
+        goal_handle.get_result_async().add_done_callback(
+            lambda f: self._on_result(f, index)
+        )
+
+    def _on_result(self, future, index: int) -> None:
+        status = future.result().status
+        status_str = {
+            GoalStatus.STATUS_SUCCEEDED: 'SUCCEEDED',
+            GoalStatus.STATUS_ABORTED: 'ABORTED',
+            GoalStatus.STATUS_CANCELED: 'CANCELED',
+        }.get(status, f'UNKNOWN({status})')
+        self.get_logger().info(f'wp{index} result: {status_str}')
+        self._goal_handle = None
 
 
 def main(args=None) -> None:
