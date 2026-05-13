@@ -51,8 +51,11 @@ def generate_launch_description():
         ),
 
         DeclareLaunchArgument(
-            'enable_ntrip', default_value='true',
-            description='Enable NTRIP client for RTK corrections'
+            'enable_ntrip', default_value='false',
+            description='Enable NTRIP client for RTK corrections. '
+                        'Default false: IGVC 2026 rule §I.2 forbids base '
+                        'stations for positioning. Re-enable explicitly '
+                        'when developing/practicing outside competition.'
         ),
 
         DeclareLaunchArgument(
