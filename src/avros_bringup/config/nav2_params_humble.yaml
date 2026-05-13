@@ -245,12 +245,16 @@ local_costmap:
         velodyne_points:
           topic: /velodyne_points
           max_obstacle_height: 2.0
-          # 2026-05-13 V3 field tuning at CPP grass: sensor measured at z=0.715m
-          # (NOT 1.0 m as the prior comment said — verified via tf_echo). With
-          # min_obstacle_height=-0.2 in velodyne frame, we filter returns below
-          # z=0.515m absolute — well above grass top (~0.3 m typical) so grass
-          # returns get filtered; below knee height so a person or barrel marks.
-          min_obstacle_height: -0.2
+          # Sensor measured at base_link z=0.715m (NOT 1.0 m as an earlier
+          # comment claimed — verified 2026-05-13 via tf_echo base_link velodyne).
+          # min_obstacle_height is in the velodyne frame: -0.5 filters points
+          # below z=0.215m absolute, which lets near-ground grass returns through.
+          # V3 field test 2026-05-13 confirmed the costmap LETHAL flood at this
+          # site is NOT grass (spatial heatmap showed structured 3-15m clusters,
+          # not a uniform near-field disc) — it's real objects in the environment,
+          # so this stayed at -0.5. Tighten to -0.2 or 0.0 on sites where grass
+          # tops are taller and the LiDAR is producing a uniform near-field flood.
+          min_obstacle_height: -0.5
           obstacle_max_range: 15.0
           obstacle_min_range: 1.0
           clearing: true
