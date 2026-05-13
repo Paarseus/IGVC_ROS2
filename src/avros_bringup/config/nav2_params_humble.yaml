@@ -270,6 +270,14 @@ local_costmap:
           data_type: "PointCloud2"
           raytrace_max_range: 20.0
           raytrace_min_range: 1.0
+          # 2026-05-13: time-based age-out for LiDAR marks. Raytrace-only
+          # clearing leaves stale cells behind when an object disappears and
+          # nothing replaces it within range (laser produces no return → no
+          # raytrace through the old cell). 2 s gives the raytrace pass time
+          # to clear if a beyond-cell return exists, AND ensures absent
+          # observations age out otherwise. Bump higher (3-5 s) if real
+          # obstacles flicker due to brief occlusion.
+          observation_persistence: 2.0
 
       # kiwicampus/semantic_segmentation_layer — consumes the avros_perception 3-topic contract
       # from the front ZED X. Additive to voxel_layer; it writes cost from camera-classified
@@ -415,7 +423,10 @@ local_costmap:
 global_costmap:
   global_costmap:
     ros__parameters:
-      update_frequency: 1.0
+      # 2026-05-13: raised 1.0 -> 5.0 so global clearing keeps pace with
+      # the local. At 1 Hz, stale marks lingered 10x longer than the local.
+      # Modest CPU bump; well within Orin headroom.
+      update_frequency: 5.0
       publish_frequency: 0.5
       global_frame: map
       robot_base_frame: base_link
@@ -460,6 +471,8 @@ global_costmap:
           data_type: "PointCloud2"
           raytrace_max_range: 50.0
           raytrace_min_range: 1.0
+          # Same time-based age-out as the local — keep in sync.
+          observation_persistence: 2.0
 
       # Mirror of local_costmap.semantic_layer — RETAINED BUT NOT IN PLUGINS LIST
       # as of 2026-05-12 (see plugins-list comment above for full rationale).
