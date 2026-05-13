@@ -30,7 +30,8 @@
 // Safety:
 //   300 ms host watchdog -- if no L/R/S arrives in that window, both wheels
 //   are forced to 0 RPM. SparkMAX 100 ms heartbeat timeout is a second layer.
-//   MAX_RPM clamp (3000, well below NEO free speed of 5676).
+//   MAX_RPM clamp (4600, 19% below NEO free speed of 5676 — matches the
+//   actuator_node 1.5 m/s ground-speed cap with margin).
 // ============================================================================
 
 #include <FlexCAN_T4.h>
@@ -45,7 +46,11 @@ static constexpr uint32_t CTRL_DT_MS     = 20;    // 50 Hz control loop
 static constexpr uint32_t FEEDBACK_DT_MS = 20;    // 50 Hz E-line to host
 static constexpr uint32_t ENC_CFG_DT_MS  = 1000;  // re-kick encoder enable
 static constexpr uint32_t WATCHDOG_MS    = 300;
-static constexpr float    MAX_RPM        = 3000.0f;
+// 4600 RPM = 1.527 m/s ground speed (4600 × 0.01994 / 60), matches the
+// actuator_node max_linear_mps = 1.5 m/s declared limit with a small margin.
+// Previously 3000 silently clamped the 4514 RPM the node sends at top speed
+// down to ~1.0 m/s ground. Still 19% below NEO free speed (5676 RPM).
+static constexpr float    MAX_RPM        = 4600.0f;
 
 // ---------- SparkMAX CAN protocol constants ----------------------------------
 static constexpr uint8_t  SPARK_DEV_TYPE = 2;
