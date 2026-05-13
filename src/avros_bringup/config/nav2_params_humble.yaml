@@ -286,9 +286,11 @@ local_costmap:
           horizontal_fov_angle: 6.283    # 360 deg
           # decay_acceleration: when a voxel sits inside the current sensor
           # frustum without a confirming return, accelerate its decay by
-          # this much (units 1/s^2). 1.0 = mild; bump to 5.0 if stale
-          # frustum-visible cells linger longer than ~3 s.
-          decay_acceleration: 1.0
+          # this much (units 1/s^2). 5.0 matches Macenski's official
+          # vlp16_config.yaml and OmniLRS; gives ~1-2 s clear time for
+          # the no-return / barrel-gone case while keeping valid obstacles
+          # stable across brief occlusions (driven by voxel_decay = 5 s).
+          decay_acceleration: 5.0
           clear_after_reading: true
 
       # kiwicampus/semantic_segmentation_layer — consumes the avros_perception 3-topic contract
