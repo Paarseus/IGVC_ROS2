@@ -227,29 +227,44 @@ local_costmap:
       # 2026-05-12: explicit rectangular footprint required by MPPI CostCritic.consider_footprint=true.
       # Dimensions match BT comment (1.0m x 0.74m); origin at base_link center, +X forward.
       footprint: "[[0.5, 0.37], [-0.5, 0.37], [-0.5, -0.37], [0.5, -0.37]]"
-      # voxel_layer first so semantic_layer's LETHAL writes win on cell conflict via updateWithMax.
-      # Re-adding voxel_layer here after its removal in fafd539 (2026-04-29, "no LiDAR fitted") —
-      # Velodyne VLP-16 is now online and /velodyne_points is publishing.
-      plugins: ["voxel_layer", "semantic_layer", "inflation_layer"]
+      # stvl_layer first so semantic_layer's LETHAL writes win on cell conflict via updateWithMax.
+      # STVL (spatio_temporal_voxel_layer) replaces nav2_costmap_2d::VoxelLayer
+      # for the Velodyne VLP-16 source. voxel_layer is structurally wrong for
+      # sparse 3D LiDAR + stationary-prone robot: it clears cells only via
+      # raytrace from sensor through the cell to a free-space endpoint, but
+      # VLP-16's 16-beam 2 deg ring spacing leaves wide angular gaps unswept
+      # per scan; when stationary that gap pattern is frozen, and any cell
+      # with no return beyond it (barrel removed -> laser sees sky) cannot
+      # be cleared by raytrace. inf_is_valid is hard-coded to LaserScan in
+      # nav2 humble (obstacle_layer.cpp:194-197 logs "not applicable to
+      # PointCloud observations"). STVL clears via voxel_decay (time) and
+      # decay_acceleration (frustum), which works on a stationary robot.
+      # Recommended by Steve Macenski (nav2 maintainer) for VLP-16; used by
+      # his vlp16_config.yaml, OmniLRS, and Jackal-UAO. Migrated 2026-05-13.
+      plugins: ["stvl_layer", "semantic_layer", "inflation_layer"]
 
-      voxel_layer:
-        plugin: "nav2_costmap_2d::VoxelLayer"
+      stvl_layer:
+        plugin: "spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer"
         enabled: true
-        publish_voxel_map: true
-        origin_z: 0.0
-        z_resolution: 0.2
-        z_voxels: 10
-        max_obstacle_height: 2.0
+        voxel_decay: 5.0           # seconds; stale cells evaporate after this
+        decay_model: 0             # 0=linear, 1=exponential, -1=persistent
+        voxel_size: 0.1            # 10 cm voxels
+        publish_voxel_map: true    # /.../stvl_layer/voxel_marked_cloud + voxel_grid
         mark_threshold: 0
+        update_footprint_enabled: true
+        combination_method: 1      # Max (matches voxel_layer default)
+        mapping_mode: false        # ephemeral local costmap (not building a map)
         observation_sources: velodyne_points
         velodyne_points:
           topic: /velodyne_points
-          max_obstacle_height: 2.0
+          data_type: PointCloud2
+          marking: true
+          clearing: true
           # min_obstacle_height is in the GLOBAL frame (odom for local_costmap),
-          # NOT the sensor frame — confirmed in nav2_costmap_2d Humble source:
+          # NOT the sensor frame -- confirmed in nav2_costmap_2d Humble source:
           # ObservationBuffer::bufferCloud transforms cloud to global_frame_
           # BEFORE the z check (lines 159-187 in observation_buffer.cpp).
-          # So 0 = ground level, positive = above ground, negative = below ground.
+          # So 0 = ground level, positive = above ground, negative = below.
           #
           # 2026-05-13 V3 field tuning at CPP grass with the misinterpretation
           # corrected: 0.2 filters under-ground multipath (~31% of returns) +
@@ -263,19 +278,18 @@ local_costmap:
           #   >2      : 35% buildings / trees / high structures
           # Set to 0.3 if grass is taller than 0.2 m at the test site.
           min_obstacle_height: 0.2
-          obstacle_max_range: 15.0
-          obstacle_min_range: 1.0
-          clearing: true
-          marking: true
-          data_type: "PointCloud2"
-          raytrace_max_range: 20.0
-          raytrace_min_range: 1.0
-          # observation_persistence kept at default 0.0. A higher value makes
-          # clearing SLOWER, not faster: the voxel grid is not reset between
-          # cycles, so every buffered obs re-marks its old points each cycle.
-          # The earlier 2.0 attempt (commit b0b028b) was based on a misread
-          # of the buffer semantics; reverted after live testing on 2026-05-13.
-          observation_persistence: 0.0
+          max_obstacle_height: 2.0
+          obstacle_range: 15.0           # was obstacle_max_range in voxel_layer
+          # VLP-16 hourglass FOV for frustum-accelerated decay
+          model_type: 1                  # 1 = 3D LiDAR; 0 = depth camera
+          vertical_fov_angle: 0.523      # VLP-16 +/-15 deg
+          horizontal_fov_angle: 6.283    # 360 deg
+          # decay_acceleration: when a voxel sits inside the current sensor
+          # frustum without a confirming return, accelerate its decay by
+          # this much (units 1/s^2). 1.0 = mild; bump to 5.0 if stale
+          # frustum-visible cells linger longer than ~3 s.
+          decay_acceleration: 1.0
+          clear_after_reading: true
 
       # kiwicampus/semantic_segmentation_layer — consumes the avros_perception 3-topic contract
       # from the front ZED X. Additive to voxel_layer; it writes cost from camera-classified
