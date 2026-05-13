@@ -171,8 +171,11 @@
     <!-- Resurvey 2026-05-06 (cpp_avl_igvc): 26.75" forward, 4.25" below
          IMU. Z = xsens_height - 0.108. Faces +X (forward). Replaces
          prior estimate (15.625" forward, 2.25" above) which was off
-         by ~28 cm forward. -->
-    <origin xyz="0.6795 0.0 ${xsens_height - 0.108}" rpy="0 0 0"/>
+         by ~28 cm forward.
+         2026-05-12: physically tilted 15° down on the bracket to keep
+         the lane in frame at near-range. pitch = +0.2618 rad rotates
+         the camera's +X-forward axis toward -Z-down. -->
+    <origin xyz="0.6795 0.0 ${xsens_height - 0.108}" rpy="0 ${radians(15)} 0"/>
   </joint>
 
   <!-- ============================================================ -->
