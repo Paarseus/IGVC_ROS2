@@ -216,7 +216,10 @@ local_costmap:
       # 2026-05-12: explicit rectangular footprint required by MPPI CostCritic.consider_footprint=true.
       # Dimensions match BT comment (1.0m x 0.74m); origin at base_link center, +X forward.
       footprint: "[[0.5, 0.37], [-0.5, 0.37], [-0.5, -0.37], [0.5, -0.37]]"
-      plugins: ["semantic_layer", "inflation_layer"]
+      # voxel_layer first so semantic_layer's LETHAL writes win on cell conflict via updateWithMax.
+      # Re-adding voxel_layer here after its removal in fafd539 (2026-04-29, "no LiDAR fitted") —
+      # Velodyne VLP-16 is now online and /velodyne_points is publishing.
+      plugins: ["voxel_layer", "semantic_layer", "inflation_layer"]
 
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
