@@ -1,5 +1,7 @@
 # Vehicle Integration Test Plan — V0 through V11
 
+> **SUPERSEDED** by `docs/W_vehicle_integration_test_plan.md` (14 phases P0-P13, ~80 micro-steps). The W-plan reflects three post-V changes: (1) STVL migration on local_costmap — commits `4450003`+`4d04e3a` — clearing semantics totally rewritten; (2) NTRIP disabled per IGVC §I.2; (3) `observation_persistence` reverted to 0.0 (commit `9ea082d`). V3 and V5 here are obsolete for STVL — see P5 in W. V6-V11 fold into P13.1-P13.6 of W. **Read W first.**
+
 **Purpose:** validate the full IGVC_ROS2 stack on the real vehicle, from minimal subsystem checks to full IGVC-like scenarios. Each step is small, has a clear pass/fail, and unlocks the next.
 
 **Supersedes:** docs/field_test_plan.md (T1-T10) — that plan was written before the firmware MAX_RPM fix, the EKF VIO yaw-only fusion, the mission_manager build, and the latest perception/Nav2 tuning. The V-ladder reflects the current state.
