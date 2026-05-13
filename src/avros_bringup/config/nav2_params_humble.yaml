@@ -447,7 +447,12 @@ global_costmap:
         velodyne_points:
           topic: /velodyne_points
           max_obstacle_height: 2.0
-          min_obstacle_height: -0.5      # Sensor at z=1.0m; -0.5 = 0.5m above ground
+          # min_obstacle_height is in the GLOBAL frame (map, ground=0) — see
+          # the matching comment in local_costmap.voxel_layer above for the
+          # field-measured z-distribution at CPP grass. 0.2 filters ground
+          # hits + low grass while keeping barrels (0.5+ m) and people.
+          # Keep this in sync with the local_costmap value when re-tuning.
+          min_obstacle_height: 0.2
           obstacle_max_range: 50.0
           obstacle_min_range: 1.0
           clearing: true
