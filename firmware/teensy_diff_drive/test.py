@@ -17,7 +17,7 @@ Safety:
   - Default run time = 2 s; max 10 s via --max-time
   - Always sends S on exit (including Ctrl-C)
   - Duty clamped to |d| <= 0.6 (matches firmware MAX_DUTY)
-  - RPM clamped to |v| <= 3000 (matches firmware MAX_RPM)
+  - RPM clamped to |v| <= 4600 (matches firmware MAX_RPM)
 """
 
 import argparse
@@ -116,8 +116,8 @@ def cmd_duty(t, left, right, duration):
 
 
 def cmd_velocity(t, left, right, duration):
-    left  = max(-3000, min(3000, int(left)))
-    right = max(-3000, min(3000, int(right)))
+    left  = max(-4600, min(4600, int(left)))
+    right = max(-4600, min(4600, int(right)))
     print(f">>> VEL   L={left} RPM  R={right} RPM  for {duration:.1f}s")
     print("    (requires SparkMAX PID tuned via REV Hardware Client; "
           "if motors don't move, use duty mode instead)")

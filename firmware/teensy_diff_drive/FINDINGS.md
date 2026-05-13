@@ -151,3 +151,49 @@ the current power architecture. Fixing the shared 12 V rail (dedicated
 - `BURN` command (cls=63 idx=15, magic 0x3AA3 LE) persists gains across power cycle — **tested by burning new gains and reading them back**
 
 The full parameter path (firmware → CAN → SparkMAX flash) is now proven working.
+
+---
+
+## 2026-05-12 — multi-agent root-cause analysis: top-speed ceiling
+
+User reported the car was not exceeding a certain ground speed. Two parallel research agents (codebase audit + REVLib API audit) plus on-disk evidence converged on the cause.
+
+### Root cause (Rank 1, confirmed)
+
+Firmware `MAX_RPM` was set to **3000**. The actuator node's `max_linear_mps = 1.5` at `m_per_motor_rev = 0.01994` issues setpoints up to:
+
+`1.5 / 0.01994 × 60 = 4514 motor RPM`
+
+Every value above 3000 was silently truncated in `setVelocity()`. Effective ground-speed cap:
+
+`3000 × 0.01994 / 60 = 0.997 m/s`
+
+Exactly matches the "1.0 m/s sustained ceiling" recorded in the Phase 6c section above — that ceiling was attributed entirely to the 12 V rail sag, but the firmware clamp would have been the hard cap even with a healthy rail.
+
+**Fix applied**: `MAX_RPM = 4600.0f` in `teensy_diff_drive.ino:48` (4600 × 0.01994 / 60 = 1.527 m/s ground, ~19 % below NEO free speed of 5676 RPM).
+
+### Rank 2 — power rail (still applies, see Phase 6c section)
+
+The 12 V buck is shared between Jetson and both SparkMAXes. At sustained high duty `V_bus` sags 8.5–12 V and both wheels plateau at ~3000 RPM regardless of any firmware-side cap. Raising `MAX_RPM` alone unblocks short bursts and headroom for the slew-rate limit; sustained > 1.0 m/s still needs a dedicated 48 V → 19 V buck for the Jetson.
+
+### Rank 3 — SparkMAX parameters firmware never initializes (silent hidden caps)
+
+From REV's `SPARK-MAX-Types.proto` (REVrobotics/SPARK-MAX-Server), these slot-0 parameters default to values that can silently cap velocity-mode output. Firmware only writes IDs 13-16 (kP/kI/kD/kFF) — none of the below.
+
+| ID  | Name | Default | How it caps top speed |
+|---|---|---|---|
+| 60  | `kSmartCurrentFreeLimit` | **20 A** | At RPM > `kSmartCurrentConfig` (10000 default, so always) the controller hard-clamps current to 20 A. Likely the cause of the 8 % R-wheel asymmetry under load (Phase 4 measured right track at 5072 RPM extrapolated vs left at 5532 — controller pulled duty back as friction torque rose). |
+| 114 | `kClosedLoopRampRate` | 0 (off) | If a prior Hardware Client session left a non-zero %DC/sec, PID can't ramp output fast enough to track step setpoints. |
+| 74 / 75 | `kClosedLoopVoltageMode` / `kCompensatedNominalVoltage` | 0 | Mode 2 + a comp voltage below `V_bus` scales output by `Vcomp / V_bus` — compounds the 12 V rail sag. |
+| 76 / 77 | `kSmartMotionMaxVelocity_0` / `kSmartMotionMaxAccel_0` | 0 | Non-zero overrides the velocity setpoint with a Smart Motion trapezoid. |
+| 113 | `kVelocityConversionFactor` | 1.0 | Silent scaling — verified 1.0 via Hardware Client. |
+
+Wire format for all of the above is identical to the existing PID writes: `cls=14 idx=0`, `[param_id_u8, float32_LE]`, then `BURN` (`cls=63 idx=15`, magic `0x3AA3` LE) to persist.
+
+### Recommended follow-ups
+
+- [ ] Run REV Hardware Client check on both controllers: verify `kSmartCurrentFreeLimit ≥ 60 A`, `kClosedLoopRampRate = 0`, `kClosedLoopVoltageMode = 0`, `kSmartMotionMaxVelocity_0 = 0`.
+- [ ] Consider explicit firmware-side initialization of those params in `setup()` (same path as PID writes) so a fresh SparkMAX never ships with the 20 A free-limit silently throttling under load.
+- [ ] Consider bumping `max_linear_accel_mps2 0.5 → 1.0` in `actuator_params.yaml` — current ramp is 3.0 s to reach 1.5 m/s.
+- [ ] Re-run `phase4_duty_sweep.py` and `phase6c_pid_verify.py` after the firmware flash to confirm 4500 RPM tracking on both wheels (will still saturate on the 12 V rail sag in sustained mode, but should reach the new cap on bursts).
+

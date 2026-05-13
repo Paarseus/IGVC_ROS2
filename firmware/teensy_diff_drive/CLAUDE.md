@@ -61,7 +61,7 @@ python3 -m serial.tools.miniterm /dev/ttyACM0 115200
 | `DIAG …` | Response to `D` |
 | `# …` | Log / info line (watchdog trips, boot banner, etc.) |
 
-**Safety**: 300 ms host watchdog — no `L/R/S` in that window → both wheels forced to 0 RPM and one `# WDT host-timeout stop` line emitted. `MAX_RPM = 3000` clamp in `setVelocity()`.
+**Safety**: 300 ms host watchdog — no `L/R/S` in that window → both wheels forced to 0 RPM and one `# WDT host-timeout stop` line emitted. `MAX_RPM = 4600` clamp in `setVelocity()` — matches the actuator_node `max_linear_mps = 1.5 m/s` with margin (19 % below NEO free speed of 5676 RPM).
 
 ## SparkMAX prerequisites (configure once via REV Hardware Client)
 
@@ -70,7 +70,7 @@ These cannot be reliably configured over CAN and must be set via USB-C from REV 
 - **CAN ID** = 1 (left) or 2 (right)
 - **Motor Type** = Brushless
 - **Feedback Sensor** = Hall Sensor (NEO internal encoder)
-- **Velocity Conversion Factor** = 1.0 — otherwise `MAX_RPM = 3000` is in the wrong units
+- **Velocity Conversion Factor** = 1.0 — otherwise `MAX_RPM = 4600` is in the wrong units
 - **Position Conversion Factor** = 1.0 — otherwise the `E` line position scale is wrong
 
 ## Research status — CAN protocol verification (2026-04-19)
