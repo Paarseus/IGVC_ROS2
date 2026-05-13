@@ -241,7 +241,7 @@ local_costmap:
         z_voxels: 10
         max_obstacle_height: 2.0
         mark_threshold: 0
-        observation_sources: velodyne_points camera_depth
+        observation_sources: velodyne_points
         velodyne_points:
           topic: /velodyne_points
           max_obstacle_height: 2.0
@@ -258,18 +258,6 @@ local_costmap:
           data_type: "PointCloud2"
           raytrace_max_range: 20.0
           raytrace_min_range: 1.0
-        camera_depth:
-          topic: /camera/camera/depth/color/points
-          sensor_frame: camera_depth_optical_frame
-          max_obstacle_height: 1.5
-          min_obstacle_height: -0.5
-          obstacle_max_range: 5.0
-          obstacle_min_range: 0.3
-          clearing: false
-          marking: true
-          data_type: "PointCloud2"
-          raytrace_max_range: 5.0
-          raytrace_min_range: 0.3
 
       # kiwicampus/semantic_segmentation_layer — consumes the avros_perception 3-topic contract
       # from the front ZED X. Additive to voxel_layer; it writes cost from camera-classified
