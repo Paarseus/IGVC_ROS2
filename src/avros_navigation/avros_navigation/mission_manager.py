@@ -163,12 +163,19 @@ class MissionManager(Node):
             GoalStatus.STATUS_CANCELED: 'CANCELED',
         }.get(status, f'UNKNOWN({status})')
         self.get_logger().info(f'wp{index} result: {status_str}')
+        # Only act on results for the CURRENT cursor. An ABORTED/CANCELED
+        # result for a previously-canceled goal can arrive AFTER the proximity
+        # tick has already advanced to the next waypoint and accepted a new
+        # goal — touching _goal_handle or _cursor here would wipe the new
+        # state and stall the orchestrator.
+        if index != self._cursor:
+            return
         self._goal_handle = None
         # Advance on natural SUCCEEDED — the BT got there before our proximity
         # tick fired (most common when the robot is already inside the radius
         # at goal send time, e.g. starting at the datum for wp0).
         # ABORTED / CANCELED behavior lands in M6 (skip-on-failure).
-        if status == GoalStatus.STATUS_SUCCEEDED and index == self._cursor:
+        if status == GoalStatus.STATUS_SUCCEEDED:
             self._cursor += 1
             if self._cursor >= len(self._map_waypoints):
                 self.get_logger().info(
