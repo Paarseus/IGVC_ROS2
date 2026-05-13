@@ -24,6 +24,7 @@ from launch.actions import (
     DeclareLaunchArgument,
     IncludeLaunchDescription,
     SetEnvironmentVariable,
+    TimerAction,
 )
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -236,15 +237,32 @@ def generate_launch_description():
         # doesn't auto-drive the robot. Enable with enable_mission_manager:=true
         # for a real run; the orchestrator owns the waypoint cursor and feeds
         # NavigateToPose goals to the BT.
-        Node(
-            package='avros_navigation',
-            executable='mission_manager',
-            name='mission_manager',
-            parameters=[{
-                'waypoints_file': waypoints_file,
-                'use_sim_time': use_sim_time,
-            }],
-            output='screen',
-            condition=IfCondition(LaunchConfiguration('enable_mission_manager')),
+        #
+        # Wrapped in a 20 s TimerAction. Two concurrent races otherwise fire:
+        #   (1) navsat_transform advertises /fromLL before its datum is fully
+        #       initialized — calling fromLL too early returns (0,0,0) for
+        #       every input. ~5-15 s for GPS first-fix + datum lock.
+        #   (2) bt_navigator advertises /navigate_to_pose during its inactive
+        #       lifecycle transition; goals sent during that window are
+        #       REJECTED. Lifecycle manager finishes activation ~10-15 s
+        #       after launch.
+        # 20 s comfortably clears both. If field testing shows nav2 takes
+        # longer to come up, bump this; if shorter, lower it. Single point
+        # of tuning.
+        TimerAction(
+            period=20.0,
+            actions=[
+                Node(
+                    package='avros_navigation',
+                    executable='mission_manager',
+                    name='mission_manager',
+                    parameters=[{
+                        'waypoints_file': waypoints_file,
+                        'use_sim_time': use_sim_time,
+                    }],
+                    output='screen',
+                    condition=IfCondition(LaunchConfiguration('enable_mission_manager')),
+                ),
+            ],
         ),
     ])
