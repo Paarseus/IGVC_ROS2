@@ -49,16 +49,22 @@
                                 # concrete to pass mean+k*std for k>=0.5.
 
     # White lane paint: low saturation, high value, hue irrelevant.
-    # V floor 222, S ceiling 35 — recalibrated 2026-05-11 PM #2 on walkway with
-    # two parallel painted stripes. Lower-half V mean=182, p90=217, max=255.
-    # V=222 gives a solid trace on the near stripe (~0.5% of mask) with no
-    # walkway creep; V=215 explodes the mask to 5%; V=235 catches nothing.
-    # Far stripes don't survive 3x3 erosion at 128x224 mask resolution —
-    # they get detected when the car gets closer.
+    # 2026-05-13 PM retune on a white line on grass (front of vehicle).
+    # Bottom-65% of frame: grass background S median=111 p95=217, V median=147
+    # p95=188. Lane-like (top 10% V + bottom 15% S): S median=66 max=82,
+    # V median=210 max=255. Current default [0,0,130]/[179,80,255] caught
+    # 9% of bottom-half pixels (way too much, including bright grass).
+    # New thresholds: S<=60 + V>=200 catches ~1.5% (clean: line only).
+    # V>=220 + S<=30 also valid (1.17%) but tighter — use if false positives
+    # appear on bright grass patches.
+    #
+    # Prior comment block (V=222, S<=35 from walkway tuning) preserved for
+    # reference, but those values were never actually in the YAML — config
+    # had defaulted back to V=130 since.
     # NOTE: threshold is scene-dependent. Expect re-tuning under different
     # lighting / camera position until ONNX perception lands.
-    lane_low:    [0,   0, 130]
-    lane_high:   [179, 80, 255]
+    lane_low:    [0,   0, 200]
+    lane_high:   [179, 60, 255]
     # 3x3 erode on lane mask: 0 disables (line is <3px wide at 128x224 mask res)
     lane_erode_iters: 0
     # Run pipeline at incoming image resolution, downsample binary mask
