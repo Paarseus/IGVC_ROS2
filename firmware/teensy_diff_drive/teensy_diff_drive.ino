@@ -84,6 +84,7 @@ static constexpr uint8_t  PID_KP      = 13;
 static constexpr uint8_t  PID_KI      = 14;
 static constexpr uint8_t  PID_KD      = 15;
 static constexpr uint8_t  PID_KFF     = 16;
+static constexpr uint8_t  PID_KIZONE  = 17;
 
 // ---------- State ------------------------------------------------------------
 FlexCAN_T4<CAN1, RX_SIZE_256, TX_SIZE_16> can;
@@ -274,7 +275,8 @@ static void handleLine(char *line) {
                 case 'P': p = PID_KP;  break;
                 case 'I': p = PID_KI;  break;
                 case 'D': p = PID_KD;  break;
-                case 'F': p = PID_KFF; break;
+                case 'F': p = PID_KFF;    break;
+                case 'Z': p = PID_KIZONE; break;
                 default:  Serial.println("ERR K?"); return;
             }
             tuneBoth(p, val);

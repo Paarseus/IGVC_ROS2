@@ -109,6 +109,7 @@ class ActuatorNode(Node):
         self.declare_parameter('kP', 0.0004)
         self.declare_parameter('kI', 0.0)
         self.declare_parameter('kD', 0.0)
+        self.declare_parameter('kIZone', 200.0)
         # Odom frame names
         self.declare_parameter('odom_frame', 'odom')
         self.declare_parameter('base_frame', 'base_link')
@@ -142,12 +143,13 @@ class ActuatorNode(Node):
 
         # Set PID gains on the Teensy (pushes to both SparkMAXes)
         for name, val in [('KF', p('kFF').value), ('KP', p('kP').value),
-                          ('KI', p('kI').value), ('KD', p('kD').value)]:
+                          ('KI', p('kI').value), ('KD', p('kD').value),
+                          ('KZ', p('kIZone').value)]:
             self._serial_write(f'{name}{val}')
             time.sleep(0.2)
         self.get_logger().info(
             f'SparkMAX gains set: kFF={p("kFF").value} kP={p("kP").value} '
-            f'kI={p("kI").value} kD={p("kD").value}'
+            f'kI={p("kI").value} kD={p("kD").value} kIZone={p("kIZone").value}'
         )
 
         # ---- state ----
