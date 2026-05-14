@@ -249,7 +249,7 @@ Unified (v, ω) target computed from whichever input is freshest:
 - **Ground per motor revolution:** 0.01994 m (π × 80.85 mm drive-pulley pitch dia / 12.75:1 gearbox)
 - **Theoretical top speed:** 1.89 m/s at NEO free speed (5676 RPM)
 - **Measured Phase 4 max RPM extrapolated:** L = 5532 (97.5% free), R = 5072 (89.4% free) — right track has 8% higher friction
-- **SparkMAX PID gains (tuned in Phase 6):** kFF=0.000197, kP=0.0004, kI=0, kD=0
+- **SparkMAX PID gains (re-tuned 2026-05-14 on asphalt, issue #6):** kFF=0.000197, kP=0.0008, kI=5e-7, kD=0, kIZone=600 — kP doubled (delivery 70%→~100%); kIZone gates the integrator (|error| < 600 RPM) to kill the low-speed limit cycle that any useful kI otherwise causes. Validated fwd+back vx=0.4/0.6/0.8: 97-100% delivery, 1-6% ripple, 0.1-0.5% L/R asymmetry. BURNed to SparkMAX flash.
 - **Actuator-node slew caps:** max_linear_accel = 1.0 m/s², max_linear_decel = 1.5 m/s², max_angular_accel = 2.0 rad/s²
 - **Speed caps:** max_linear_mps = 1.5, max_angular_rps = 1.0
 - **WebUI max_throttle:** 1.0 (full cmd_vel range; clamped by max_linear_mps)
@@ -409,7 +409,8 @@ SparkMAX FW 26.1.4 CAN protocol gotchas (cls=14 PARAMETER_WRITE, cls=0 VELOCITY_
 | NTRIP client no data | Verify credentials and mountpoint in `ntrip_params.yaml`; check internet access from Jetson; try `enable_ntrip:=false` to isolate |
 | NTRIP `mountpoint` still `CHANGE_ME` | Edit `ntrip_params.yaml` — pick a nearby mountpoint from your caster (e.g. rtk2go.com mount list) |
 | **Jetson crashes randomly during motor testing** | Shared 12 V rail — Jetson and SparkMAXes both fed from the 48V→12V buck. Motor inrush (~200A transient) sags the rail below Jetson brown-out threshold. Fix: dedicated 48V→19V buck for Jetson, separate from motor rail. Persistent journald now enabled for post-crash forensics. |
-| SparkMAX velocity mode caps at ~2450 RPM | Not `kOutputMax_0` — it's velocity-PID + Brake-idle oscillation. Slew-rate limit in actuator_node + proper kFF (= 1/max_loaded_RPM) fixes it. |
+| SparkMAX velocity under-delivers RPM (~70% of commanded), issue #6 | Misdiagnosed as a `kOutputMax_0 ≈ 0.47` cap / Brake-idle oscillation — actually **kP too small**. kP=0.0004 only drove ~70% of the needed duty. Fix: kP=0.0008 + kI=5e-7 + kIZone=600 → ~100% delivery. **kIZone is essential** — without it any kI big enough to close the steady-state gap causes a low-speed integrator limit cycle (±20% RPM). The duty cycle is *not* clamped at 0.47. |
+| End-of-drive motor creep on cmd_vel-stale stop | `sent_stop` gated on the post-IMU `w`, kept perpetually nonzero by yaw-rate feedback on IMU noise → the duty-0 `S` brake-idle command never fired → motor crept ~70-110 RPM for ~1.5 s. Fixed (commit 30d6eb0): gate on `v_slewed`/`w_slewed` instead. The webui never showed this because it stops via estop. |
 | Motors spin opposite directions under `L+ R+` | Mirror-mounted motors. Fix: check "Motor Inverted" on ONE SparkMAX via REV Hardware Client (Basic tab). Inverts both output and encoder sign so firmware sees consistent direction. |
 | Blinking magenta on SparkMAX | "Brushless + Coast + NO valid signal" — heartbeat gap > 100 ms. Most commonly caused by overly aggressive `!Serial` gating on the Teensy during USB CDC traffic. Current firmware has no `!Serial` guard. |
 | Hardware Client unreachable over CAN | Unplug CAN wire from the SparkMAX before USB-C config — Hardware Client and Teensy fight for the bus otherwise. |

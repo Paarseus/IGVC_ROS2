@@ -11,12 +11,12 @@
 #   [DYNAMIC]   `ros2 param set /actuator_node <name> <value>` applies immediately
 #   [INIT-ONLY] requires `kill actuator_node && ros2 launch ...` to change
 #
-# Speed-cap context (see docs/F_firmware_characterization_report.md, 2026-05-12):
-#   SparkMAX kOutputMax_0 ≈ 0.47 is a FIRMWARE cap that limits per-wheel RPM
-#   to ~2114 on grass → 0.70 m/s actual ground speed regardless of /cmd_vel.
-#   max_linear_mps below is the actuator's INTERNAL clamp, not the achievable
-#   speed; the SparkMAX bottleneck hits first. Raise kOutputMax via REV
-#   Hardware Client + BURN to actually go faster.
+# Speed-cap context (issue #6, re-tuned 2026-05-14 on asphalt):
+#   The earlier "kOutputMax_0 ≈ 0.47 firmware cap" theory was DISPROVED --
+#   the ~70% RPM under-delivery was simply kP too small. With kP=0.0008 +
+#   kI=5e-7 + kIZone=600 the motors track ~100% of commanded RPM; the duty
+#   cycle is not clamped at 0.47. max_linear_mps below is the actuator's
+#   INTERNAL clamp; the motors can now reach it.
 # ============================================================================
 actuator_node:
   ros__parameters:
@@ -29,8 +29,8 @@ actuator_node:
     m_per_motor_rev: 0.01994       # π × 80.85 mm / 12.75:1 gearbox
 
     # ---- Speed safety caps [DYNAMIC] ----
-    max_linear_mps: 1.5            # robot can't actually reach this on grass
-                                   # (SparkMAX kOutputMax caps at ~0.70 m/s)
+    max_linear_mps: 1.5            # achievable now (issue #6 re-tune) -- the
+                                   # old "kOutputMax caps at 0.70 m/s" was wrong
     max_angular_rps: 1.5           # 2026-05-12: raised 1.0 -> 1.5 to give
                                    # heading-hold room to compensate right-track
                                    # friction asymmetry without saturating the
@@ -57,13 +57,17 @@ actuator_node:
     state_pub_rate_hz: 20.0        # [INIT-ONLY] /avros/actuator_state rate
 
     # ---- SparkMAX PID gains [INIT-ONLY], pushed to Teensy on startup ----
-    # From firmware/teensy_diff_drive/FINDINGS.md Phase 6:
-    # kFF = 1 / measured_max_RPM (5072 on the slower wheel), kP modest.
+    # Re-tuned 2026-05-14 on asphalt (issue #6). kP doubled 0.0004->0.0008
+    # (delivery 70%->~100%); kI closes the steady-state residual but on its
+    # own caused a low-speed integrator limit cycle -- kIZone (PR #8) gates
+    # the integrator to |error| < 600 RPM so it stays frozen during ramp
+    # transients. Validated fwd+back at vx=0.4/0.6/0.8: 97-100% delivery,
+    # 1-6% ripple, 0.1-0.5% L/R asymmetry, no limit cycle. BURNed to flash.
     kFF: 0.000197
-    kP:  0.0004
-    kI:  0.0
+    kP:  0.0008
+    kI:  0.0000005
     kD:  0.0
-    kIZone: 200.0
+    kIZone: 600.0
 
     # ---- Odometry frames [INIT-ONLY] ----
     odom_frame: "odom"
