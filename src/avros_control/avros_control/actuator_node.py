@@ -378,8 +378,15 @@ class ActuatorNode(Node):
         r_rpm = r_mps / self._m_per_rev * 60.0
 
         # Send setpoint (or S on idle/estop)
+        # Gate on the slewed setpoints (the actual inputs, which reach exactly 0
+        # when the command goes stale) -- NOT the post-IMU v/w, whose w is kept
+        # perpetually nonzero by the yaw-rate term acting on IMU noise. Using the
+        # post-IMU w meant S (duty-0 -> brake-idle) never fired on the
+        # cmd_vel-goes-stale path, leaving the motor creeping in active velocity
+        # hold. The webui path dodged this because it stops via estop.
         sent_stop = self._estop or (
-            not has_actuator and not has_cmd_vel and abs(v) < 1e-6 and abs(w) < 1e-6
+            not has_actuator and not has_cmd_vel
+            and abs(v_slewed) < 1e-6 and abs(w_slewed) < 1e-6
         )
         if sent_stop:
             self._serial_write('S')
