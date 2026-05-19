@@ -99,10 +99,21 @@ controller_server:
       # Keeping wz_max high here lets MPPI sample full range — actuator
       # will clamp downstream.
       wz_max: 1.9             # rad/s
-      ax_max: 3.0
-      ax_min: -3.0
-      ay_max: 3.0
-      az_max: 3.5
+      # Acceleration limits (2026-05-19): matched to actuator_params.yaml slew
+      # caps so MPPI samples trajectories the chassis can actually deliver.
+      # Mismatch (defaults are 3.0/3.5) causes MPPI to plan accels reality
+      # can't follow → lateral path error grows as chassis lags predictions.
+      # Values are slightly above chassis caps to give MPPI sampling room
+      # without producing trajectories MPPI believes-in-but-cannot-execute.
+      # Chassis caps (actuator_params.yaml):
+      #   max_linear_accel_mps2:   0.3   -> ax_max  = 0.4  (1.33x)
+      #   max_linear_decel_mps2:   1.3   -> ax_min  = -1.5 (1.15x — safety dodge room)
+      #   max_angular_accel_rps2:  1.2   -> az_max  = 1.5  (1.25x)
+      # ay_max irrelevant for DiffDrive motion_model (no lateral motion).
+      ax_max: 0.4
+      ax_min: -1.5
+      ay_max: 3.0             # unused for diff-drive; keep at default
+      az_max: 1.5
       iteration_count: 1
       prune_distance: 1.7
       transform_tolerance: 0.1
