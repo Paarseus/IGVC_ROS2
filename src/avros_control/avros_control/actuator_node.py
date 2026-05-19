@@ -50,9 +50,13 @@ from avros_msgs.msg import ActuatorCommand, ActuatorState
 # Why the split:
 #   - geometry / serial / frames: hardware-defining; runtime change is unsafe
 #   - timer rates: create_timer is fixed at construction; needs relaunch
-#   - SparkMAX gains (kFF/kP/kI/kD): written to flash via Teensy on startup;
-#     updating in memory wouldn't re-send them
-#   - clamps + slew + heading-hold gains: pure software state, safe to mutate
+#   - clamps + slew + heading-hold + SparkMAX PID gains: pure software state
+#     OR re-pushed to Teensy on change (PID gains)
+#
+# SparkMAX gains (kFF/kP/kI/kD/kIZone) are RAM-only on change — they sit in
+# the controller's working set but are NOT persisted to SparkMAX flash. After
+# a successful tuning session, `BURN` over Teensy serial (or REV Hardware
+# Client) writes the working gains to flash so they survive a power-cycle.
 _DYNAMIC_PARAMS = {
     'max_linear_mps':         '_max_v',
     'max_angular_rps':        '_max_w',
@@ -63,6 +67,22 @@ _DYNAMIC_PARAMS = {
     'heading_kp':             '_heading_kp',
     'yaw_rate_kp':            '_yaw_rate_kp',
     'cmd_timeout_s':          '_cmd_timeout',
+    'kFF':                    '_k_ff',
+    'kP':                     '_k_p',
+    'kI':                     '_k_i',
+    'kD':                     '_k_d',
+    'kIZone':                 '_k_izone',
+}
+
+# Which dynamic params need to be pushed to the Teensy on change. Keys here
+# must also appear in _DYNAMIC_PARAMS; values are the single-letter prefix
+# the Teensy protocol uses (firmware/teensy_diff_drive parses K[FPID Z]<val>).
+_PID_SERIAL_PREFIX = {
+    'kFF':    'KF',
+    'kP':     'KP',
+    'kI':     'KI',
+    'kD':     'KD',
+    'kIZone': 'KZ',
 }
 
 
@@ -128,6 +148,11 @@ class ActuatorNode(Node):
         self._heading_kp = p('heading_kp').value
         self._yaw_rate_kp = p('yaw_rate_kp').value
         self._cmd_timeout = p('cmd_timeout_s').value
+        self._k_ff = p('kFF').value
+        self._k_p = p('kP').value
+        self._k_i = p('kI').value
+        self._k_d = p('kD').value
+        self._k_izone = p('kIZone').value
         self._odom_frame = p('odom_frame').value
         self._base_frame = p('base_frame').value
 
@@ -141,15 +166,17 @@ class ActuatorNode(Node):
         self._serial_lock = threading.Lock()
         self.get_logger().info(f'Serial open: {self._port} @ {self._baud}')
 
-        # Set PID gains on the Teensy (pushes to both SparkMAXes)
-        for name, val in [('KF', p('kFF').value), ('KP', p('kP').value),
-                          ('KI', p('kI').value), ('KD', p('kD').value),
-                          ('KZ', p('kIZone').value)]:
+        # Push PID gains to the Teensy (which forwards to both SparkMAXes via
+        # PARAMETER_WRITE cls=14). Also re-pushed on dynamic-param change —
+        # see _on_param_change.
+        for name, val in [('KF', self._k_ff), ('KP', self._k_p),
+                          ('KI', self._k_i), ('KD', self._k_d),
+                          ('KZ', self._k_izone)]:
             self._serial_write(f'{name}{val}')
             time.sleep(0.2)
         self.get_logger().info(
-            f'SparkMAX gains set: kFF={p("kFF").value} kP={p("kP").value} '
-            f'kI={p("kI").value} kD={p("kD").value} kIZone={p("kIZone").value}'
+            f'SparkMAX gains set: kFF={self._k_ff} kP={self._k_p} '
+            f'kI={self._k_i} kD={self._k_d} kIZone={self._k_izone}'
         )
 
         # ---- state ----
@@ -305,6 +332,14 @@ class ActuatorNode(Node):
                 )
         for p in params:
             setattr(self, _DYNAMIC_PARAMS[p.name], float(p.value))
+            if p.name in _PID_SERIAL_PREFIX:
+                # Push to Teensy → SparkMAX RAM. Persistence (BURN to flash)
+                # is a separate step the operator runs after a tuning session.
+                line = f'{_PID_SERIAL_PREFIX[p.name]}{float(p.value)}'
+                self._serial_write(line)
+                self.get_logger().info(
+                    f'  -> Teensy serial write: {line!r} (pushes to BOTH SparkMAXes)'
+                )
             self.get_logger().info(
                 f'param updated: {p.name} = {p.value} (live)'
             )
@@ -498,9 +533,19 @@ class ActuatorNode(Node):
             self.get_logger().error(f'serial write failed: {e}')
 
     def _serial_reader(self):
-        """Background thread: read E lines, update measured state."""
+        """Background thread: read E lines + Teensy OK/ERR acks.
+
+        E lines carry encoder feedback (50 Hz from firmware).
+        OK K... lines are the Teensy's acknowledgement of a PID gain write —
+        after a `KP0.0008`-style command, the Teensy responds with
+        `OK KP=0.00080000` to confirm it pushed the value to BOTH SparkMAXes
+        via CAN PARAMETER_WRITE (see firmware/teensy_diff_drive.ino:283).
+        We log those at INFO so a tuner can see end-to-end confirmation.
+        """
         import re
         E_RE = re.compile(r"E L(-?\d+) (-?[\d.]+) R(-?\d+) (-?[\d.]+)")
+        OK_RE = re.compile(r"OK (K[PIDF Z]|S|UL=|BURN|L=).*")
+        ERR_RE = re.compile(r"ERR .*")
         buf = ''
         while self._running:
             try:
@@ -510,13 +555,21 @@ class ActuatorNode(Node):
                 buf += chunk
                 while '\n' in buf:
                     line, buf = buf.split('\n', 1)
-                    m = E_RE.match(line.strip())
+                    s = line.strip()
+                    m = E_RE.match(s)
                     if m:
                         with self._fb_lock:
                             self._l_meas_rpm = float(m.group(1))
                             self._l_meas_pos = float(m.group(2))
                             self._r_meas_rpm = float(m.group(3))
                             self._r_meas_pos = float(m.group(4))
+                        continue
+                    if OK_RE.match(s):
+                        self.get_logger().info(f'  <- Teensy ack: {s}')
+                        continue
+                    if ERR_RE.match(s):
+                        self.get_logger().warn(f'  <- Teensy ERR: {s}')
+                        continue
             except Exception as e:
                 self.get_logger().error(f'serial reader: {e}')
                 time.sleep(0.1)

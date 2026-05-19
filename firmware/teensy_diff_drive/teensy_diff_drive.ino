@@ -16,9 +16,10 @@
 //   UL<d> UR<d>       DUTY mode     — open-loop duty cycle, -1.0..1.0
 //   S                 stop both wheels (resets to velocity mode)
 //   D                 print one DIAG line
-//   KP/KI/KD/KF<val>  tune SparkMAX PID slot 0 (note: param-write currently
-//                     broken per REV-Specs; fix via REV Hardware Client for now)
-//   BURN              persist current PID gains to SparkMAX flash
+//   KP/KI/KD/KF<val>  tune SparkMAX PID slot 0 — verified working on FW 26.1.4
+//                     via PARAMETER_WRITE (cls=14 idx=0). Echoes OK K<x>=<val>.
+//   KZ<val>           tune SparkMAX kIZone (integrator zone) — param ID 17
+//   BURN              persist current PID gains to SparkMAX flash (cls=63 idx=15)
 //
 // Teensy -> Host:
 //   E L<rpm> <pos> R<rpm> <pos>   50 Hz wheel feedback (RPM + rotations)
