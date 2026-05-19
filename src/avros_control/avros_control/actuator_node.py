@@ -1,22 +1,32 @@
 """Actuator bridge node: cmd_vel / ActuatorCommand -> Teensy serial -> SparkMAX.
 
-Diff-drive kinematics for an AndyMark Raptor track-drive chassis:
+Diff-drive kinematics for an AndyMark Raptor TRACKED chassis:
     motor RPM -> ground m/s via 12.75:1 gearbox + 20T drive pulley
     commanded (linear, angular) -> (L_rpm, R_rpm) via diff-drive inverse
 
-Heading-hold: when commanded angular velocity is near zero, IMU yaw is
-locked and a proportional correction is applied to ω. Makes the robot
-drive straight under teleop or any cmd_vel source without requiring
-Nav2 path-tracking feedback.
+Skid-steer correction (Mandow ICR model): tracked vehicles can't pure-roll
+when rotating — both tracks have to scrape sideways against the ground.
+The standard `diff_drive_controller` accounts for this with a single multiplier
+on the wheel separation (Husky uses 1.875, Jackal 1.5; we use 1.19 from
+measured α = 0.84). See `wheel_separation_multiplier` param and references:
+    - ros2_controllers/diff_drive_controller (humble) — same convention
+    - Mandow et al. 2007 IROS "Experimental kinematics for wheeled skid-steer
+      mobile robots" doi:10.1109/IROS.2007.4399139
+    - Clearpath Jackal control.yaml `wheel_separation_multiplier: 1.5`
 
-Gyro-stabilized turns: when commanded angular velocity is non-zero,
-IMU yaw rate is used as feedback to close the loop on ω so "turn at
-0.5 rad/s" produces 0.5 rad/s regardless of surface friction.
+Heading-hold: when commanded angular velocity is near zero, IMU yaw is
+locked and a proportional correction is applied to ω. Useful for teleop
+on uneven ground; Nav2 RPP/MPPI handles this via path-tracking when navigating.
+
+Note: actuator-level IMU yaw_rate feedback was REMOVED 2026-05-18 — it was
+non-standard (Macenski / Nav2 #5524: closed-loop at the actuator is only for
+"highly delayed or particularly low-quality odometry"). The standard layering
+fuses IMU vyaw in robot_localization EKF, and MPPI reads /odometry/filtered.
 
 Subscribes:
   /cmd_vel                  geometry_msgs/Twist      (Nav2, teleop)
   /avros/actuator_command   avros_msgs/ActuatorCommand (webui direct)
-  /imu/data                 sensor_msgs/Imu          (Xsens yaw + rate)
+  /imu/data                 sensor_msgs/Imu          (Xsens yaw for heading-hold)
 
 Publishes:
   /avros/actuator_state     avros_msgs/ActuatorState @ 20 Hz
@@ -58,20 +68,20 @@ from avros_msgs.msg import ActuatorCommand, ActuatorState
 # a successful tuning session, `BURN` over Teensy serial (or REV Hardware
 # Client) writes the working gains to flash so they survive a power-cycle.
 _DYNAMIC_PARAMS = {
-    'max_linear_mps':         '_max_v',
-    'max_angular_rps':        '_max_w',
-    'max_linear_accel_mps2':  '_accel_v',
-    'max_linear_decel_mps2':  '_decel_v',
-    'max_angular_accel_rps2': '_accel_w',
-    'heading_hold_deadband':  '_hh_deadband',
-    'heading_kp':             '_heading_kp',
-    'yaw_rate_kp':            '_yaw_rate_kp',
-    'cmd_timeout_s':          '_cmd_timeout',
-    'kFF':                    '_k_ff',
-    'kP':                     '_k_p',
-    'kI':                     '_k_i',
-    'kD':                     '_k_d',
-    'kIZone':                 '_k_izone',
+    'max_linear_mps':              '_max_v',
+    'max_angular_rps':             '_max_w',
+    'max_linear_accel_mps2':       '_accel_v',
+    'max_linear_decel_mps2':       '_decel_v',
+    'max_angular_accel_rps2':      '_accel_w',
+    'heading_hold_deadband':       '_hh_deadband',
+    'heading_kp':                  '_heading_kp',
+    'wheel_separation_multiplier': '_ws_multiplier',
+    'cmd_timeout_s':               '_cmd_timeout',
+    'kFF':                         '_k_ff',
+    'kP':                          '_k_p',
+    'kI':                          '_k_i',
+    'kD':                          '_k_d',
+    'kIZone':                      '_k_izone',
 }
 
 # Which dynamic params need to be pushed to the Teensy on change. Keys here
@@ -120,7 +130,12 @@ class ActuatorNode(Node):
         self.declare_parameter('max_angular_accel_rps2', 2.0)
         self.declare_parameter('heading_hold_deadband', 0.05) # rad/s threshold
         self.declare_parameter('heading_kp', 1.5)             # heading-hold P gain
-        self.declare_parameter('yaw_rate_kp', 0.3)            # gyro-stabilized turn P gain
+        # Mandow skid-steer correction: effective wheel separation =
+        # track_width_m * wheel_separation_multiplier. Default 1.0 = no
+        # correction (pure-rolling assumption). Tracked chassis on our
+        # surface measured α=0.84 -> multiplier=1.19. Same convention as
+        # ros2_controllers/diff_drive_controller; Husky=1.875, Jackal=1.5.
+        self.declare_parameter('wheel_separation_multiplier', 1.0)
         self.declare_parameter('cmd_timeout_s', 0.5)
         self.declare_parameter('control_rate_hz', 50.0)
         self.declare_parameter('state_pub_rate_hz', 20.0)
@@ -146,7 +161,7 @@ class ActuatorNode(Node):
         self._accel_w = p('max_angular_accel_rps2').value
         self._hh_deadband = p('heading_hold_deadband').value
         self._heading_kp = p('heading_kp').value
-        self._yaw_rate_kp = p('yaw_rate_kp').value
+        self._ws_multiplier = p('wheel_separation_multiplier').value
         self._cmd_timeout = p('cmd_timeout_s').value
         self._k_ff = p('kFF').value
         self._k_p = p('kP').value
@@ -391,26 +406,31 @@ class ActuatorNode(Node):
         v = v_slewed
         w = w_slewed
 
-        # IMU-based filters on ω
+        # IMU-based heading hold (P controller, straight-line intent only).
+        # When |w_cmd| < deadband AND moving, lock yaw to current heading and
+        # apply a P correction on yaw error. Released the moment a real ω is
+        # commanded -- no actuator-level loop on ω. The IMU's yaw_rate is
+        # fused into robot_localization EKF; Nav2 MPPI sees /odometry/filtered
+        # and closes the ω loop at the controller layer (per Macenski, Nav2 #5524
+        # and the Clearpath A300 / Husky / Jackal reference architecture).
         if self._imu_fresh:
             if abs(w) < self._hh_deadband and abs(v) > 0.02:
-                # Straight-line intent → heading hold
                 if not self._heading_locked:
                     self._heading_target = self._current_yaw
                     self._heading_locked = True
                 yaw_err = wrap_angle(self._heading_target - self._current_yaw)
                 w = self._heading_kp * yaw_err
-                # cap the correction so it never fights the user
                 w = max(-self._max_w * 0.5, min(self._max_w * 0.5, w))
             else:
-                # Turning → release hold, optionally close loop on ω via IMU
                 self._heading_locked = False
-                w_err = w - self._current_yaw_rate
-                w = w + self._yaw_rate_kp * w_err
 
-        # Diff-drive inverse kinematics
-        l_mps = v - w * self._track_w / 2.0
-        r_mps = v + w * self._track_w / 2.0
+        # Diff-drive inverse kinematics with Mandow skid-steer correction.
+        # Same pattern as ros2_controllers/diff_drive_controller — multiplier
+        # widens the effective wheel separation to compensate for the lateral
+        # track slip that violates the pure-rolling assumption.
+        effective_separation = self._track_w * self._ws_multiplier
+        l_mps = v - w * effective_separation / 2.0
+        r_mps = v + w * effective_separation / 2.0
         l_rpm = l_mps / self._m_per_rev * 60.0
         r_rpm = r_mps / self._m_per_rev * 60.0
 

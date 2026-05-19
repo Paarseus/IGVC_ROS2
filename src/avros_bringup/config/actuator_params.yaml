@@ -49,7 +49,20 @@ actuator_node:
     # ---- IMU-based straight-line assist [DYNAMIC] ----
     heading_hold_deadband: 0.05    # rad/s — |ω_cmd| below this engages heading-hold
     heading_kp: 1.5                # P gain on yaw error (rad/s output per rad error)
-    yaw_rate_kp: 0.3               # P gain on ω error during commanded turns
+
+    # ---- Skid-steer kinematic correction (Mandow ICR model) [DYNAMIC] ----
+    # Tracked chassis can't pure-roll when rotating; both tracks scrape
+    # sideways. Multiplier > 1 widens the effective wheel separation so the
+    # commanded-vs-actual ω gap closes. Same convention as
+    # ros2_controllers/diff_drive_controller. Reference values:
+    #   Husky:  1.875 (control.yaml in clearpath husky_control)
+    #   Jackal: 1.5
+    #   Ours:   1.19 (= 1/0.84 measured 2026-05-18 — open-loop ω delivered
+    #                  84% of commanded across 0.3-1.2 rad/s on a smooth
+    #                  surface; re-calibrate for grass before competition).
+    # Validated 2026-05-18: with multiplier=1.0, ω delivery 82-86%.
+    # With multiplier=1.19 (pre-scaled cmd in test), delivery 100-102%.
+    wheel_separation_multiplier: 1.19
 
     # ---- Timing ----
     cmd_timeout_s: 0.5             # [DYNAMIC] stop if no cmd_vel for this long
