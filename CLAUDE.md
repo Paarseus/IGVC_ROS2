@@ -262,10 +262,13 @@ Unified (v, ω) target computed from whichever input is freshest:
 
 ## Nav2 Config
 
-- **Route Server:** nav2_route with GeoJSON campus road graph (52 nodes, 113 edges)
-- **Planner:** `nav2_navfn_planner/NavfnPlanner` (Dijkstra, holonomic, `tolerance: 0.5`, `allow_unknown: true`). Was SmacPlannerHybrid (DUBIN, 2.31 m turning radius) — reverted because Smac's 2.31 m turning circle physically cannot fit between IGVC's 2–3 m lane lines, and our tracked diff-drive has 0 m turning radius anyway → Navfn (holonomic) is the right tool
-- **Controller:** Regulated Pure Pursuit (lookahead 3-20 m)
-- **BT:** `navigate_route_graph.xml` — ComputeRoute → FollowPath (no spin/backup recovery)
+- **Two configs, picked by `$ROS_DISTRO` in `navigation.launch.py:43-50`:**
+  - **Humble (production, what runs on the Jetson):** `nav2_params_humble.yaml` + `navigate_to_pose_simple_humble.xml` BT — point-to-point direct, no route graph
+  - **Other (fallback / Jazzy):** `nav2_params.yaml` + `navigate_route_graph.xml` BT — uses nav2_route with the GeoJSON campus graph (52 nodes / 113 edges)
+- **Planner (both configs):** `nav2_navfn_planner/NavfnPlanner` (Dijkstra, holonomic, `tolerance: 0.5`, `allow_unknown: true`). Was SmacPlannerHybrid (DUBIN, 2.31 m turning radius) — reverted because Smac's 2.31 m turning circle physically cannot fit between IGVC's 2–3 m lane lines, and our tracked diff-drive has 0 m turning radius anyway → Navfn (holonomic) is the right tool
+- **Controller (Humble — active):** `nav2_mppi_controller::MPPIController` — sampling-based MPC, 2000 trajectories × 56 steps × 50 ms = 2.8 s rollout horizon. `vx_max: 0.7 m/s` (below actuator's 1.5 cap; reflects grass-traction reality), `vx_min: -0.4`, `wz_max: 1.9 rad/s` (above actuator's 1.5 cap; lets MPPI sample the full angular space and rely on the actuator to clamp).
+- **Controller (fallback):** Regulated Pure Pursuit (lookahead 3-20 m).
+- **MPPI is more sensitive to inner-loop tracking than RPP** — it predicts each sampled trajectory assuming the actuator delivers commanded velocities. The 2026-05-18 inner-PID retune (overshoot 14-27% → 8-14%) directly improves MPPI's rollout accuracy. Residual ω under-delivery (~13% on tracked diff-drive) is absorbed by MPPI's 50 ms re-planning loop.
 - **Local costmap:** VoxelLayer (LiDAR) + InflationLayer, 10x10 m
 - **Global costmap:** ObstacleLayer + InflationLayer, 100x100 m rolling
 - **Goal tolerance:** 2.0 m xy, 0.5 rad yaw
