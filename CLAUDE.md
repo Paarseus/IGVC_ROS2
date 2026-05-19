@@ -69,7 +69,7 @@ ros2 topic pub --once /avros/actuator_command avros_msgs/msg/ActuatorCommand \
 |---------|-----------|---------|
 | `avros_msgs` | ament_cmake | ActuatorCommand.msg, ActuatorState.msg, PlanRoute.srv |
 | `avros_bringup` | ament_python | Launch files, URDF, all YAML configs, RViz config |
-| `avros_control` | ament_python | `actuator_node`: cmd_vel / ActuatorCommand → diff-drive inverse + IMU heading-hold + slew-rate → Teensy serial → SparkMAX velocity PID |
+| `avros_control` | ament_python | `actuator_node`: cmd_vel / ActuatorCommand → slew-rate + IMU heading-hold + Mandow skid-corrected diff-drive inverse → Teensy serial → SparkMAX velocity PID |
 | `avros_webui` | ament_python | `webui_node`: phone joystick WebSocket → ActuatorCommand (direct control) |
 | `avros_navigation` | ament_python | `generate_graph.py`: offline OSMnx → nav2_route GeoJSON graph tool |
 | `avros_perception` | ament_python | `perception_node`: ZED X RGB/cloud → swappable Pipeline (stub/HSV/ONNX) → mono8 mask + organized cloud + LabelInfo for `kiwicampus/semantic_segmentation_layer` |
@@ -207,8 +207,10 @@ Sensor mount positions in URDF (`avros.urdf.xacro`) are approximate — measure 
 /cmd_vel (Twist)           ──┐
 /avros/actuator_command ─────┤ → actuator_node (Jetson)
                              │   ├─ slew-rate limit (v, ω)
-                             │   ├─ IMU heading-hold (straight) + gyro-stabilized turns (turning)
-                             │   ├─ diff-drive inverse → L_mps, R_mps → motor RPM
+                             │   ├─ IMU heading-hold (straight-line, |ω_cmd| < deadband)
+                             │   ├─ diff-drive inverse with Mandow skid correction
+                             │   │   (effective_separation = track_w × wheel_separation_multiplier)
+                             │   │   → L_mps, R_mps → motor RPM
                              │   └─ pyserial to /dev/ttyACM0 @ 115200
                              │       └─ Teensy 4.1 USB-serial ↔ CAN1
                              │           ├─ Universal Heartbeat 0x01011840 @ 50 Hz
@@ -245,7 +247,8 @@ Unified (v, ω) target computed from whichever input is freshest:
 
 ## Diff-Drive Parameters
 
-- **Track gauge (centerline to centerline):** 0.7366 m (29 inches)
+- **Track gauge (centerline to centerline):** 0.7366 m (29 inches) physical
+- **wheel_separation_multiplier:** 1.19 — Mandow skid-steer correction (effective separation = 0.877 m). Same convention as `ros2_controllers/diff_drive_controller`; Husky uses 1.875, Jackal 1.5. Measured α=0.84 (open-loop ω delivery without correction was 82-86%; with multiplier the chassis delivers 100-103% on a smooth surface). **Re-calibrate for IGVC grass before competition** — α may change with surface friction.
 - **Ground per motor revolution:** 0.01994 m (π × 80.85 mm drive-pulley pitch dia / 12.75:1 gearbox)
 - **Theoretical top speed:** 1.89 m/s at NEO free speed (5676 RPM)
 - **Measured Phase 4 max RPM extrapolated:** L = 5532 (97.5% free), R = 5072 (89.4% free) — right track has 8% higher friction
@@ -282,7 +285,7 @@ Phone-based joystick controller for bench testing. FastAPI + WebSocket + nipplej
 
 - **Launch:** `ros2 launch avros_bringup webui.launch.py`
 - **URL:** `https://<jetson-ip>:8000` (self-signed cert required for phone WebSocket)
-- **Control path:** phone joystick → WebSocket → webui_node → `/avros/actuator_command` → actuator_node (diff-drive inverse + heading-hold + slew-rate) → Teensy serial → SparkMAX velocity PID
+- **Control path:** phone joystick → WebSocket → webui_node → `/avros/actuator_command` → actuator_node (slew-rate + heading-hold + Mandow-corrected diff-drive inverse) → Teensy serial → SparkMAX velocity PID
 - **Priority:** ActuatorCommand (direct) takes precedence over cmd_vel (PID). When webui stops publishing, timeout expires and Nav2's cmd_vel takes over.
 - **Safety:** WebSocket disconnect → e-stop published automatically
 - **Features:** proportional joystick (throttle/brake/steer), E-STOP button, drive mode buttons (N/D/S/R), live telemetry from ActuatorState
@@ -363,7 +366,7 @@ sudo dpkg -i /tmp/nm_amd64.deb     # CUDA-init warning is harmless — laptop ha
 
 | Config | Used By |
 |--------|---------|
-| `actuator_params.yaml` | actuator_node — serial port, track width, speed/accel limits, IMU heading-hold gains, SparkMAX PID gains (pushed to Teensy on startup AND on `ros2 param set` change) |
+| `actuator_params.yaml` | actuator_node — serial port, track width + `wheel_separation_multiplier` (Mandow skid correction), speed/accel limits, IMU heading-hold gains, SparkMAX PID gains (pushed to Teensy on startup AND on `ros2 param set` change) |
 | `velodyne.yaml` | velodyne_driver_node + velodyne_convert_node |
 | `xsens.yaml` | xsens_mti_node — IMU/GNSS, lever arm, output rate |
 | `webui_params.yaml` | webui_node — port, SSL, max throttle |
@@ -415,6 +418,8 @@ SparkMAX FW 26.1.4 CAN protocol gotchas (cls=14 PARAMETER_WRITE, cls=0 VELOCITY_
 | **Jetson crashes randomly during motor testing** | Shared 12 V rail — Jetson and SparkMAXes both fed from the 48V→12V buck. Motor inrush (~200A transient) sags the rail below Jetson brown-out threshold. Fix: dedicated 48V→19V buck for Jetson, separate from motor rail. Persistent journald now enabled for post-crash forensics. |
 | SparkMAX velocity under-delivers RPM (~70% of commanded), issue #6 | Misdiagnosed as a `kOutputMax_0 ≈ 0.47` cap / Brake-idle oscillation — actually **kP too small**. kP=0.0004 only drove ~70% of the needed duty. Fix: kP=0.0008 + kI=5e-7 + kIZone=600 → ~100% delivery. **kIZone is essential** — without it any kI big enough to close the steady-state gap causes a low-speed integrator limit cycle (±20% RPM). The duty cycle is *not* clamped at 0.47. |
 | End-of-drive motor creep on cmd_vel-stale stop | `sent_stop` gated on the post-IMU `w`, kept perpetually nonzero by yaw-rate feedback on IMU noise → the duty-0 `S` brake-idle command never fired → motor crept ~70-110 RPM for ~1.5 s. Fixed (commit 30d6eb0): gate on `v_slewed`/`w_slewed` instead. The webui never showed this because it stops via estop. |
+| Commanded ω under-delivered by 14-18% on the tracked chassis | The diff-drive inverse `l_mps = v - w*L/2` assumes pure rolling, which tracks violate (both tracks scrape sideways during rotation). Fix (commit 401167b): standard skid-steer correction — multiply effective track separation by `wheel_separation_multiplier` (the same knob `ros2_controllers/diff_drive_controller` exposes; Husky uses 1.875, Jackal 1.5, ours 1.19). With multiplier set, chassis ω delivery jumps from 82-86% to 100-103% with zero control changes. **Re-measure α for IGVC grass surface before competition.** Mandow et al. 2007 IROS is the reference paper. |
+| `yaw_rate_kp = kp*(w - w_imu)` correction in the actuator caused 100%+ overshoot when raised | Diagnosed as the cause not the cure — it was a workaround for missing kinematic correction, and architecturally wrong: P controller AFTER the slew limiter violates cascade ordering (Macenski Nav-navigation2#5524: closed-loop ω correction belongs at EKF / velocity smoother / Nav2 controller, not the actuator). Removed entirely in commit 401167b. The standard layering is: actuator does kinematics only, EKF fuses IMU vyaw, Nav2 MPPI consumes the fused twist and closes the loop at the controller. |
 | Motors spin opposite directions under `L+ R+` | Mirror-mounted motors. Fix: check "Motor Inverted" on ONE SparkMAX via REV Hardware Client (Basic tab). Inverts both output and encoder sign so firmware sees consistent direction. |
 | Blinking magenta on SparkMAX | "Brushless + Coast + NO valid signal" — heartbeat gap > 100 ms. Most commonly caused by overly aggressive `!Serial` gating on the Teensy during USB CDC traffic. Current firmware has no `!Serial` guard. |
 | Hardware Client unreachable over CAN | Unplug CAN wire from the SparkMAX before USB-C config — Hardware Client and Teensy fight for the bus otherwise. |
