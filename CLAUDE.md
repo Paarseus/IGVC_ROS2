@@ -249,7 +249,8 @@ Unified (v, ω) target computed from whichever input is freshest:
 - **Ground per motor revolution:** 0.01994 m (π × 80.85 mm drive-pulley pitch dia / 12.75:1 gearbox)
 - **Theoretical top speed:** 1.89 m/s at NEO free speed (5676 RPM)
 - **Measured Phase 4 max RPM extrapolated:** L = 5532 (97.5% free), R = 5072 (89.4% free) — right track has 8% higher friction
-- **SparkMAX PID gains (re-tuned 2026-05-14 on asphalt, issue #6):** kFF=0.000197, kP=0.0008, kI=5e-7, kD=0, kIZone=600 — kP doubled (delivery 70%→~100%); kIZone gates the integrator (|error| < 600 RPM) to kill the low-speed limit cycle that any useful kI otherwise causes. Validated fwd+back vx=0.4/0.6/0.8: 97-100% delivery, 1-6% ripple, 0.1-0.5% L/R asymmetry. BURNed to SparkMAX flash.
+- **SparkMAX PID gains (re-tuned 2026-05-18 after battery relocation):** kFF=0.000197, kP=0.0007, kI=2.5e-7, kD=0, kIZone=600 — BURNed to SparkMAX flash (both ID 1 + ID 2) via REV Hardware Client. Previous gains (kP=0.0008, kI=5e-7 from issue #6) caused 14-16% RPM overshoot at v=1.0 m/s and 23-27% on 0.5 rad/s rotations under the new COM — the kI integrator wound up during the 2 s slew at max_linear_accel=0.5 m/s² and dumped accumulated duty when the slew ended. Halving kI slowed buildup, lowering kP slightly tamed the proportional kick. After tune: 0-9% linear overshoot, 8-14% rotation overshoot, 93-96% steady-state delivery, **cumulative drift across a 0.3→1.0 m/s fwd/rev/rot sweep dropped from +31.6° to -0.085°** (the prior "drift" was largely asymmetric overshoot dumps at each velocity transition).
+- **Tuning via /cmd_vel:** the five SparkMAX gains are now `[DYNAMIC]` in `actuator_node._DYNAMIC_PARAMS` — `ros2 param set /actuator_node kP 0.0007` (etc.) sends the K-line over the live Teensy serial connection. Teensy responds with `OK K<P|I|D|F|Z>=<value>` which actuator_node parses and logs at INFO for end-to-end confirmation. RAM only; persistence still requires `BURN` over the Teensy or REV Hardware Client.
 - **Actuator-node slew caps:** max_linear_accel = 1.0 m/s², max_linear_decel = 1.5 m/s², max_angular_accel = 2.0 rad/s²
 - **Speed caps:** max_linear_mps = 1.5, max_angular_rps = 1.0
 - **WebUI max_throttle:** 1.0 (full cmd_vel range; clamped by max_linear_mps)
@@ -359,7 +360,7 @@ sudo dpkg -i /tmp/nm_amd64.deb     # CUDA-init warning is harmless — laptop ha
 
 | Config | Used By |
 |--------|---------|
-| `actuator_params.yaml` | actuator_node — serial port, track width, speed/accel limits, IMU heading-hold gains, SparkMAX PID gains pushed on startup |
+| `actuator_params.yaml` | actuator_node — serial port, track width, speed/accel limits, IMU heading-hold gains, SparkMAX PID gains (pushed to Teensy on startup AND on `ros2 param set` change) |
 | `velodyne.yaml` | velodyne_driver_node + velodyne_convert_node |
 | `xsens.yaml` | xsens_mti_node — IMU/GNSS, lever arm, output rate |
 | `webui_params.yaml` | webui_node — port, SSL, max throttle |

@@ -4,18 +4,22 @@ Thin USB-Serial ↔ CAN bridge for the IGVC differential drive. The Jetson's ROS
 
 Derived from `Paarseus/AVL-IGVC2026/firmware/teensy_sparkmax_arduino/teensy_sparkmax_fw26_synced/` with several fixes and simplifications (see "Delta from upstream" below). This folder is local staging — the canonical upstream is the IGVC firmware repo. Nothing here is wired into the ROS2 build; it's flashed independently.
 
-## Tuned PID gains (burned to SparkMAX flash on both controllers, 2026-04-23)
+## Tuned PID gains (burned to SparkMAX flash on both controllers, 2026-05-18)
 
 | Gain | Value | Rationale |
 |---|---|---|
 | **kFF** | **0.000197** | ≈ 1 / Phase-4 slower-wheel max RPM (5072) — feedforward won't saturate |
-| **kP**  | **0.0004**   | Highest stable P before oscillation at kP=0.0008 |
-| **kI**  | **9e-07**    | Smallest kI that eliminates steady-state error, no wind-up osc |
+| **kP**  | **0.0007**   | Reduced from 0.0008 (issue #6) after 2026-05-18 battery relocation; lower P kick = less rotation overshoot |
+| **kI**  | **2.5e-7**   | Halved from 5e-7 (issue #6) — slower integrator buildup during the 2 s slew = less duty dump at slew end = less overshoot |
 | **kD**  | **0**        | Skipped — velocity PID on NEO usually doesn't need D |
+| **kIZone** | **600**   | Integrator zone — only runs when \|error\| < 600 RPM (introduced PR #7) |
 
-Verified via Phase 6c: 99% tracking at 500-3000 RPM, 0.24% trial-to-trial precision, 0.83% L/R sync delta.
+History:
+- **2026-04-23**: original Phase 6c tune (kP=0.0004, kI=9e-7) — 70% RPM under-delivery later traced to kP being too small
+- **2026-05-14, issue #6**: kP=0.0008 + kI=5e-7 + kIZone=600 → 97-100% delivery
+- **2026-05-18**: battery relocation shifted COM → 14-27% RPM overshoot at slew end → kP=0.0007, kI=2.5e-7 → 0-9% linear overshoot, 8-14% rotation overshoot, cumulative drift through full speed sweep down from +31.6° to -0.085°
 
-These are persisted in flash via PERSIST_PARAMETERS (cls=63 idx=15). The actuator_node yaml also pushes them on startup as redundant override.
+These are persisted in flash via PERSIST_PARAMETERS (cls=63 idx=15). The actuator_node yaml also pushes them on startup as redundant override — and now also on every `ros2 param set /actuator_node <gain>` (the 5 SparkMAX gains are `[DYNAMIC]` in `actuator_node._DYNAMIC_PARAMS`, with the Teensy `OK K<x>=<value>` ack parsed and logged at INFO for end-to-end confirmation).
 
 ## Hardware
 
@@ -122,7 +126,7 @@ CAN wire format is otherwise **byte-for-byte identical** to `_synced.ino` except
 - [x] Confirm kFF=16 is the correct feedforward parameter ID (it is)
 - [x] STATUS_2 enable frame is NOT redundant on FW 26.1.4 — disabled by default, must be enabled explicitly (firmware keepalives it every 1 s)
 - [ ] Phase 1 hand-spin resistance check (manual, user-facing)
-- [ ] Phase 7 BURN persistence across power cycle (needs manual 12V toggle)
+- [x] Phase 7 BURN persistence across power cycle — confirmed 2026-05-18 (user cycled motor power; SparkMAX flash retained burned gains as expected, RAM lost as expected → confirmed actuator_node re-push on next K-line)
 - [ ] Upstream the kFF=16 fix to `Paarseus/AVL-IGVC2026` as a PR against `_synced.ino`
 - [ ] Consider adding a generic `GET <id>` command for in-field parameter readback (low priority — Hardware Client handles verification for now)
 - [ ] Decode STATUS_1 fault flags in DIAG (over-current, brownout, sensor fault) — nice-to-have diagnostic

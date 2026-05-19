@@ -56,16 +56,28 @@ actuator_node:
     control_rate_hz: 50.0          # [INIT-ONLY] L/R RPM setpoint update rate
     state_pub_rate_hz: 20.0        # [INIT-ONLY] /avros/actuator_state rate
 
-    # ---- SparkMAX PID gains [INIT-ONLY], pushed to Teensy on startup ----
-    # Re-tuned 2026-05-14 on asphalt (issue #6). kP doubled 0.0004->0.0008
-    # (delivery 70%->~100%); kI closes the steady-state residual but on its
-    # own caused a low-speed integrator limit cycle -- kIZone (PR #8) gates
-    # the integrator to |error| < 600 RPM so it stays frozen during ramp
-    # transients. Validated fwd+back at vx=0.4/0.6/0.8: 97-100% delivery,
-    # 1-6% ripple, 0.1-0.5% L/R asymmetry, no limit cycle. BURNed to flash.
+    # ---- SparkMAX PID gains [DYNAMIC], pushed to Teensy on startup AND
+    # whenever changed via `ros2 param set /actuator_node <gain> <value>`.
+    # The Teensy forwards each K-line to BOTH SparkMAXes via CAN
+    # PARAMETER_WRITE and acks with `OK K<P|I|D|F|Z>=<value>` in the
+    # actuator_node log so end-to-end push can be verified.
+    #
+    # Re-tuned 2026-05-18 after battery relocation (COM shifted). With the
+    # previous gains (kP=0.0008, kI=5e-7) the motors overshot commanded RPM
+    # by 14-16% at v=1.0 m/s and 23-27% at rot=0.5 rad/s -- visible as a
+    # "snap" at the end of every slew ramp. Root cause: kI integrator
+    # winding up during the long slew (max_linear_accel=0.5 m/s/s takes
+    # 2 s at v=1.0), then dumping the accumulated duty when the slew ends
+    # and lag closes. Halving kI (5e-7 -> 2.5e-7) slowed buildup; lowering
+    # kP slightly (0.0008 -> 0.0007) reduced the proportional kick. Result:
+    # linear overshoot down to 0-9%, rotation overshoot down to 8-14%,
+    # cumulative drift across a full fwd/rev/rot sweep down from +31.6 deg
+    # to -0.085 deg, steady-state delivery 93-96% (still good for Nav2's
+    # outer loop). Validated through bags pid_iter1..7_*. BURNed to flash
+    # via REV Hardware Client (Velocity PID slot 0) on both SparkMAXes.
     kFF: 0.000197
-    kP:  0.0008
-    kI:  0.0000005
+    kP:  0.0007
+    kI:  0.00000025
     kD:  0.0
     kIZone: 600.0
 
