@@ -42,9 +42,20 @@ actuator_node:
     # Jetson brown-outs) and feel-of-motion. Time to reach max_linear_mps
     # from 0 = max_linear_mps / max_linear_accel_mps2. Decel cap can be
     # higher than accel cap for snappier stops.
-    max_linear_accel_mps2: 0.5
-    max_linear_decel_mps2: 1.5
-    max_angular_accel_rps2: 1.0
+    #
+    # Softened 2026-05-19 for the 50-60 lb chassis — at this mass the prior
+    # values (0.5 / 1.5 / 1.0) felt aggressive on starts and lurched on stops
+    # because they fought the chassis momentum instead of working with it.
+    # New values give:
+    #   linear accel:  0 -> 1.5 m/s  in 5.0 s  (was 3.0 s)
+    #   linear decel:  1.5 m/s -> 0  in 1.9 s, ~1.4 m stop dist  (was 1.0 s, 0.75 m)
+    #   angular accel: 0 -> 1.5 rad/s in 2.5 s (was 1.5 s)
+    # Decel stays larger than accel for safety (e-stop response). Re-tune
+    # via `ros2 param set` if Nav2 MPPI tracking degrades (MPPI's 2.8 s
+    # rollout horizon expects the chassis to reach commanded speeds).
+    max_linear_accel_mps2: 0.3
+    max_linear_decel_mps2: 0.8
+    max_angular_accel_rps2: 0.6
 
     # ---- IMU-based straight-line assist [DYNAMIC] ----
     heading_hold_deadband: 0.05    # rad/s — |ω_cmd| below this engages heading-hold
