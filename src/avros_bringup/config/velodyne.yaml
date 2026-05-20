@@ -15,7 +15,12 @@ velodyne_driver_node:
 velodyne_transform_node:
   ros__parameters:
     model: "VLP16"
-    min_range: 1.0                 # Ignore points closer (car body)
+    min_range: 0.7                 # 2026-05-19: 1.0->0.7. Lowered to see closer
+                                   # obstacles for near-zone clearing, but 0.4
+                                   # self-detected a robot mount/payload at
+                                   # 0.4-0.6m / ~0.6m height (verified: 45 phantom
+                                   # lethal cells). 0.7 clears that structure
+                                   # while still seeing 30cm closer than 1.0.
     max_range: 50.0
     calibration: "/opt/ros/humble/share/velodyne_pointcloud/params/VLP16db.yaml"
     organize_cloud: true

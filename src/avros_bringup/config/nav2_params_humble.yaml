@@ -257,7 +257,9 @@ local_costmap:
       stvl_layer:
         plugin: "spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer"
         enabled: true
-        voxel_decay: 5.0           # seconds; stale cells evaporate after this
+        voxel_decay: 2.0           # 2026-05-19: 5.0->2.0 so near-zone cells that
+                                   # fall onto the slow timeout path clear fast
+                                   # (caps GPS-drift smear ~40cm->~16cm).
         decay_model: 0             # 0=linear, 1=exponential, -1=persistent
         voxel_size: 0.1            # 10 cm voxels
         publish_voxel_map: true    # /.../stvl_layer/voxel_marked_cloud + voxel_grid
@@ -294,14 +296,16 @@ local_costmap:
           # VLP-16 hourglass FOV for frustum-accelerated decay
           model_type: 1                  # 1 = 3D LiDAR; 0 = depth camera
           vertical_fov_angle: 0.523      # VLP-16 +/-15 deg
+          # 2026-05-19: widen the near cone so close LOW voxels register as
+          # in-frustum -> get fast frustum-accelerated decay instead of the
+          # slow 5s timeout (was the near-front smear cause).
+          vertical_fov_padding: 0.1
           horizontal_fov_angle: 6.283    # 360 deg
           # decay_acceleration: when a voxel sits inside the current sensor
           # frustum without a confirming return, accelerate its decay by
-          # this much (units 1/s^2). 5.0 matches Macenski's official
-          # vlp16_config.yaml and OmniLRS; gives ~1-2 s clear time for
-          # the no-return / barrel-gone case while keeping valid obstacles
-          # stable across brief occlusions (driven by voxel_decay = 5 s).
-          decay_acceleration: 5.0
+          # this much (units 1/s^2). 2026-05-19: 5.0->10.0 so in-frustum
+          # unconfirmed near voxels clear in ~1s instead of ~2-3s.
+          decay_acceleration: 10.0
           clear_after_reading: true
 
       # kiwicampus/semantic_segmentation_layer — consumes the avros_perception 3-topic contract
@@ -448,16 +452,20 @@ local_costmap:
 global_costmap:
   global_costmap:
     ros__parameters:
-      # 2026-05-13: raised 1.0 -> 5.0 so global clearing keeps pace with
-      # the local. At 1 Hz, stale marks lingered 10x longer than the local.
-      # Modest CPU bump; well within Orin headroom.
-      update_frequency: 5.0
-      publish_frequency: 0.5
+      # 2026-05-19 (L6 fix): 10 Hz + STVL time-decay + 40 m rolling window to
+      # stop GPS-drift phantom accumulation. The plain ObstacleLayer had NO
+      # decay, so off-ray cells from ~8 cm/s map->odom drift piled up
+      # (measured 5878 -> 24567 lethal in a 40 s drive; local STVL cleared in
+      # ~1 s over the same test). STVL gives the global the same time-based
+      # decay the local already has; the 40 m window lets residual smear fall
+      # off the trailing edge. publish 2 Hz so RViz/consumers see fresh data.
+      update_frequency: 10.0
+      publish_frequency: 2.0
       global_frame: map
       robot_base_frame: base_link
       rolling_window: true
-      width: 100
-      height: 100
+      width: 40
+      height: 40
       resolution: 0.2
       robot_radius: 0.8
       # 2026-05-12: explicit rectangular footprint required by MPPI CostCritic.consider_footprint=true.
@@ -474,31 +482,39 @@ global_costmap:
       # obstacle_layer below — they have long range, raytrace clearing, and
       # stable TF chains that justify routing-level awareness. The semantic_layer:
       # block below is retained but DISABLED so the config is easy to revert.
-      plugins: ["obstacle_layer", "inflation_layer"]
+      plugins: ["stvl_layer", "inflation_layer"]
 
-      obstacle_layer:
-        plugin: "nav2_costmap_2d::ObstacleLayer"
+      # 2026-05-19 (L6 fix): was nav2_costmap_2d::ObstacleLayer (raytrace-only,
+      # no decay). Swapped to STVL to mirror the local costmap's time-decay so
+      # GPS-drift phantoms evaporate instead of accumulating. obstacle_range 20 m
+      # fits the 40 m rolling window (±20 m). All other params mirror the
+      # local stvl_layer; see local_costmap.stvl_layer above for rationale.
+      stvl_layer:
+        plugin: "spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer"
         enabled: true
+        voxel_decay: 2.0           # 2026-05-19: 5.0->2.0 (match local; cap smear)
+        decay_model: 0             # 0=linear
+        voxel_size: 0.1
+        publish_voxel_map: false   # global; no need for voxel debug cloud
+        mark_threshold: 0
+        update_footprint_enabled: true
+        combination_method: 1
+        mapping_mode: false
         observation_sources: velodyne_points
         velodyne_points:
           topic: /velodyne_points
-          max_obstacle_height: 2.0
-          # min_obstacle_height is in the GLOBAL frame (map, ground=0) — see
-          # the matching comment in local_costmap.voxel_layer above for the
-          # field-measured z-distribution at CPP grass. 0.2 filters ground
-          # hits + low grass while keeping barrels (0.5+ m) and people.
-          # Keep this in sync with the local_costmap value when re-tuning.
-          min_obstacle_height: 0.2
-          obstacle_max_range: 50.0
-          obstacle_min_range: 1.0
-          clearing: true
+          data_type: PointCloud2
           marking: true
-          data_type: "PointCloud2"
-          raytrace_max_range: 50.0
-          raytrace_min_range: 1.0
-          # Same default as the local — see local-side note for why 2.0 was
-          # reverted to 0.0.
-          observation_persistence: 0.0
+          clearing: true
+          min_obstacle_height: 0.2
+          max_obstacle_height: 2.0
+          obstacle_range: 20.0           # fits the 40 m rolling window
+          model_type: 1                  # 3D LiDAR (frustum-accelerated decay)
+          vertical_fov_angle: 0.523      # VLP-16 +/-15 deg
+          vertical_fov_padding: 0.1      # 2026-05-19: widen near cone (match local)
+          horizontal_fov_angle: 6.283    # 360 deg
+          decay_acceleration: 10.0       # 2026-05-19: 5->10 faster near clear
+          clear_after_reading: true
 
       # Mirror of local_costmap.semantic_layer — RETAINED BUT NOT IN PLUGINS LIST
       # as of 2026-05-12 (see plugins-list comment above for full rationale).

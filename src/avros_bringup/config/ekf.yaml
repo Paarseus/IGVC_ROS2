@@ -141,12 +141,19 @@ ekf_filter_node_map:
                    false, false, false]
     odom0_differential: true
     odom0_relative: false
-    odom0_pose_rejection_threshold: 6.0
+    # 2026-05-19: tightened 6.0 -> 4.0 to drop GPS multipath spikes sooner.
+    odom0_pose_rejection_threshold: 4.0
     odom0_queue_size: 10
 
-    # Higher process noise for GPS position dimensions (less confident)
-    process_noise_covariance: [1.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
-                               0.0,  1.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+    # 2026-05-19 (#2 EKF smoothing): x/y process noise 1.0 -> 0.1. High process
+    # noise made the map EKF chase every noisy GPS fix (8 cm/s map->odom jitter
+    # under a STATIONARY robot, smearing the costmap). Lower process noise makes
+    # the filter lean on its smooth prediction and follow GPS slowly, so map->odom
+    # is steadier and the residual drift is spread out (less smear per costmap
+    # decay window). Trade-off: absolute position corrects to GPS more slowly.
+    # Does NOT reduce net GPS drift (source-limited) — that needs SBAS.
+    process_noise_covariance: [0.1,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                               0.0,  0.1,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
                                0.0,  0.0,  1e-3, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
                                0.0,  0.0,  0.0,  0.3,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
                                0.0,  0.0,  0.0,  0.0,  0.3,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,

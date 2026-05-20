@@ -13,6 +13,7 @@ These are blockers, have measurable impact on field-test accuracy, or are requir
 ### Hardware / power
 
 - [ ] **Dedicated 48 V → 19 V buck for Jetson** (separate from motor rail). Currently both Jetson and SparkMAXes share one 48 V→12 V buck; motor inrush sags the rail and brown-outs the Jetson. **Blocks safe field testing.** Persistent journald is enabled for post-crash forensics in the meantime.
+- [ ] **Field-test safety light visibility from ≥50 ft at midday daylight.** Required by IGVC 2026 §I.2 / §I.4 ("easily viewed solid indicator light" — qualification gate). After the AHCT125 board + NeoPixel Ring 16 are mounted on the final mast position, walk to the on-deck judge distance and confirm both states are unambiguously distinguishable: SOLID amber vs FLASH @ 2 Hz. Re-tune `LED_BRIGHT_PCT` in firmware if washed out. Bench bring-up sketch: `firmware/safety_light_test/`; production state machine lives in `teensy_diff_drive.ino`.
 
 ### Localization / kinematics calibration
 
