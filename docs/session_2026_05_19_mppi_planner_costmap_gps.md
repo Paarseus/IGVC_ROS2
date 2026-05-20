@@ -1,12 +1,30 @@
 # Session Log — 2026-05-19: MPPI, Planner Hardening, Costmap Clearing & GPS Drift
 
 Long live-on-Jetson session. Tested MPPI end-to-end, bulletproofed the planner,
-diagnosed and **fixed** the global-costmap phantom-accumulation problem, analyzed
-the close-range LiDAR clearing failure, and tuned the EKF against GPS drift.
+diagnosed the global-costmap phantom-accumulation problem and applied fixes,
+analyzed the close-range LiDAR clearing failure, and tuned the EKF against GPS drift.
 
 All work done live on the Jetson (`ssh jetson`, workspace `~/IGVC`). Config edits
 made in this repo and `scp`'d to the Jetson (install→build→src are symlinks, so no
 rebuild needed for YAML).
+
+> ## ⚠️ STATUS: WORK IN PROGRESS — costmap smearing NOT fully resolved
+>
+> The smearing/phantom-accumulation is **still being worked on.** The fixes in
+> Sections 6–8 (global STVL decay, close-range min_range/frustum tuning, EKF
+> smoothing) were validated **STATIONARY ONLY** and **only partially**:
+> - The global-costmap accumulation test (§6) was a stationary 30 s measurement.
+> - The close-range clearing fix (§7) self-detect check passed, but the
+>   **close-vs-far clearing re-test was NOT run** (blocked by the Xsens USB drop).
+> - The EKF smoothing (§8) was **NOT measured** (also blocked by the Xsens drop).
+>
+> **We have NOT tested MOVEMENT with any of these fixes.** The only motion tests
+> (MPPI 3 m drive, drive-past, the rear-approach that got trapped) were run on the
+> **OLD config, before** the global-STVL/min_range/EKF changes. Whether the
+> smearing is actually gone *while driving* — and whether the new config holds up
+> under motion + GPS drift — is **untested and unverified.** Treat §6–8 as
+> "applied, plausibly better, not proven." Next session must re-test stationary
+> clearing AND a moving drive-past before trusting these.
 
 ---
 
@@ -123,8 +141,10 @@ held 14–17 cells for 25 s** (never cleared).
 - rolling window **100 → 40 m** (phantoms fall off the trailing edge)
 - `update_frequency` 5 → 10 Hz, `publish_frequency` 0.5 → 2 Hz
 
-**Result:** stationary 30 s test, global lethal total went **2858 → 2360
-(bounded, decaying)** vs the old **5878 → 24567 (4× pile-up)**. Accumulation fixed.
+**Result (STATIONARY ONLY):** stationary 30 s test, global lethal total went
+**2858 → 2360 (bounded, decaying)** vs the old **5878 → 24567 (4× pile-up)**.
+Accumulation looks fixed *while parked* — **not yet tested in motion** (a moving
+drive smears differently as the rolling window + GPS drift interact). WIP.
 
 ---
 
@@ -179,6 +199,10 @@ Combined with the STVL decay, a smoother frame means less smear per decay window
 ---
 
 ## 10. Open items / next session
+
+> **Top priority: the smearing fix is WIP and movement is untested.** Re-validate
+> §6–8 stationary, then run a moving drive-past, before relying on the new config.
+
 
 - **Xsens USB drop:** the driver intermittently fails to connect ("No MTi device
   found") after rapid stack restarts even with the device present + port free.
