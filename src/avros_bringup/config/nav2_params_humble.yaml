@@ -80,7 +80,9 @@ controller_server:
       plugin: "nav2_mppi_controller::MPPIController"
       time_steps: 56
       model_dt: 0.05
-      batch_size: 2000
+      batch_size: 1000        # 2026-05-21: 2000->1000. Nav2 doc sweet spot for
+                              # constrained HW; halves optimizer cost so the 20 Hz
+                              # control loop holds on the Jetson Orin under load.
       vx_std: 0.2
       vy_std: 0.2
       wz_std: 0.4
@@ -257,9 +259,11 @@ local_costmap:
       stvl_layer:
         plugin: "spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer"
         enabled: true
-        voxel_decay: 2.0           # 2026-05-19: 5.0->2.0 so near-zone cells that
-                                   # fall onto the slow timeout path clear fast
-                                   # (caps GPS-drift smear ~40cm->~16cm).
+        voxel_decay: 8.0           # 2026-05-21: 2.0->8.0. Anti-flicker: sparse
+                                   # VLP-16 + CPU-load bursts decayed obstacles out
+                                   # (~40% of lethal cells lost while stationary).
+                                   # Long timeout = persistence; odom frame has no
+                                   # GPS smear to cap. See docs/lidar_obstacle_avoidance_test_2026_05_21.md
         decay_model: 0             # 0=linear, 1=exponential, -1=persistent
         voxel_size: 0.1            # 10 cm voxels
         publish_voxel_map: true    # /.../stvl_layer/voxel_marked_cloud + voxel_grid
@@ -301,11 +305,11 @@ local_costmap:
           # slow 5s timeout (was the near-front smear cause).
           vertical_fov_padding: 0.1
           horizontal_fov_angle: 6.283    # 360 deg
-          # decay_acceleration: when a voxel sits inside the current sensor
-          # frustum without a confirming return, accelerate its decay by
-          # this much (units 1/s^2). 2026-05-19: 5.0->10.0 so in-frustum
-          # unconfirmed near voxels clear in ~1s instead of ~2-3s.
-          decay_acceleration: 10.0
+          # decay_acceleration: accelerate decay of in-frustum voxels that get
+          # no confirming return (units 1/s^2). 2026-05-21: 10.0->5.0 — at 10 it
+          # was the DOMINANT clearing path for sparse VLP-16 (not voxel_decay)
+          # and drove the stationary flicker; lower = lean on the timeout instead.
+          decay_acceleration: 5.0
           clear_after_reading: true
 
       # kiwicampus/semantic_segmentation_layer — consumes the avros_perception 3-topic contract
@@ -443,11 +447,14 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0     # smoother gradient — required by MPPI per Macenski
-        inflation_radius: 0.65       # 2026-05-12: bumped from 0.4 (was < inscribed radius 0.5 — disabled MPPI fast-path & emitted warning). Original 1.0 was over-aggressive; 0.65 = inscribed + small margin.
-                                     # detections accumulated into a lethal blob that boxed
-                                     # in the robot. 0.4 < inscribed_radius (0.794) so Nav2
-                                     # will warn; accepted trade-off until lane detection
-                                     # produces paired stripes the planner can corridor between.
+        inflation_radius: 1.0       # 2026-05-21: 0.65->1.0. Now >= robot_radius (0.8)
+                                     # so MPPI gets a real early-avoidance gradient instead
+                                     # of cutting obstacles close. The old "1.0 boxed the
+                                     # robot in" concern was camera-lane + GPS-smear lethal
+                                     # blobs in the GLOBAL (map) costmap; this LOCAL costmap
+                                     # is odom frame with no smear source, so 1.0 is safe.
+                                     # Global inflation left at 0.65 (see below). History:
+                                     # 0.4 warned (< inscribed 0.794); 0.65 was the interim.
 
 global_costmap:
   global_costmap:
@@ -492,7 +499,10 @@ global_costmap:
       stvl_layer:
         plugin: "spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer"
         enabled: true
-        voxel_decay: 2.0           # 2026-05-19: 5.0->2.0 (match local; cap smear)
+        voxel_decay: 5.0           # 2026-05-21: 2.0->5.0. Modest bump only (NOT 8
+                                   # like local) — global is map frame, so a long
+                                   # decay smears GPS-drift phantoms; 5 balances
+                                   # obstacle persistence vs smear accumulation.
         decay_model: 0             # 0=linear
         voxel_size: 0.1
         publish_voxel_map: false   # global; no need for voxel debug cloud
@@ -513,7 +523,7 @@ global_costmap:
           vertical_fov_angle: 0.523      # VLP-16 +/-15 deg
           vertical_fov_padding: 0.1      # 2026-05-19: widen near cone (match local)
           horizontal_fov_angle: 6.283    # 360 deg
-          decay_acceleration: 10.0       # 2026-05-19: 5->10 faster near clear
+          decay_acceleration: 5.0       # 2026-05-21: 10->5 (match local anti-flicker)
           clear_after_reading: true
 
       # Mirror of local_costmap.semantic_layer — RETAINED BUT NOT IN PLUGINS LIST

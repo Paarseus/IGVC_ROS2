@@ -44,7 +44,13 @@ def generate_launch_description():
     ros_distro = os.environ.get('ROS_DISTRO', 'humble')
     if ros_distro == 'humble':
         nav2_config = os.path.join(pkg_dir, 'config', 'nav2_params_humble.yaml')
-        default_bt = 'navigate_to_pose_simple_humble.xml'
+        # 2026-05-21: default to the recovery BT (clear-costmap/wait/back-up/crawl
+        # + 45 s watchdog) — validated in lidar obstacle-avoidance testing. The
+        # old simple BT aborted on the FIRST planner failure (no recoveries); the
+        # recovery BT replans through transient failures. See
+        # docs/lidar_obstacle_avoidance_test_2026_05_21.md. Override with
+        # bt_xml:=navigate_to_pose_simple_humble.xml for clean-signal debugging.
+        default_bt = 'navigate_igvc_autonav_humble.xml'
     else:
         nav2_config = os.path.join(pkg_dir, 'config', 'nav2_params.yaml')
         default_bt = 'navigate_route_graph.xml'
