@@ -43,11 +43,24 @@ import serial
 from rcl_interfaces.msg import SetParametersResult
 from rclpy.node import Node
 from rclpy.parameter import Parameter
+from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy, HistoryPolicy
 from geometry_msgs.msg import Twist, TransformStamped
 from sensor_msgs.msg import Imu
 from nav_msgs.msg import Odometry
-from std_msgs.msg import Float32MultiArray, MultiArrayDimension
+from std_msgs.msg import Bool, Float32MultiArray, MultiArrayDimension
 from avros_msgs.msg import ActuatorCommand, ActuatorState
+
+
+# Latched (transient-local) QoS for the /autonomous_mode mode flag, so a
+# late-joining or restarted actuator_node picks up the current mode without
+# waiting for the next publish. Publishers (mission_manager, webui_node) must
+# match. depth=1: only the latest mode matters.
+LATCHED_QOS = QoSProfile(
+    depth=1,
+    reliability=ReliabilityPolicy.RELIABLE,
+    durability=DurabilityPolicy.TRANSIENT_LOCAL,
+    history=HistoryPolicy.KEEP_LAST,
+)
 
 
 # Runtime-tunable parameters: `ros2 param set /actuator_node <name> <value>`
@@ -206,6 +219,13 @@ class ActuatorNode(Node):
         self._last_cmd_vel_t = None           # rclpy Time or None
         self._last_actuator_cmd_t = None
 
+        # IGVC §I.2 safety-light state. The light flashes only when the vehicle
+        # is genuinely autonomous; e-stop forces it solid. The (A1/A0) command
+        # is streamed to the Teensy every control cycle as the light heartbeat
+        # (firmware reverts to SOLID if the stream stops — fail-safe).
+        self._autonomous_requested = False
+        self._last_light_sent = None          # 'A1' / 'A0' actually streamed
+
         # Heading-hold state
         self._heading_locked = False
         self._heading_target = 0.0
@@ -235,6 +255,12 @@ class ActuatorNode(Node):
             self._on_actuator_cmd, 10
         )
         self.create_subscription(Imu, '/imu/data', self._on_imu, 20)
+        # Safety-light autonomy flag — published by mission_manager (auto) and/or
+        # the webui AUTONOMOUS toggle (manual). Latched so we get the current
+        # value immediately on (re)start.
+        self.create_subscription(
+            Bool, '/autonomous_mode', self._on_autonomous, LATCHED_QOS
+        )
 
         # ---- publishers ----
         self._state_pub = self.create_publisher(
@@ -320,6 +346,10 @@ class ActuatorNode(Node):
         self._current_yaw = yaw_from_quaternion(msg.orientation)
         self._current_yaw_rate = msg.angular_velocity.z
         self._imu_fresh = True
+
+    def _on_autonomous(self, msg: Bool):
+        """Latch the requested autonomy state for the §I.2 safety light."""
+        self._autonomous_requested = bool(msg.data)
 
     def _on_param_change(self, params: List[Parameter]) -> SetParametersResult:
         """Apply runtime parameter updates to the live node.
@@ -454,6 +484,18 @@ class ActuatorNode(Node):
             l_rpm_sent = l_rpm
             r_rpm_sent = r_rpm
 
+        # IGVC §I.2 safety light: flash only when genuinely autonomous; e-stop
+        # forces solid. Streamed every cycle as the Teensy light heartbeat (the
+        # firmware reverts to SOLID if this stops). The Teensy acks only on a
+        # real state change, so re-asserting the same line every cycle is quiet.
+        light_line = 'A1' if (self._autonomous_requested and not self._estop) else 'A0'
+        self._serial_write(light_line)
+        if light_line != self._last_light_sent:
+            self.get_logger().info(
+                f'safety light -> {"FLASH (autonomous)" if light_line == "A1" else "SOLID (manual)"}'
+            )
+            self._last_light_sent = light_line
+
         # Publish raw per-wheel telemetry for offline analysis
         with self._fb_lock:
             l_meas = self._l_meas_rpm
@@ -564,7 +606,7 @@ class ActuatorNode(Node):
         """
         import re
         E_RE = re.compile(r"E L(-?\d+) (-?[\d.]+) R(-?\d+) (-?[\d.]+)")
-        OK_RE = re.compile(r"OK (K[PIDF Z]|S|UL=|BURN|L=).*")
+        OK_RE = re.compile(r"OK (K[PIDF Z]|A[01]|S|UL=|BURN|L=).*")
         ERR_RE = re.compile(r"ERR .*")
         buf = ''
         while self._running:

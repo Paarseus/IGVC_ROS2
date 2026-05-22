@@ -6,11 +6,13 @@ const WS_URL = `wss://${location.host}/ws`;
 const statusEl = document.getElementById('status');
 const valuesEl = document.getElementById('values');
 const estopBtn = document.getElementById('estop');
+const autoBtn = document.getElementById('autobtn');
 const modeButtons = document.querySelectorAll('.modes button');
 
 let ws = null;
 let estop = false;
 let mode = 'D';
+let autonomous = false;
 let joystickX = 0;
 let joystickY = 0;
 let sendInterval = null;
@@ -53,7 +55,13 @@ function send(data) {
 function startSending() {
     if (sendInterval) return;
     sendInterval = setInterval(() => {
-        send({ type: 'control', x: joystickX, y: joystickY });
+        if (autonomous) {
+            // Hand control to Nav2: stop asserting actuator_command so it goes
+            // stale and /cmd_vel takes over. Keepalive keeps telemetry flowing.
+            send({ type: 'keepalive' });
+        } else {
+            send({ type: 'control', x: joystickX, y: joystickY });
+        }
     }, 50);
 }
 
@@ -91,6 +99,23 @@ estopBtn.addEventListener('click', () => {
     estopBtn.classList.toggle('active', estop);
     estopBtn.textContent = estop ? 'E-STOP ACTIVE' : 'E-STOP';
     send({ type: 'estop', value: estop });
+    // E-stop is not autonomous — drop the AUTO toggle (server forces it too).
+    if (estop && autonomous) {
+        autonomous = false;
+        updateAutoBtn();
+    }
+});
+
+// ===== AUTONOMOUS TOGGLE (IGVC §I.2 safety light) =====
+function updateAutoBtn() {
+    autoBtn.classList.toggle('active', autonomous);
+    autoBtn.textContent = autonomous ? 'AUTO ON' : 'AUTO';
+}
+
+autoBtn.addEventListener('click', () => {
+    autonomous = !autonomous;
+    updateAutoBtn();
+    send({ type: 'autonomous', value: autonomous });
 });
 
 // ===== MODE BUTTONS =====

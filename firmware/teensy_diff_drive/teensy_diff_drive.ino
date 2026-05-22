@@ -20,6 +20,10 @@
 //                     via PARAMETER_WRITE (cls=14 idx=0). Echoes OK K<x>=<val>.
 //   KZ<val>           tune SparkMAX kIZone (integrator zone) — param ID 17
 //   BURN              persist current PID gains to SparkMAX flash (cls=63 idx=15)
+//   A1 / A0           IGVC §I.2 safety light: A1 = autonomous (flash @ 2 Hz),
+//                     A0 = manual/idle (solid). Sent ~50 Hz by actuator_node as
+//                     the light heartbeat; firmware reverts to SOLID if it stops
+//                     (AUTO_TIMEOUT_MS). Does NOT feed the motor watchdog.
 //
 // Teensy -> Host:
 //   E L<rpm> <pos> R<rpm> <pos>   50 Hz wheel feedback (RPM + rotations)
@@ -36,6 +40,7 @@
 // ============================================================================
 
 #include <FlexCAN_T4.h>
+#include <Adafruit_NeoPixel.h>
 #include <string.h>
 #include <ctype.h>
 
@@ -52,6 +57,20 @@ static constexpr uint32_t WATCHDOG_MS    = 300;
 // Previously 3000 silently clamped the 4514 RPM the node sends at top speed
 // down to ~1.0 m/s ground. Still 19% below NEO free speed (5676 RPM).
 static constexpr float    MAX_RPM        = 4600.0f;
+
+// ---------- IGVC §I.2 safety light (Adafruit NeoPixel Ring 16) ----------------
+// Bench-validated on pin 20 with Adafruit_NeoPixel (WS2812Serial did not drive
+// this hardware). show() is called ONLY on a state change or flash edge — never
+// every loop — so the ~480 us IRQ blackout it incurs stays a tiny fraction of
+// time and never disturbs the 50 Hz CAN heartbeat. See loop()/serviceLight().
+static constexpr uint8_t  LED_PIN         = 20;   // NeoPixel DIN via 470Ω (+ level shift at 5V)
+static constexpr uint8_t  LED_COUNT       = 16;
+static constexpr uint8_t  LED_R           = 255;  // amber
+static constexpr uint8_t  LED_G           = 140;
+static constexpr uint8_t  LED_B           = 0;
+static constexpr uint8_t  LED_BRIGHT      = 190;  // ~75% of 255
+static constexpr uint32_t FLASH_HALF_MS   = 250;  // 2 Hz, 50% duty
+static constexpr uint32_t AUTO_TIMEOUT_MS = 750;  // no A-line in this window -> SOLID
 
 // ---------- SparkMAX CAN protocol constants ----------------------------------
 static constexpr uint8_t  SPARK_DEV_TYPE = 2;
@@ -106,6 +125,14 @@ static uint32_t t_ctrl = 0, t_fb = 0, t_enc_cfg = 0, t_last_host = 0;
 static uint32_t tx_count = 0, rx_count = 0;
 static bool     wdt_tripped = false;
 static volatile float bus_voltage = 0.0f;  // decoded from STATUS_0 (both devs report the same bus)
+
+// ---------- Safety light state ----------------------------------------------
+Adafruit_NeoPixel light(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
+enum LightMode { LIGHT_SOLID, LIGHT_FLASH };
+static LightMode light_mode  = LIGHT_SOLID;   // fail-safe default
+static bool      light_on    = true;
+static uint32_t  t_flash     = 0;
+static uint32_t  t_last_auto = 0;             // millis() of last valid A-line
 
 // ---------- CAN helpers ------------------------------------------------------
 static inline uint32_t sparkId(uint8_t cls, uint8_t idx, uint8_t dev) {
@@ -212,6 +239,39 @@ static void onCanRx(const CAN_message_t &msg) {
     }
 }
 
+// ---------- Safety light (IGVC §I.2) ----------------------------------------
+static void lightFill(bool on) {
+    uint32_t c = on ? light.Color(LED_R, LED_G, LED_B) : 0;
+    for (uint8_t i = 0; i < LED_COUNT; i++) light.setPixelColor(i, c);
+    light.show();                       // only called on transitions / flash edges
+}
+
+static void setLightMode(LightMode m) {
+    if (m == light_mode) return;
+    light_mode = m;
+    light_on   = true;
+    t_flash    = millis();
+    lightFill(true);
+}
+
+// Service the light in loop(). show() runs at most on a 2 Hz flash edge, and we
+// hold it off if a 50 Hz control tick is imminent so the ~480 us blackout never
+// delays a CAN heartbeat.
+static void serviceLight(uint32_t now) {
+    // Fail-safe: A-line silence (host dead / not autonomous) -> SOLID.
+    if (light_mode == LIGHT_FLASH && (now - t_last_auto) > AUTO_TIMEOUT_MS) {
+        setLightMode(LIGHT_SOLID);
+        return;
+    }
+    if (light_mode == LIGHT_FLASH
+        && (now - t_flash) >= FLASH_HALF_MS
+        && (now - t_ctrl)  <  (CTRL_DT_MS - 2)) {   // stay clear of the heartbeat tick
+        t_flash  = now;
+        light_on = !light_on;
+        lightFill(light_on);
+    }
+}
+
 // ---------- Serial parser ---------------------------------------------------
 static void handleLine(char *line) {
     if (!line[0]) return;
@@ -265,6 +325,23 @@ static void handleLine(char *line) {
             burnFlash(LEFT_ID);  delay(50);
             burnFlash(RIGHT_ID);
             Serial.println("OK BURN");
+            return;
+
+        case 'A':
+            // IGVC §I.2 safety-light mode. A1 = autonomous (flash), A0 = manual
+            // (solid). Refreshes the light heartbeat ONLY (not the motor
+            // watchdog). Acks only on an actual state change to avoid flooding
+            // the host with the 50 Hz heartbeat re-assertions.
+            if (line[1] == '1' || line[1] == '0') {
+                t_last_auto = now;
+                LightMode m = (line[1] == '1') ? LIGHT_FLASH : LIGHT_SOLID;
+                if (m != light_mode) {
+                    setLightMode(m);
+                    Serial.print("OK A"); Serial.println(line[1]);
+                }
+            } else {
+                Serial.println("ERR A?");
+            }
             return;
 
         case 'K': {
@@ -324,7 +401,14 @@ void setup() {
     Serial.begin(115200);
     while (!Serial && millis() < 3000) {}
     Serial.println("# avros diff-drive bridge ready");
-    Serial.println("# proto: L<rpm> R<rpm> | UL<d> UR<d> | S | D | K[PIDF]<v> | BURN");
+    Serial.println("# proto: L<rpm> R<rpm> | UL<d> UR<d> | S | D | K[PIDF]<v> | BURN | A0/A1");
+
+    // IGVC §I.2 safety light: SOLID amber the instant the Teensy boots, before
+    // CAN bring-up, so it is on whenever the vehicle has power (rule fail-safe).
+    light.begin();
+    light.setBrightness(LED_BRIGHT);
+    lightFill(true);
+    t_last_auto = millis();
 
     can.begin();
     can.setBaudRate(CAN_BAUD);
@@ -397,4 +481,7 @@ void loop() {
                           right.meas_rpm, right.meas_pos);
         }
     }
+
+    // IGVC §I.2 safety light — solid (manual) / 2 Hz flash (autonomous)
+    serviceLight(now);
 }

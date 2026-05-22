@@ -12,8 +12,20 @@ import threading
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy, HistoryPolicy
 from ament_index_python.packages import get_package_share_directory
 from avros_msgs.msg import ActuatorCommand, ActuatorState
+from std_msgs.msg import Bool
+
+
+# Latched QoS for /autonomous_mode — matches actuator_node + mission_manager so
+# the §I.2 safety-light state survives a subscriber (re)start.
+LATCHED_QOS = QoSProfile(
+    depth=1,
+    reliability=ReliabilityPolicy.RELIABLE,
+    durability=DurabilityPolicy.TRANSIENT_LOCAL,
+    history=HistoryPolicy.KEEP_LAST,
+)
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
@@ -39,6 +51,12 @@ class WebUINode(Node):
 
         self._cmd_pub = self.create_publisher(
             ActuatorCommand, '/avros/actuator_command', 10
+        )
+        # IGVC §I.2 safety light: operator AUTONOMOUS toggle -> latched flag that
+        # actuator_node forwards to the Teensy (A1/A0). Lets a judge watch the
+        # solid->flash->solid transition during qualification.
+        self._auto_pub = self.create_publisher(
+            Bool, '/autonomous_mode', LATCHED_QOS
         )
         self._state_sub = self.create_subscription(
             ActuatorState, '/avros/actuator_state',
@@ -92,6 +110,9 @@ class WebUINode(Node):
         msg.mode = 'N'
         self._cmd_pub.publish(msg)
 
+    def publish_autonomous(self, value: bool):
+        self._auto_pub.publish(Bool(data=bool(value)))
+
 
 def create_app(node: WebUINode) -> FastAPI:
     """Build the FastAPI application wired to the ROS2 node."""
@@ -126,6 +147,7 @@ def create_app(node: WebUINode) -> FastAPI:
 
         estop = False
         mode = 'N'
+        autonomous = False
 
         try:
             while True:
@@ -146,6 +168,10 @@ def create_app(node: WebUINode) -> FastAPI:
                     estop = data.get('value', False)
                     if estop:
                         node.publish_estop()
+                        # E-stop is not autonomous — force the §I.2 light solid.
+                        if autonomous:
+                            autonomous = False
+                            node.publish_autonomous(False)
                     else:
                         node.publish_command(0.0, 0.0, 0.0, mode, False)
 
@@ -154,6 +180,19 @@ def create_app(node: WebUINode) -> FastAPI:
                     if new_mode in ('N', 'D', 'S', 'R'):
                         mode = new_mode
 
+                elif msg_type == 'autonomous':
+                    # §I.2 safety-light toggle. When ON, the client stops
+                    # streaming 'control' so /avros/actuator_command goes stale
+                    # and Nav2's /cmd_vel takes over (if running).
+                    autonomous = bool(data.get('value', False))
+                    node.publish_autonomous(autonomous)
+                    node.get_logger().info(
+                        f'webui autonomous toggle -> {autonomous}'
+                    )
+
+                # 'keepalive' and any other type fall through: no command is
+                # published (so actuator_command can go stale under autonomy),
+                # we just return current state below.
                 await websocket.send_json(node.get_state())
 
         except WebSocketDisconnect:
@@ -162,7 +201,9 @@ def create_app(node: WebUINode) -> FastAPI:
             with controller_lock:
                 active_controller = None
             node.publish_estop()
-            node.get_logger().warn('WebSocket disconnected — e-stop sent')
+            # Controller gone -> not autonomous -> light solid.
+            node.publish_autonomous(False)
+            node.get_logger().warn('WebSocket disconnected — e-stop + light solid')
 
     @app.middleware('http')
     async def no_cache(request, call_next):
