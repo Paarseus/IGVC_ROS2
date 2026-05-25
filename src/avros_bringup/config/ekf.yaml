@@ -21,9 +21,14 @@ ekf_filter_node_odom:
     world_frame: odom
 
     # IMU: orientation + angular velocity (no acceleration — causes divergence)
+    # Yaw is fused as RATE only here (vyaw). Absolute yaw is dropped from the
+    # LOCAL EKF so odom->base_link stays jump-free dead-reckoning — an Xsens
+    # absolute-yaw glitch (documented +6deg stationary drift / gyro-bias incident)
+    # must not shift the odom frame the controller + local costmap live in.
+    # Absolute heading is anchored only by the global (map) EKF below.
     imu0: /imu/data
     imu0_config: [false, false, false,    # x, y, z position
-                  true,  true,  true,     # roll, pitch, yaw
+                  true,  true,  false,    # roll, pitch, yaw  ← yaw rate-only (vyaw)
                   false, false, false,    # vx, vy, vz
                   true,  true,  true,     # vroll, vpitch, vyaw
                   false, false, false]    # ax, ay, az
