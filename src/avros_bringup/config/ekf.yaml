@@ -2,10 +2,21 @@
 # Based on: https://github.com/ros-navigation/navigation2_tutorials
 #   nav2_gps_waypoint_follower_demo/config/dual_ekf_navsat_params.yaml
 #
-# EKF #1 (odom): IMU only → publishes odom -> base_link (smooth, local)
-# EKF #2 (map):  IMU + GPS → publishes map -> odom (GPS-anchored, global)
+# EKF #1 (odom): /imu/data + /wheel_odom (vx, vyaw) + ZED yaw-differential
+#                → publishes odom -> base_link (smooth, local)
+# EKF #2 (map):  /imu/data + /wheel_odom (vx, vyaw) + /odometry/gps (x,y diff)
+#                → publishes map -> odom (GPS-anchored, global)
 #
-# No wheel odometry on this vehicle — IMU provides orientation + angular velocity.
+# Sensor inputs (canonical Nav2 dual-EKF pattern: both EKFs fuse the same
+# continuous sensors; only the map EKF additionally fuses GPS):
+#   /imu/data            — Xsens MTi-680G @ 100 Hz, orientation + angular vel
+#   /wheel_odom          — actuator_node @ 50 Hz, vx + vyaw (inverse uses
+#                          physical track_w by design — see
+#                          docs/skid_steer_kinematics_findings_2026_05_18.md
+#                          for the empirical decomposition)
+#   /zed_front/.../odom  — ZED VIO yaw rate ONLY (lever-arm safe; see
+#                          docs/zed_vio_frame_analysis.md)
+#   /odometry/gps        — non-RTK SBAS, differential fusion + rejection gate
 
 # --- Local EKF: odom -> base_link ---
 ekf_filter_node_odom:
@@ -31,6 +42,15 @@ ekf_filter_node_odom:
     imu0_relative: false
     imu0_remove_gravitational_acceleration: true
     imu0_queue_size: 10
+    # 2026-05-26: Mahalanobis outlier gates added after the Xsens stuck-bias
+    # incident documented in docs/skid_steer_kinematics_findings_2026_05_18.md §6
+    # (gyro bias jumped to ~-2.86°/s = 70× normal; ROS-level restart did not
+    # recover, required USB power-cycle). Without these gates, the bad gyro
+    # data flows into both EKFs unfiltered until someone notices the chassis
+    # veering off-course. 5σ matches the conservative end of the GPS gate
+    # already used below (which is 4σ on a much noisier source).
+    imu0_pose_rejection_threshold: 5.0
+    imu0_twist_rejection_threshold: 5.0
 
     # Wheel odometry from actuator_node — diff-drive forward kinematics
     # Fuse only velocities (vx, vyaw); pose drifts so don't trust accumulated x/y/yaw
@@ -121,6 +141,30 @@ ekf_filter_node_map:
     imu0_relative: false
     imu0_remove_gravitational_acceleration: true
     imu0_queue_size: 10
+    # 2026-05-26: Same Mahalanobis gates as the odom EKF — see comment there.
+    # Especially important on the map EKF because there's no second yaw source
+    # at 100 Hz (ZED VIO is fused only on the odom EKF).
+    imu0_pose_rejection_threshold: 5.0
+    imu0_twist_rejection_threshold: 5.0
+
+    # 2026-05-26: Wheel odometry fused into the map EKF too (canonical Nav2
+    # tutorial pattern — both EKFs share the same continuous sensors; only
+    # the map EKF additionally has GPS). Before this, the map EKF had NO
+    # linear-velocity prediction source between 4 Hz GPS fixes (250 ms gaps),
+    # so position prediction used stale vx and snapped to GPS deltas on each
+    # update. Fusing /wheel_odom (vx + vyaw) gives the filter a real velocity
+    # prediction model, smoothing map→odom between fixes. Pose drift is not
+    # an issue because we fuse only velocities, not pose, and GPS deltas
+    # correct any long-term drift.
+    odom1: /wheel_odom
+    odom1_config: [false, false, false,    # x, y, z position (drifts, don't fuse)
+                   false, false, false,    # roll, pitch, yaw
+                   true,  false, false,    # vx
+                   false, false, true,     # vyaw
+                   false, false, false]    # ax, ay, az
+    odom1_differential: false
+    odom1_relative: false
+    odom1_queue_size: 10
 
     # GPS odometry: /odometry/gps (from navsat_transform_node)
     # 2026-05-12: differential mode + rejection threshold for noisy unaided GPS.
