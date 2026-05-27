@@ -19,6 +19,23 @@ navsat_transform:
     zero_altitude: true
     use_odometry_yaw: false       # Use IMU yaw directly (avoids circular dependency with global EKF)
     wait_for_datum: true
-    datum: [34.059270, -117.820934, 0.0]   # CPP campus — fixed origin for pre-built route graph
+    # Datum: anchor for the local Cartesian frame. Update PER TEST SITE.
+    # The four navsat settings (wait_for_datum, datum, use_odometry_yaw,
+    # broadcast_cartesian_transform) are internally coupled per Tom Moore's
+    # dual-EKF guidance — you can't switch wait_for_datum to false in isolation
+    # because that path also requires broadcast_cartesian_transform=true +
+    # use_odometry_yaw=true, which conflicts with our dual-EKF architecture
+    # (ekf_filter_node_map already publishes map→odom; navsat broadcast would
+    # create a TF loop). See https://docs.nav2.org/tutorials/docs/navigation2_with_gps.html
+    #
+    # Past datums (for reference):
+    #   CPP campus      : [34.059270, -117.820934, 0.0]   (cpp_campus_graph.geojson is anchored here)
+    #   SW Michigan test: [42.40154,  -86.283748, 0.0]    (2026-05-26 field testing)
+    #
+    # Long-term fix: see issue tracker for "navsat auto-datum helper node" — a
+    # one-shot Python node that reads /gnss and calls /datum service. Or per
+    # Phase B (issue #12), decommissioning navsat_transform entirely in favor
+    # of gnss_carrot_node moots this whole concern.
+    datum: [34.059270, -117.820934, 0.0]   # CPP campus
     publish_filtered_gps: true
     broadcast_cartesian_transform: false   # EKF #2 publishes map -> odom; navsat broadcast would create TF loop
