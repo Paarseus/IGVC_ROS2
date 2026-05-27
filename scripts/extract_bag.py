@@ -167,6 +167,7 @@ HANDLERS = {
     '/odometry/filtered':       write_odometry,
     '/odometry/global':         write_odometry,
     '/odometry/gps':            write_odometry,
+    '/zed_front/zed_node/odom': write_odometry,
     '/cmd_vel':                 write_twist,
     '/imu/data':                write_imu,
     '/gnss':                    write_navsat,
