@@ -36,6 +36,6 @@ navsat_transform:
     # one-shot Python node that reads /gnss and calls /datum service. Or per
     # Phase B (issue #12), decommissioning navsat_transform entirely in favor
     # of gnss_carrot_node moots this whole concern.
-    datum: [42.658430417, -83.241993772, 247.578]   # SE Michigan (Detroit metro), sampled 2026-05-27 from 200 GNSS fixes, ~1m spread
+    datum: [42.658430417, -83.241993772, 0.0]   # [lat_deg, lon_deg, heading_rad] — SE Michigan, sampled 2026-05-27 from 200 GNSS fixes (~1m spread). DO NOT put altitude here; 3rd slot is heading_rad per geographic_msgs/GeoPose.
     publish_filtered_gps: true
     broadcast_cartesian_transform: false   # EKF #2 publishes map -> odom; navsat broadcast would create TF loop
