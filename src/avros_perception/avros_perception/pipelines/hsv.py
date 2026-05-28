@@ -109,6 +109,18 @@ class HSVPipeline(Pipeline):
         id_barrel = int(self.params.get('class_id_barrel', cid['barrel']))
         id_pothole = int(self.params.get('class_id_pothole', cid['pothole']))
         lane_erode_iters = int(self.params.get('lane_erode_iters', 1))
+        # Near-field band [top_frac, bottom_frac] for lane detection. When set,
+        # BOTH the adaptive V-floor stats AND lane detection are restricted to
+        # this vertical band. Excludes the bright distant pavement (above) and
+        # the robot's own shadow / hood (below) — both pull the adaptive floor
+        # off the line. Empty list = legacy full-below-ROI behaviour.
+        lane_band = self.params.get('lane_band', [])
+        # Lane cleanup that PRESERVES thin lines (unlike erode):
+        #   lane_close_w: horizontal MORPH_CLOSE width to bridge a dashed line
+        #   lane_min_area: drop connected components smaller than this (speckle)
+        lane_close_w = int(self.params.get('lane_close_w', 0))
+        lane_min_area = int(self.params.get('lane_min_area', 0))
+        has_band = bool(lane_band) and len(lane_band) == 2
 
         # Sooner 2023 preprocessing — N iterations of 5x5 box blur
         blurred = bgr
@@ -122,17 +134,27 @@ class HSVPipeline(Pipeline):
         # pull the adaptive floor above the lane's actual V, masking dim
         # lanes in scenes with sky in the upper portion of the frame.
         v_channel = hsv[:, :, 2]
+        h_img, w_img = v_channel.shape
         if self._tick == 0 or self._v_floor is None:
-            poly_for_stats = self._roi_polygon_px(*v_channel.shape)
-            if poly_for_stats is not None:
-                roi_mask = np.ones_like(v_channel, dtype=np.uint8)
-                cv2.fillPoly(roi_mask, [poly_for_stats], 0)
-                v_below = v_channel[roi_mask > 0]
-                # safety: empty selection falls back to full frame
+            if has_band:
+                # Sample the V-floor stats ONLY from the near-field band, so
+                # bright distant pavement / dark foreground don't skew it.
+                bt = int(float(lane_band[0]) * h_img)
+                bb = int(float(lane_band[1]) * h_img)
+                v_below = v_channel[bt:bb, :]
                 if v_below.size == 0:
                     v_below = v_channel
             else:
-                v_below = v_channel
+                poly_for_stats = self._roi_polygon_px(h_img, w_img)
+                if poly_for_stats is not None:
+                    roi_mask = np.ones_like(v_channel, dtype=np.uint8)
+                    cv2.fillPoly(roi_mask, [poly_for_stats], 0)
+                    v_below = v_channel[roi_mask > 0]
+                    # safety: empty selection falls back to full frame
+                    if v_below.size == 0:
+                        v_below = v_channel
+                else:
+                    v_below = v_channel
             self._v_floor = float(v_below.mean() + adaptive_k * v_below.std())
         self._tick = (self._tick + 1) % max(adaptive_period, 1)
         bright = (v_channel >= self._v_floor).astype(np.uint8) * 255
@@ -148,6 +170,28 @@ class HSVPipeline(Pipeline):
         if lane_erode_iters > 0:
             lane = cv2.erode(lane, self._morph_kernel,
                              iterations=lane_erode_iters)
+        # Restrict lane to the near-field band (matches the adaptive-stats band).
+        if has_band:
+            bt = int(float(lane_band[0]) * lane.shape[0])
+            bb = int(float(lane_band[1]) * lane.shape[0])
+            band_mask = np.zeros_like(lane)
+            band_mask[bt:bb, :] = 255
+            lane = cv2.bitwise_and(lane, band_mask)
+        # Bridge a dashed line with a horizontal close, then drop sub-line
+        # speckle by connected-component area. Both preserve thin lines where
+        # erode/box-blur would erase them.
+        if lane_close_w > 0:
+            close_kernel = cv2.getStructuringElement(
+                cv2.MORPH_RECT, (lane_close_w, 3))
+            lane = cv2.morphologyEx(lane, cv2.MORPH_CLOSE, close_kernel)
+        if lane_min_area > 0:
+            n_cc, cc_labels, cc_stats, _ = cv2.connectedComponentsWithStats(
+                lane, connectivity=8)
+            kept = np.zeros_like(lane)
+            for i in range(1, n_cc):
+                if cc_stats[i, cv2.CC_STAT_AREA] >= lane_min_area:
+                    kept[cc_labels == i] = 255
+            lane = kept
         barrel = cv2.morphologyEx(barrel, cv2.MORPH_OPEN, self._morph_kernel)
         pothole = cv2.morphologyEx(pothole, cv2.MORPH_OPEN, self._morph_kernel)
 

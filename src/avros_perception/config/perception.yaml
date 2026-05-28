@@ -20,7 +20,13 @@
     # 'sooner25' is the Sooner Robotics 2025 IGVC AutoNav winning approach —
     # see pipelines/sooner25.py. Switched from 'hsv' 2026-05-11 PM after the
     # legacy per-class HSV pipeline kept misclassifying bright concrete.
-    pipeline: 'hsv'
+    # 2026-05-28 PM: switched to 'sooner25' for IGVC practice course on bright
+    # asphalt. Direct HSV (V>=190 S<=15) gave near-clean detection but had a
+    # few transient cracks; sooner25 with V_upper=215 gives identically clean
+    # output (635 lane px stable, zero asphalt false-positives) with the same
+    # tape coverage. Inverted-asphalt approach is more robust to bright-paint
+    # variation. See SESSION_FINAL.md PM section for the iteration log.
+    pipeline: 'sooner25'
 
     # message_filters ApproximateTimeSynchronizer
     sync_slop: 0.02        # seconds; ZED sensors_image_sync:=true keeps pairs tight
@@ -39,14 +45,16 @@
     # -------- HSV-pipeline parameters --------
     # Field-calibrate these per-camera on grass at the actual course.
     # HSV is in OpenCV convention: H in [0, 179], S and V in [0, 255].
-    blur_iters: 0               # 3x 5x5 box-blur preprocessing (Sooner 2023)
+    blur_iters: 1               # 5x5 box-blur passes (Sooner 2023). 2026-05-21:
+                                # 0->1 to soften dark-scene sensor speckle before
+                                # thresholding without smearing the thin line.
     adaptive_period: 5          # V-floor refresh every N frames (iscumd)
-    adaptive_k: 0.0             # V-floor = mean + k*std; k=0 disables the
-                                # adaptive bright filter — use absolute
-                                # lane_low V threshold instead. Calibrated
-                                # 2026-04-29 daylight where the painted
-                                # stripes were too dim relative to bright
-                                # concrete to pass mean+k*std for k>=0.5.
+    adaptive_k: 0.0             # 2026-05-28 (daylight): disabled. The 2026-05-21
+                                # night value (2.5) clamps V_floor to ~255 in
+                                # daylight (mean V ~140, std ~60 → 140+2.5*60=290)
+                                # and excludes the entire image. Use fixed
+                                # lane_low V threshold below instead. Switch back
+                                # to 2.5 for night driving if needed.
 
     # White lane paint: low saturation, high value, hue irrelevant.
     # 2026-05-13 PM retune on a white line on grass (front of vehicle).
@@ -63,10 +71,29 @@
     # had defaulted back to V=130 since.
     # NOTE: threshold is scene-dependent. Expect re-tuning under different
     # lighting / camera position until ONNX perception lands.
-    lane_low:    [0,   0, 200]
-    lane_high:   [179, 60, 255]
-    # 3x3 erode on lane mask: 0 disables (line is <3px wide at 128x224 mask res)
+    # 2026-05-28 (daylight, asphalt, white tape): V>=180 + S<=80.
+    # Captures the full tape strip across the image without picking up the
+    # asphalt (V<150). Yellow parking lines correctly excluded by S<=80 (their
+    # S>120). Verified iter 4 of HSV tuning session 2026-05-28 — see
+    # docs/yaw_diag_session_2026_05_28/.
+    #
+    # NIGHT alternative (2026-05-21): with adaptive_k=2.5, use
+    #   lane_low:  [0,   0,  30]
+    #   lane_high: [179, 255, 255]
+    # so absolute bounds just gate pure-black noise and the adaptive floor
+    # handles per-frame brightness.
+    lane_low:    [0,   0, 180]
+    lane_high:   [179, 80, 255]
+    # 3x3 erode on lane mask: 0 disables (line is <3px wide; erode would erase it)
     lane_erode_iters: 0
+    # Near-field band [top_frac, bottom_frac]: restrict the adaptive V-floor
+    # stats AND lane detection to this vertical slice. Excludes bright distant
+    # pavement (above) + robot shadow/hood (below) that skew the adaptive floor.
+    # 2026-05-21: calibrated on a white line ~3 m in front at night.
+    lane_band: [0.46, 0.70]
+    # Line-preserving cleanup (replaces erode for thin lines):
+    lane_close_w: 11            # horizontal MORPH_CLOSE width — bridges dashes
+    lane_min_area: 120          # drop connected components < this many px (speckle)
     # Run pipeline at incoming image resolution, downsample binary mask
     # to cloud shape with max-pooling (preserves thin lanes that mean-resize loses).
     process_at_full_res: false
@@ -93,7 +120,11 @@
     # — top 35% wasn't aggressive enough to fully kill blue sky and
     # distant tree-glare; 60% safely covers everything above the path
     # horizon at typical mounting height. Empty list disables the ROI.
-    sky_roi_poly: [0.0, 0.0,  1.0, 0.0,  1.0, 0.65,  0.0, 0.65]
+    # 2026-05-21: 0.65 -> 0.46 so it does NOT overlap lane_band (0.46-0.70) —
+    # the final ROI fillPoly zeros everything inside this polygon, which would
+    # otherwise erase the lane it just detected. Now masks only sky/buildings
+    # above the near-field band.
+    sky_roi_poly: [0.0, 0.0,  1.0, 0.0,  1.0, 0.46,  0.0, 0.46]
 
     # -------- Sooner Robotics 2025 pipeline (selected via pipeline:='sooner25')
     # Copy-pasted from autonav_software_2025/transformations.py.
@@ -112,6 +143,8 @@
     #     some specular hot-spots on grass; V=205 caught nothing.
     # Re-tune upper_val per scene — see commented sweep above.
     sooner25_lower: [0,   0,   0]
-    sooner25_upper: [255, 255, 200]
+    # 2026-05-28 PM: V_upper 200 -> 215 for IGVC practice course bright
+    # asphalt (asphalt p95 V=204). Sample with sample_hsv.py if scene differs.
+    sooner25_upper: [255, 255, 215]
     sooner25_blur_weight: 5
     sooner25_blur_iters: 3
