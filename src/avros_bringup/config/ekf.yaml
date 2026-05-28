@@ -185,19 +185,29 @@ ekf_filter_node_map:
                    false, false, false]
     odom0_differential: true
     odom0_relative: false
-    # 2026-05-19: tightened 6.0 -> 4.0 to drop GPS multipath spikes sooner.
-    odom0_pose_rejection_threshold: 4.0
+    # 2026-05-28 PM: raised 4.0 -> 13.8 (6σ² ≈ tolerate 5 m gap before rejection).
+    # At 4σ² the gate locked out permanently once EKF drifted >3.2 m from GPS
+    # truth (Mahalanobis distance > 4σ → rejected → P never shrinks → gap stays
+    # open forever). Test 2.1 (2026-05-28) showed 36 m EKF/GPS gap after the
+    # chassis was hand-moved with the old threshold. 6σ² aligns with Agent 3's
+    # recommendation for unaided SBAS-grade GPS. See debug_strategy.md.
+    odom0_pose_rejection_threshold: 13.8
     odom0_queue_size: 10
 
-    # 2026-05-19 (#2 EKF smoothing): x/y process noise 1.0 -> 0.1. High process
-    # noise made the map EKF chase every noisy GPS fix (8 cm/s map->odom jitter
-    # under a STATIONARY robot, smearing the costmap). Lower process noise makes
-    # the filter lean on its smooth prediction and follow GPS slowly, so map->odom
-    # is steadier and the residual drift is spread out (less smear per costmap
-    # decay window). Trade-off: absolute position corrects to GPS more slowly.
-    # Does NOT reduce net GPS drift (source-limited) — that needs SBAS.
-    process_noise_covariance: [0.1,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
-                               0.0,  0.1,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+    # 2026-05-28 PM: x,y process noise 0.1 -> 0.5. Higher process noise grows P
+    # faster between GPS updates, so when /wheel_odom reports nothing (e.g.,
+    # chassis pushed by hand) the Mahalanobis gate stays "alert" to GPS
+    # corrections rather than locking out. Trade-off: marginally more map->odom
+    # jitter under normal stationary operation (still well below 0.5 cm/s per
+    # Test 2.1 baseline). Per Agent 3 of debug_strategy.md.
+    # Previous comment (2026-05-19) on the 0.1 value preserved for reference:
+    #   "Lower process noise makes the filter lean on its smooth prediction
+    #   and follow GPS slowly, so map->odom is steadier and the residual drift
+    #   is spread out (less smear per costmap decay window)."
+    # Trade-off remains; 0.5 chosen as compromise per Agent 3's bias-recovery
+    # analysis.
+    process_noise_covariance: [0.5,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                               0.0,  0.5,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
                                0.0,  0.0,  1e-3, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
                                0.0,  0.0,  0.0,  0.3,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
                                0.0,  0.0,  0.0,  0.0,  0.3,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
