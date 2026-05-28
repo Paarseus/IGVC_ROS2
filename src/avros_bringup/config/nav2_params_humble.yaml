@@ -152,7 +152,7 @@ controller_server:
       CostCritic:
         enabled: true
         cost_power: 1
-        cost_weight: 3.81
+        cost_weight: 6.0             # 2026-05-28 PM: 3.81 -> 6.0 to strengthen centerline pull with reduced inflation. Lanes are LETHAL; this gradient pulls MPPI samples toward corridor center.
         critical_cost: 300.0        # 2026-05-12: REVERTED to canonical default after multi-agent research. critical_cost is a penalty MAGNITUDE added when pose_cost >= INSCRIBED_INFLATED_OBSTACLE (253), not a threshold.
         consider_footprint: true     # 2026-05-12: sweep robot_radius along trajectory — center-only checking was letting MPPI drive over thin painted lanes
         collision_cost: 1000000.0
@@ -161,8 +161,8 @@ controller_server:
       PathAlignCritic:
         enabled: true
         cost_power: 1
-        cost_weight: 14.0
-        max_path_occupancy_ratio: 0.05
+        cost_weight: 8.0             # 2026-05-28 PM: 14.0 -> 8.0 to loosen MPPI's commitment to the global path. Lets it deviate to find valid trajectories when corridor + obstacles force a detour.
+        max_path_occupancy_ratio: 0.15  # 2026-05-28 PM: 0.05 -> 0.15 to allow global path to be partially obstructed without invalidating.
         trajectory_point_step: 4
         threshold_to_consider: 0.5
         offset_from_furthest: 20
@@ -184,7 +184,7 @@ controller_server:
 
 planner_server:
   ros__parameters:
-    expected_planner_frequency: 2.0
+    expected_planner_frequency: 5.0   # 2026-05-28 PM: 2.0 -> 5.0 so global path refreshes faster as costmap updates with new lane/obstacle detections.
     planner_plugins: ["GridBased"]
 
     # NavfnPlanner (Dijkstra) — adopted as the diff-drive default per
@@ -451,7 +451,7 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0     # smoother gradient — required by MPPI per Macenski
-        inflation_radius: 1.0       # 2026-05-21: 0.65->1.0. Now >= robot_radius (0.8)
+        inflation_radius: 0.3       # 2026-05-28 PM: 1.0->0.3 for IGVC corridor (3 m lane width). Lethal lane cells inflate only 0.3 m so corridor stays 2.4 m wide. Lanes still LETHAL (no rule violation possible). Tradeoff: barrels also have 0.3 m inflation instead of 1.0 m — workable per IGVC's 5 ft barrel spec.
                                      # so MPPI gets a real early-avoidance gradient instead
                                      # of cutting obstacles close. The old "1.0 boxed the
                                      # robot in" concern was camera-lane + GPS-smear lethal
@@ -475,8 +475,8 @@ global_costmap:
       global_frame: map
       robot_base_frame: base_link
       rolling_window: true
-      width: 40
-      height: 40
+      width: 100   # 2026-05-28 PM: 40->100 m so waypoints up to ~50 m from chassis are reachable. NavfnPlanner can't compute a path to a goal outside its costmap.
+      height: 100  # 2026-05-28 PM: 40->100 m — see width comment.
       resolution: 0.2
       robot_radius: 0.8
       # 2026-05-12: explicit rectangular footprint required by MPPI CostCritic.consider_footprint=true.
@@ -585,7 +585,7 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0     # smoother gradient — required by MPPI per Macenski
-        inflation_radius: 0.65       # 2026-05-12: bumped from 0.4 (was < inscribed radius 0.5 — disabled MPPI fast-path & emitted warning). Original 1.0 was over-aggressive; 0.65 = inscribed + small margin.
+        inflation_radius: 0.3       # 2026-05-28 PM: 0.65->0.3 — match local_costmap for IGVC corridor. See local inflation_radius comment.
                                      # detections accumulated into a lethal blob that boxed
                                      # in the robot. 0.4 < inscribed_radius (0.794) so Nav2
                                      # will warn; accepted trade-off until lane detection
