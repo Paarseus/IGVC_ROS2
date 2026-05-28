@@ -38,6 +38,33 @@
 | navsat datum bug found | ✅ Self-inflicted (commit f71d8dc): altitude 247.578 in heading slot → 145° rotation. Fixed in commit 27d6b41 pushed to origin/main. |
 | Session 3 (post-fix validation) | ✅ COMPLETED | 3× rev+fwd on clean stack with fixed datum. **GPS bearing now matches raw GNSS within 0.10°** (was -145.07°). Run 1-style "first-run anomaly" REPRODUCED again (Xsens settling). Runs 2+3 clean. Forward delivery still 33-42% (L motor weakness unchanged — needs hardware fix). |
 | **Xsens 150s settling pattern** | ✅ CONFIRMED across 2 sessions | Every Run 1 (within ~150s of launch) shows chassis curve that heading-hold misses. Need ≥150s warmup before accepting goals. New finding worth a CLAUDE.md update. |
+
+---
+
+## 🚨 TO DO ON NEXT JETSON BOOT — UNSAFE BT TIMEOUT STILL ACTIVE
+
+The Jetson's working tree has `navigate_igvc_autonav_humble.xml` with **test-only test-mode** values from this session:
+
+| Line | Test-mode (current on Jetson) | Original / IGVC-safe | Why |
+|---|---|---|---|
+| 72 | `Timeout msec="120000"` | `Timeout msec="45000"` | **IGVC §X.X auto-DQ at 60s Hold-up Traffic** — current 120s breaks rule |
+| 78 | `number_of_retries="10"` | `number_of_retries="3"` | matched IGVC-safe budget per BT design |
+
+**Laptop main + origin/main both have the safe values.** Reverting on Jetson is one command:
+
+```bash
+ssh jetson 'cd ~/IGVC && git checkout -- src/avros_bringup/config/navigate_igvc_autonav_humble.xml'
+```
+
+Or equivalent: `mv .../navigate_igvc_autonav_humble.xml.bak2 .../navigate_igvc_autonav_humble.xml`
+
+**Verify after revert:**
+```bash
+ssh jetson 'grep -E "Timeout msec|number_of_retries=" ~/IGVC/src/avros_bringup/config/navigate_igvc_autonav_humble.xml | head -3'
+```
+Expected output: `<Timeout msec="45000">` and `number_of_retries="3"`.
+
+**Do this BEFORE the next `ros2 launch avros_bringup navigation.launch.py`** — bt_navigator caches the XML on first activation, so once it's loaded the unsafe values stick until reboot.
 | M2a/b/c/d | ⏳ pending | After M1 |
 | M3 closing square | ⏳ pending | After M2 |
 
