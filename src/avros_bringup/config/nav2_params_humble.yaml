@@ -309,7 +309,11 @@ local_costmap:
           # no confirming return (units 1/s^2). 2026-05-21: 10.0->5.0 — at 10 it
           # was the DOMINANT clearing path for sparse VLP-16 (not voxel_decay)
           # and drove the stationary flicker; lower = lean on the timeout instead.
-          decay_acceleration: 5.0
+          # 2026-05-27: 5.0->2.0 — visible flicker still present at 5.0 (voxel in
+          # FOV but un-reconfirmed this rotation decayed too fast for VLP-16's
+          # 16-beam sparsity). At accel=2, a voxel missed for 2s decays only
+          # ~2.67s instead of ~6.67s, giving more cycles for re-confirmation.
+          decay_acceleration: 2.0
           clear_after_reading: true
 
       # kiwicampus/semantic_segmentation_layer — consumes the avros_perception 3-topic contract
@@ -523,7 +527,7 @@ global_costmap:
           vertical_fov_angle: 0.523      # VLP-16 +/-15 deg
           vertical_fov_padding: 0.1      # 2026-05-19: widen near cone (match local)
           horizontal_fov_angle: 6.283    # 360 deg
-          decay_acceleration: 5.0       # 2026-05-21: 10->5 (match local anti-flicker)
+          decay_acceleration: 2.0       # 2026-05-21: 10->5; 2026-05-27: 5->2 (further anti-flicker, see local comment)
           clear_after_reading: true
 
       # Mirror of local_costmap.semantic_layer — RETAINED BUT NOT IN PLUGINS LIST
