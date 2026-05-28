@@ -78,11 +78,15 @@ controller_server:
     # configs — the universal "out-of-the-box" diff-drive tune.
     FollowPath:
       plugin: "nav2_mppi_controller::MPPIController"
-      time_steps: 56
+      time_steps: 25          # 2026-05-28 PM: 56->25 (1.25 s horizon vs 2.8 s).
+                              # Trades lookahead for compute headroom — at vx_max=0.7
+                              # this still covers ~0.9 m ahead, plenty for in-corridor
+                              # obstacle reaction. Combined with batch_size 500 gives
+                              # MPPI ~6x speedup so 20 Hz control loop holds.
       model_dt: 0.05
-      batch_size: 1000        # 2026-05-21: 2000->1000. Nav2 doc sweet spot for
-                              # constrained HW; halves optimizer cost so the 20 Hz
-                              # control loop holds on the Jetson Orin under load.
+      batch_size: 500         # 2026-05-28 PM: 1000->500. Combined with time_steps=25
+                              # gives ~6x speedup so MPPI doesn't pause for seconds
+                              # to recompute. Was 1000 (5/21 retune from 2000).
       vx_std: 0.2
       vy_std: 0.2
       wz_std: 0.4
