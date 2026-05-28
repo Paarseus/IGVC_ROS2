@@ -1,5 +1,7 @@
 # Yaw Diagnostic Session — 2026-05-27 — Master State Doc
 
+> 📖 **For session summary read [SESSION_FINAL.md](SESSION_FINAL.md). For next-session test plan read [TOMORROW.md](TOMORROW.md). For folder index read [README.md](README.md).**
+
 **Purpose:** single source of truth for this field session. If the conversation context is lost/corrupted, this doc + the artifacts in this folder are sufficient to pick up where left off.
 
 **Issues tracked:** [#13 EKF yaw under-weighting](https://github.com/Paarseus/IGVC_ROS2/issues/13) (primary), [#12 Phase 2 motion data](https://github.com/Paarseus/IGVC_ROS2/issues/12) (secondary).

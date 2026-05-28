@@ -1,5 +1,7 @@
 # Bags Manifest — 2026-05-27 Yaw Diagnostic Session
 
+> See [README.md](README.md) for folder index. See [SESSION_FINAL.md](SESSION_FINAL.md) for session results. See [TOMORROW.md](TOMORROW.md) for next-session plan.
+
 Updated as bags are recorded. After session ends, bags should be copied from Jetson `/tmp/` to laptop `~/IGVC_ROS2/bags/` for analysis.
 
 ---
@@ -62,3 +64,64 @@ python3 ~/IGVC_ROS2/scripts/extract_bag.py \
   ~/IGVC_ROS2/bags/yaw_diag_s2_20260527_144425 \
   ~/IGVC_ROS2/bags/yaw_diag_s2_20260527_144425_csv
 ```
+
+---
+
+## Bag 3: yaw_diag_s3_20260527_160356 — datum-fix validation (session 3 first bag)
+
+| Field | Value |
+|---|---|
+| **Path on Jetson** | `/home/dinosaur/IGVC/bags/yaw_diag_s3_20260527_160356` |
+| **Started** | 2026-05-27 16:03:57 UTC |
+| **Duration** | ~6 min (361s) |
+| **Status** | preserved on persistent disk |
+| **Stack** | `yaw_diag.launch.py` (no Nav2) |
+| **Used for** | Verifying the navsat datum fix (commit 27d6b41) actually eliminated the 145° map-frame rotation — confirmed +0.10° gap |
+
+CSVs on laptop at `~/IGVC_ROS2/bags/yaw_diag_s3_20260527_160356_csv/`.
+
+---
+
+## Bag 4: yaw_diag_s3_20260527_161406 — M2 rotations + M3 square
+
+| Field | Value |
+|---|---|
+| **Path on Jetson** | `/home/dinosaur/IGVC/bags/yaw_diag_s3_20260527_161406` |
+| **Started** | 2026-05-27 16:14:07 UTC |
+| **Duration** | ~5 min (273s) |
+| **Status** | preserved on persistent disk |
+| **Stack** | `yaw_diag.launch.py` (no Nav2) |
+| **Used for** | M2 (4 in-place rotations) + M3 (1m square — script bug, ignore M3) |
+| **Headline** | CW rotation delivered ~50% commanded ω, CCW ~100% — confirms L motor weakness affects rotation too |
+
+CSVs NOT yet on laptop.
+
+---
+
+## Bag 5: obstacle_avoid_20260527_164508 — full Nav2 + LiDAR obstacle avoidance
+
+| Field | Value |
+|---|---|
+| **Path on Jetson** | `/home/dinosaur/IGVC/bags/obstacle_avoid_20260527_164508` |
+| **Started** | 2026-05-27 16:45:08 UTC |
+| **Duration** | ~15 min (905s) |
+| **Size** | **9.2 GB** (includes /velodyne_points) |
+| **Status** | preserved on persistent disk |
+| **Stack** | `navigation.launch.py` (full Nav2 + Velodyne) |
+| **Topics extra** | /velodyne_points, /local_costmap/costmap, /global_costmap/costmap, /plan |
+| **Used for** | Goal at (+9.805, +1.966); SUCCEEDED within 0.49 m at t=599s |
+| **Findings** | Reactive avoidance worked; MPPI did wide arc around human obstacle. Drift analysis confirmed drift didn't cause any failures. |
+
+CSVs on laptop at `~/IGVC_ROS2/bags/obstacle_avoid_20260527_164508_csv/` (43 MB, excludes huge LiDAR + costmap topics).
+
+### Copy command
+```bash
+scp -r jetson:/home/dinosaur/IGVC/bags/obstacle_avoid_20260527_164508 ~/IGVC_ROS2/bags/   # 9.2 GB!
+```
+
+---
+
+## Validation bags expected tomorrow (per TOMORROW.md)
+
+- `l_motor_validation_<TS>` — Test 2 output: post-fix chassis behavior
+- `nav_validation_<TS>` — Test 3 output: end-to-end nav with all fixes applied
