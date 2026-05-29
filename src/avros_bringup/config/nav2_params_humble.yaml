@@ -255,15 +255,15 @@ local_costmap:
       width: 50
       height: 50
       resolution: 0.2
-      # 2026-05-29: CIRCULAR footprint. IMU (=base_link, x=0/y=0) to furthest vehicle point
-      # measured at 0.914 m. The prior rectangle ([±0.5,±0.37], circumscribed only 0.622 m)
-      # UNDER-sized the robot by ~0.3 m, so MPPI's footprint-collision check let corners clip
-      # obstacles (the barrel-clipping we saw). Empty footprint + robot_radius -> Nav2 generates
-      # a 16-pt circle that consider_footprint uses (verify published_footprint is a circle on
-      # launch). The tracked robot rotates in place, so the circumscribed circle is its true
-      # swept shape. See docs/lidar_rotation_phantom_fix_plan_2026_05_29.md.
+      # 2026-05-29: CIRCULAR footprint, r=0.914 m. IMU (=base_link, x=0/y=0) to furthest vehicle
+      # point measured at 0.914 m. The prior rectangle ([±0.5,±0.37], circumscribed only 0.622 m)
+      # UNDER-sized the robot by ~0.3 m, so MPPI's footprint-collision check let corners clip the
+      # barrel. NOTE: MPPI CostCritic.consider_footprint=true requires an EXPLICIT footprint polygon
+      # — an empty footprint + robot_radius throws "no robot footprint provided in the costmap" and
+      # ABORTS bringup. So we give an explicit 16-pt circle (r=0.914). The tracked robot rotates in
+      # place, so the circumscribed circle is its true swept shape. See docs/lidar_rotation_phantom_fix_plan_2026_05_29.md.
       robot_radius: 0.914
-      footprint: "[]"
+      footprint: "[[0.914,0.0],[0.844,0.35],[0.646,0.646],[0.35,0.844],[0.0,0.914],[-0.35,0.844],[-0.646,0.646],[-0.844,0.35],[-0.914,0.0],[-0.844,-0.35],[-0.646,-0.646],[-0.35,-0.844],[0.0,-0.914],[0.35,-0.844],[0.646,-0.646],[0.844,-0.35]]"
       # stvl_layer first so semantic_layer's LETHAL writes win on cell conflict via updateWithMax.
       # STVL (spatio_temporal_voxel_layer) replaces nav2_costmap_2d::VoxelLayer
       # for the Velodyne VLP-16 source. voxel_layer is structurally wrong for
@@ -505,15 +505,15 @@ global_costmap:
       width: 100   # 2026-05-28 PM: 40->100 m so waypoints up to ~50 m from chassis are reachable. NavfnPlanner can't compute a path to a goal outside its costmap.
       height: 100  # 2026-05-28 PM: 40->100 m — see width comment.
       resolution: 0.2
-      # 2026-05-29: CIRCULAR footprint. IMU (=base_link, x=0/y=0) to furthest vehicle point
-      # measured at 0.914 m. The prior rectangle ([±0.5,±0.37], circumscribed only 0.622 m)
-      # UNDER-sized the robot by ~0.3 m, so MPPI's footprint-collision check let corners clip
-      # obstacles (the barrel-clipping we saw). Empty footprint + robot_radius -> Nav2 generates
-      # a 16-pt circle that consider_footprint uses (verify published_footprint is a circle on
-      # launch). The tracked robot rotates in place, so the circumscribed circle is its true
-      # swept shape. See docs/lidar_rotation_phantom_fix_plan_2026_05_29.md.
+      # 2026-05-29: CIRCULAR footprint, r=0.914 m. IMU (=base_link, x=0/y=0) to furthest vehicle
+      # point measured at 0.914 m. The prior rectangle ([±0.5,±0.37], circumscribed only 0.622 m)
+      # UNDER-sized the robot by ~0.3 m, so MPPI's footprint-collision check let corners clip the
+      # barrel. NOTE: MPPI CostCritic.consider_footprint=true requires an EXPLICIT footprint polygon
+      # — an empty footprint + robot_radius throws "no robot footprint provided in the costmap" and
+      # ABORTS bringup. So we give an explicit 16-pt circle (r=0.914). The tracked robot rotates in
+      # place, so the circumscribed circle is its true swept shape. See docs/lidar_rotation_phantom_fix_plan_2026_05_29.md.
       robot_radius: 0.914
-      footprint: "[]"
+      footprint: "[[0.914,0.0],[0.844,0.35],[0.646,0.646],[0.35,0.844],[0.0,0.914],[-0.35,0.844],[-0.646,0.646],[-0.844,0.35],[-0.914,0.0],[-0.844,-0.35],[-0.646,-0.646],[-0.35,-0.844],[0.0,-0.914],[0.35,-0.844],[0.646,-0.646],[0.844,-0.35]]"
       track_unknown_space: false
       # 2026-05-12: semantic_layer intentionally REMOVED from global_costmap.
       # Rationale: painted-lane perception (camera, short range, no raytrace
