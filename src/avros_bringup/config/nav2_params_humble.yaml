@@ -255,10 +255,15 @@ local_costmap:
       width: 50
       height: 50
       resolution: 0.2
-      robot_radius: 0.8
-      # 2026-05-12: explicit rectangular footprint required by MPPI CostCritic.consider_footprint=true.
-      # Dimensions match BT comment (1.0m x 0.74m); origin at base_link center, +X forward.
-      footprint: "[[0.5, 0.37], [-0.5, 0.37], [-0.5, -0.37], [0.5, -0.37]]"
+      # 2026-05-29: CIRCULAR footprint. IMU (=base_link, x=0/y=0) to furthest vehicle point
+      # measured at 0.914 m. The prior rectangle ([±0.5,±0.37], circumscribed only 0.622 m)
+      # UNDER-sized the robot by ~0.3 m, so MPPI's footprint-collision check let corners clip
+      # obstacles (the barrel-clipping we saw). Empty footprint + robot_radius -> Nav2 generates
+      # a 16-pt circle that consider_footprint uses (verify published_footprint is a circle on
+      # launch). The tracked robot rotates in place, so the circumscribed circle is its true
+      # swept shape. See docs/lidar_rotation_phantom_fix_plan_2026_05_29.md.
+      robot_radius: 0.914
+      footprint: "[]"
       # stvl_layer first so semantic_layer's LETHAL writes win on cell conflict via updateWithMax.
       # STVL (spatio_temporal_voxel_layer) replaces nav2_costmap_2d::VoxelLayer
       # for the Velodyne VLP-16 source. voxel_layer is structurally wrong for
@@ -286,7 +291,7 @@ local_costmap:
         decay_model: 0             # 0=linear, 1=exponential, -1=persistent
         voxel_size: 0.1            # 10 cm voxels
         publish_voxel_map: true    # /.../stvl_layer/voxel_marked_cloud + voxel_grid
-        mark_threshold: 0
+        mark_threshold: 1            # 2026-05-29: 0->1. Needs >=2 returns/voxel to mark; kills single-hit scan-skew ghosts (A/B on bag: rotation far-ring excess +49%->+11%) AND flicker, with no decay tradeoff.
         update_footprint_enabled: true
         combination_method: 1      # Max (matches voxel_layer default)
         mapping_mode: false        # ephemeral local costmap (not building a map)
@@ -500,10 +505,15 @@ global_costmap:
       width: 100   # 2026-05-28 PM: 40->100 m so waypoints up to ~50 m from chassis are reachable. NavfnPlanner can't compute a path to a goal outside its costmap.
       height: 100  # 2026-05-28 PM: 40->100 m — see width comment.
       resolution: 0.2
-      robot_radius: 0.8
-      # 2026-05-12: explicit rectangular footprint required by MPPI CostCritic.consider_footprint=true.
-      # Dimensions match BT comment (1.0m x 0.74m); origin at base_link center, +X forward.
-      footprint: "[[0.5, 0.37], [-0.5, 0.37], [-0.5, -0.37], [0.5, -0.37]]"
+      # 2026-05-29: CIRCULAR footprint. IMU (=base_link, x=0/y=0) to furthest vehicle point
+      # measured at 0.914 m. The prior rectangle ([±0.5,±0.37], circumscribed only 0.622 m)
+      # UNDER-sized the robot by ~0.3 m, so MPPI's footprint-collision check let corners clip
+      # obstacles (the barrel-clipping we saw). Empty footprint + robot_radius -> Nav2 generates
+      # a 16-pt circle that consider_footprint uses (verify published_footprint is a circle on
+      # launch). The tracked robot rotates in place, so the circumscribed circle is its true
+      # swept shape. See docs/lidar_rotation_phantom_fix_plan_2026_05_29.md.
+      robot_radius: 0.914
+      footprint: "[]"
       track_unknown_space: false
       # 2026-05-12: semantic_layer intentionally REMOVED from global_costmap.
       # Rationale: painted-lane perception (camera, short range, no raytrace
@@ -532,7 +542,7 @@ global_costmap:
         decay_model: 0             # 0=linear
         voxel_size: 0.1
         publish_voxel_map: false   # global; no need for voxel debug cloud
-        mark_threshold: 0
+        mark_threshold: 1            # 2026-05-29: 0->1. Needs >=2 returns/voxel to mark; kills single-hit scan-skew ghosts (A/B on bag: rotation far-ring excess +49%->+11%) AND flicker, with no decay tradeoff.
         update_footprint_enabled: true
         combination_method: 1
         mapping_mode: false
