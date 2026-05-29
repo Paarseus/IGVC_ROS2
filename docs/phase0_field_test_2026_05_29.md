@@ -80,6 +80,90 @@ had my Phase 0 edits — they were only in the laptop repo. So the stack ran the
 
 **Next:** relaunch full stack with SVGA, re-measure cmd_vel rate under load; if ≥18 Hz, re-run B then C/D.
 
+### Test B (cont.) — SVGA relaunch + the real root cause
+
+After deploying Phase 0 via git (HEAD `fb7cc08`) and relaunching with SVGA:
+
+- **SVGA dropped `zed_node` ~80%→25% (idle) and load avg 9.84→2.96.** Big win: the chassis now drives
+  **straight** (lateral dev 0.05–0.67 m vs 3.73 m before), reaches the goal, ~10 s for 5 m.
+- **But `/cmd_vel` was still only ~2.9 Hz** (`ros2 topic hz`, max gap 539 ms) — *not* a script artifact.
+- Not raw CPU starvation (6 cores idle), but during a goal **`controller_server` = 106 % of one core**
+  and **local costmap updates at only 2.3 Hz** (target 10).
+
+**Smoking gun (live A/B):** toggling `semantic_layer.enabled` on the local costmap:
+
+| | semantic ON | semantic OFF |
+|---|---|---|
+| `/cmd_vel` | ~3 Hz | **20.0 Hz** ✅ |
+| `/local_costmap/costmap_raw` | 2.3 Hz | 6.1 Hz |
+
+**ROOT CAUSE (proven):** the kiwicampus `semantic_segmentation_layer`, processing the ZED organized
+cloud (`/perception/front/semantic_points`, 256×448 ≈ 114k pts @ 8 Hz) **inside the `controller_server`
+process**, consumes the control core. Each semantic costmap update blocks the MPPI loop, dropping
+`/cmd_vel` from 20 → ~3 Hz. Its config is already tight (`max_obstacle_distance: 5.0`,
+`tile_map_decay_time: 0.3`), so this is per-point compute cost, not a range mis-set. Yesterday's healthy
+20 Hz was LiDAR-only (no semantic layer); enabling it is the regression.
+
+**This is the #1 competition-blocking item:** IGVC needs the lane layer, but it can't currently coexist
+with a 20 Hz MPPI loop on the Jetson. Candidate fixes (bench): shrink the published cloud
+(`perception_node` downsample / lower ZED `point_cloud_res`), drop `point_cloud_freq` to ~2–3 Hz,
+profile/optimize the kiwicampus per-point path, or decouple the semantic costmap from the controller.
+
+### Semantic-layer perf investigation — SOLVED via `point_cloud_res: REDUCED`
+
+Read the kiwicampus hot path (`segmentation_buffer.cpp::bufferSegmentation`): per ZED message it
+(1) transforms the **entire** organized cloud to the global frame *before* range-filtering
+(`:134`), (2) loops over **all 114k pixels** with **3× `std::pow(x,2)` each** (`:167-170`) + an
+`unordered_map` insert per in-range point, (3) with `clearing:true`, pushes every in-range point and
+raytraces a ray per point in `updateBounds`, (4) with `visualize_tile_map:true`, builds+publishes a
+debug cloud every message. All of this runs **inside `controller_server`** and holds the buffer lock,
+so the control thread's `updateBounds` blocks on it.
+
+**Experiment 1 (config-only): `visualize_tile_map:false` + semantic `clearing:false` + cloud rate
+8→3 Hz.** Result: cmd_vel 3.0→3.58 Hz — **no real help.** This *ruled out* rate/viz/clearing: the
+cost is the **per-message processing of all 114k points**, which blocks the control thread via the
+buffer lock regardless of frequency.
+
+**Experiment 2 (config-only): ZED `point_cloud_res: COMPACT → REDUCED`** (256×448=114k →
+128×224=28k pts, 4× fewer). Clean single-stack result, **semantic layer ON:**
+
+| | COMPACT | REDUCED |
+|---|---|---|
+| semantic_points | 256×448 (114k) | 128×224 (28k) |
+| `/cmd_vel` | ~3 Hz ❌ | **20.9 Hz ✅** |
+| `/local_costmap/costmap_raw` | 2.3 Hz | 6.7 Hz |
+| `controller_server` CPU | ~106% (pegged) | not pegged |
+
+**RESOLVED:** `point_cloud_res: REDUCED` lets the lane layer coexist with a 20 Hz MPPI loop —
+4× fewer points = 4× cheaper `bufferSegmentation` = control thread no longer lock-blocked.
+
+**Finalized + validated config** (clean single stack, semantic layer ON):
+
+| param | value |
+|---|---|
+| ZED `grab_resolution` | SVGA |
+| ZED `point_cloud_res` | **REDUCED** (128×224) |
+| ZED `pub_frame_rate` / `point_cloud_freq` | 8 Hz |
+| semantic `clearing` | true (restored — raytrace clearing affordable at REDUCED) |
+| semantic `visualize_tile_map` | false (debug-only) |
+| MPPI | 25 steps / 0.05 dt |
+| `transform_tolerance` (local costmap) | 0.5 |
+| BackUp | 0.3 m @ 0.10 m/s |
+
+Validation (4 m forward goal, semantic ON): **cmd_vel ~13–16 Hz, max gap 0.146 s**, costmap 8 Hz,
+straight (0.38 m lateral). max gap well under the actuator's 500 ms timeout → no stutter. Exp1's
+`clearing:false`/`freq:3` variant reached 21 Hz but is a behavior trade; the committed config keeps
+intended behavior at a healthy rate. Further headroom available via code (`x*x` not `pow`,
+filter-before-transform) if a higher rate is ever needed.
+
+**Committed deltas vs `fb7cc08`:** only `point_cloud_res: REDUCED` + `visualize_tile_map: false`
+(the two changes that mattered; freq/clearing/SVGA were already at these values).
+
+### Phase 0 validation status (with semantic OFF = clean 20 Hz)
+- **MPPI / straight driving:** ✅ 20 Hz, 0.05 m lateral on 5 m goal.
+- **Issue #18 TF (`transform_tolerance: 0.5`):** ✅ 0 TF-exception deltas on the SVGA run.
+- **BackUp 0.3 m:** not yet exercised (needs a forced recovery — Test D).
+
 ## Test C — Barrel gap × 2 (longer-horizon obstacle reaction)
 
 _pending_

@@ -368,7 +368,7 @@ local_costmap:
           raytrace_max_range: 8.0
           raytrace_min_range: 0.0
           expected_update_rate: 0.0
-          visualize_tile_map: true
+          visualize_tile_map: false  # 2026-05-29: debug-only tile_map cloud publish; off in production
           use_cost_selection: false
           class_types: ["danger", "ignored"]
           danger:

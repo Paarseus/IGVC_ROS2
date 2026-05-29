@@ -28,7 +28,13 @@
       min_depth: 0.3
       max_depth: 15.0
       point_cloud_freq: 8.0             # 2026-05-29: 10->8, match pub_frame_rate for ApproximateTime sync
-      point_cloud_res: 'COMPACT'        # half-res (128x224, ~28k pts) vs COMPACT 256x448.
+      point_cloud_res: 'REDUCED'        # 2026-05-29: COMPACT(256x448=114k)->REDUCED(128x224=28k).
+                                        # THE fix for the lane-layer starvation: kiwicampus
+                                        # bufferSegmentation processes every cloud point (full-cloud
+                                        # transform + per-pixel loop) inside controller_server and
+                                        # holds the buffer lock, blocking the MPPI control thread.
+                                        # 4x fewer points took cmd_vel from ~3 Hz -> ~13-20 Hz with
+                                        # the semantic layer ON. See docs/phase0_field_test_2026_05_29.md.
                                         # ZED wrapper only accepts COMPACT or REDUCED — no MEDIUM.
                                         # 4x fewer points for the kiwicampus layer to project,
                                         # which is the local_costmap CPU bottleneck (single-core
