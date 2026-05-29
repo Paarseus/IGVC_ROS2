@@ -318,8 +318,8 @@ local_costmap:
           #   1-2     : 8%  people / posts
           #   >2      : 35% buildings / trees / high structures
           # Set to 0.3 if grass is taller than 0.2 m at the test site.
-          min_obstacle_height: 0.2
-          max_obstacle_height: 1.0   # 2026-05-29: 2.0->1.0. Barrels <1 m; excludes tall structures/people-torso -> fewer points (faster) + fewer far phantoms.
+          min_obstacle_height: 0.4   # 2026-05-29: 0.2->0.4. Tight barrel mid-band [0.4,0.8]; filters ground/low returns.
+          max_obstacle_height: 0.8   # 2026-05-29: ->0.8. Tight barrel mid-band [0.4,0.8]; fewer points (faster) + fewer phantoms.
           obstacle_range: 8.0            # 2026-05-29: 15->8. Local avoidance only needs ~8 m; cuts the 9-15 m scan-skew far-ring + processes fewer points.
           # VLP-16 hourglass FOV for frustum-accelerated decay
           model_type: 1                  # 1 = 3D LiDAR; 0 = depth camera
@@ -552,8 +552,8 @@ global_costmap:
           data_type: PointCloud2
           marking: true
           clearing: true
-          min_obstacle_height: 0.2
-          max_obstacle_height: 1.0   # 2026-05-29: 2.0->1.0. Barrels <1 m; excludes tall structures/people-torso -> fewer points (faster) + fewer far phantoms.
+          min_obstacle_height: 0.4   # 2026-05-29: 0.2->0.4. Tight barrel mid-band [0.4,0.8]; filters ground/low returns.
+          max_obstacle_height: 0.8   # 2026-05-29: ->0.8. Tight barrel mid-band [0.4,0.8]; fewer points (faster) + fewer phantoms.
           obstacle_range: 10.0           # 2026-05-29: 20->10. Faster; global only needs nearby obstacles for planning.
           model_type: 1                  # 3D LiDAR (frustum-accelerated decay)
           vertical_fov_angle: 0.523      # VLP-16 +/-15 deg
