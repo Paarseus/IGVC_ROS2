@@ -334,17 +334,7 @@ ZED tools fail because Argus needs GPU-backed EGL which NoMachine's virtual disp
 
 ### NoMachine install reference
 
-```bash
-# Server (Jetson, arm64) — current as of 2026-04-27
-wget https://web9001.nomachine.com/download/9.4/Arm/nomachine_9.4.14_1_arm64.deb -O /tmp/nm_arm64.deb
-sudo dpkg -i /tmp/nm_arm64.deb
-# postinst hangs in `nxserver --subscription` on ARM — kill it after a few minutes,
-# then `sudo dpkg --configure -a` to finalize. Daemon is functional once port 4000 listens.
-
-# Client (laptop, amd64)
-wget https://web9001.nomachine.com/download/9.4/Linux/nomachine_9.4.14_1_amd64.deb -O /tmp/nm_amd64.deb
-sudo dpkg -i /tmp/nm_amd64.deb     # CUDA-init warning is harmless — laptop has no NVIDIA GPU
-```
+NoMachine 9.4.14 `.deb` from `web9001.nomachine.com/download/9.4/` (Arm for Jetson, Linux for laptop), `sudo dpkg -i`. On ARM the postinst hangs in `nxserver --subscription` — kill after a few minutes, then `sudo dpkg --configure -a`. Daemon is functional once port 4000 listens.
 
 ---
 
