@@ -159,6 +159,37 @@ filter-before-transform) if a higher rate is ever needed.
 **Committed deltas vs `fb7cc08`:** only `point_cloud_res: REDUCED` + `visualize_tile_map: false`
 (the two changes that mattered; freq/clearing/SVGA were already at these values).
 
+### DESIGN DECISION — loop rate vs lane-layer behavior (chose ~13–16 Hz, full behavior)
+
+We can run the loop at **20.9 Hz** *or* **~13–16 Hz**, depending on two lane-layer knobs:
+
+| config | cmd_vel | clearing | lane update | behavior |
+|---|---|---|---|---|
+| REDUCED + `clearing:false` + `freq:3` | **20.9 Hz** | decay-only (0.3 s) | 3 Hz | degraded |
+| **REDUCED + `clearing:true` + `freq:8`** ✅ committed | **~13–16 Hz** | raytrace + decay | 8 Hz | full/intended |
+
+**We deliberately committed the ~13–16 Hz config**, for these reasons:
+
+1. **The real bug was already fixed.** The failure was cmd_vel gaps **>500 ms** tripping the actuator's
+   500 ms timeout → motors cut out → stutter + wander. At 13–16 Hz the **max gap is 0.146 s**, far under
+   that threshold. The chassis drives smooth and straight. 20 vs 15 Hz does not change that outcome.
+2. **13–16 Hz is a healthy MPPI rate.** TnTech runs MPPI at 10 Hz; Nav2's default is 20. Returns above
+   ~10–15 Hz are marginal for our tracked chassis. The actuator-timeout margin, not raw Hz, is what matters.
+3. **`clearing: true` is more correct.** It raytrace-clears cells the camera sees through in real time,
+   rather than waiting for the 0.3 s decay alone — better for transient obstacles and re-acquisition.
+4. **`freq: 8` gives responsive lane updates.** Reaching 20.9 Hz required throttling lanes to 3 Hz, which
+   is sluggish for a moving robot.
+
+The 20.9 Hz variant only existed because it **disabled clearing and starved the lane updates** — a real
+behavior regression, not free performance. We judged full lane-layer behavior at a healthy 13–16 Hz
+better than bare 20.9 Hz with degraded perception.
+
+**If 20 Hz is ever required** (e.g. faster course speeds): the cheapest lever is `point_cloud_freq` 8→~4
+(keep `clearing: true`) — recovers most of the rate, lanes are quasi-static so the slower update is
+acceptable. Beyond that, the structural headroom is code-level in the kiwicampus layer (`x*x` instead of
+`std::pow`, filter-before-transform, or shrink the published cloud further) — see the hot-path analysis
+above. We did NOT take those because 13–16 Hz already meets the need.
+
 ### Phase 0 validation status (with semantic OFF = clean 20 Hz)
 - **MPPI / straight driving:** ✅ 20 Hz, 0.05 m lateral on 5 m goal.
 - **Issue #18 TF (`transform_tolerance: 0.5`):** ✅ 0 TF-exception deltas on the SVGA run.

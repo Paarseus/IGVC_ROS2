@@ -364,6 +364,9 @@ local_costmap:
           min_obstacle_distance: 0.3
           tile_map_decay_time: 0.3
           observation_persistence: 0.0
+          # DESIGN CHOICE (2026-05-29): kept true (real-time raytrace clearing) -> cmd_vel ~13-16 Hz.
+          # false (decay-only) buys ~20 Hz but drops the clearing pass; chose full behavior at a healthy
+          # rate. See docs/phase0_field_test_2026_05_29.md "DESIGN DECISION — loop rate vs lane-layer behavior".
           clearing: true
           raytrace_max_range: 8.0
           raytrace_min_range: 0.0

@@ -21,7 +21,11 @@
                                     # wandered). SVGA (~3.6x fewer px) frees a core for the
                                     # control loop. See docs/phase0_field_test_2026_05_29.md.
       grab_frame_rate: 15           # 15 valid for SVGA too
-      pub_frame_rate: 8.0           # 2026-05-29: 10->8, relieve semantic layer in controller_server
+      pub_frame_rate: 8.0           # 2026-05-29: 10->8, relieve semantic layer in controller_server.
+                                    # DESIGN CHOICE: kept at 8 (responsive lanes) -> cmd_vel ~13-16 Hz
+                                    # with clearing:true. Dropping to ~4 would recover ~20 Hz at the
+                                    # cost of slower lane updates. See docs/phase0_field_test_2026_05_29.md
+                                    # "DESIGN DECISION — loop rate vs lane-layer behavior".
 
     depth:
       depth_mode: 'NEURAL_LIGHT'        # v5.2 enum: NONE | NEURAL_LIGHT | NEURAL | NEURAL_PLUS
