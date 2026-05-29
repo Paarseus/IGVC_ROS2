@@ -155,8 +155,16 @@
 
             <Wait wait_duration="2" name="WaitForSemanticDecay"/>
 
-            <BackUp backup_dist="1.5"
-                    backup_speed="0.08"
+            <!-- 2026-05-29 (Phase 0): backup_dist 1.5->0.3, backup_speed 0.08->0.10.
+                 The 1.5 m was a latent bug: it contradicted this BT's own header
+                 comment ("BackUp 0.3 m"), took 18.75 s @ 0.08 m/s (over the 24 s
+                 recovery budget), and — with NO rear sensor — drove blind past the
+                 rear lane boundary (no costmap cells behind base_link to stop it).
+                 0.3 m stays inside the robot's own footprint-clear zone that MPPI
+                 already verified. Structural fix (back_circle rear-exclusion layer)
+                 is Phase 4 of nav2_cohort_strategy.md. -->
+            <BackUp backup_dist="0.3"
+                    backup_speed="0.10"
                     time_allowance="25"
                     name="ShortBackup"/>
 

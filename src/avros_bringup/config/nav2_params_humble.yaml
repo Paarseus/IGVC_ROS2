@@ -78,12 +78,18 @@ controller_server:
     # configs — the universal "out-of-the-box" diff-drive tune.
     FollowPath:
       plugin: "nav2_mppi_controller::MPPIController"
-      time_steps: 25          # 2026-05-28 PM: 56->25 (1.25 s horizon vs 2.8 s).
-                              # Trades lookahead for compute headroom — at vx_max=0.7
-                              # this still covers ~0.9 m ahead, plenty for in-corridor
-                              # obstacle reaction. Combined with batch_size 500 gives
-                              # MPPI ~6x speedup so 20 Hz control loop holds.
-      model_dt: 0.05
+      time_steps: 25          # 2026-05-28 PM: 56->25.  A 2026-05-29 Phase-0 bump to 40
+                              # was REVERTED: it rested on a FALSE "identical compute"
+                              # premise. MPPI cost ~ batch_size x time_steps x iters;
+                              # model_dt does NOT reduce per-step cost. So 25->40 added
+                              # ~60% optimizer compute and (with the full ZED+perception
+                              # stack + bag) dropped cmd_vel to 3.8 Hz with 576 ms gaps ->
+                              # actuator timeout -> chassis wandered/stuttered. See
+                              # docs/phase0_field_test_2026_05_29.md Test B.
+      model_dt: 0.05          # 2026-05-29: reverted 0.10->0.05 to the validated config.
+                              # The genuinely-free horizon lever is model_dt ALONE
+                              # (25 steps x 0.10 dt = 2.5 s horizon at SAME compute as
+                              # 25 x 0.05); revisit as its own isolated, tested change.
       batch_size: 500         # 2026-05-28 PM: 1000->500. Combined with time_steps=25
                               # gives ~6x speedup so MPPI doesn't pause for seconds
                               # to recompute. Was 1000 (5/21 retune from 2000).
@@ -236,6 +242,15 @@ local_costmap:
       always_send_full_costmap: true
       global_frame: odom
       robot_base_frame: base_link
+      # 2026-05-29 (Phase 0, Issue #18): was absent -> Nav2 default 0.3 s. The
+      # ZED cloud header.stamp lags wall-clock ~0.3-0.4 s, so exact-stamp TF
+      # lookups in the kiwicampus semantic_segmentation_layer intermittently
+      # fall outside 0.3 s and the layer drops the frame ("TF Exception").
+      # The layer reads transform_tolerance from THIS costmap node's namespace
+      # (semantic_segmentation_layer.cpp:85), not the controller's. 0.5 s
+      # absorbs the lag with 0.1 s margin. Structural fix (TimePointZero
+      # fallback in segmentation_buffer.cpp) is Phase 2 of nav2_cohort_strategy.
+      transform_tolerance: 0.5
       rolling_window: true
       width: 50
       height: 50
