@@ -24,3 +24,10 @@ velodyne_transform_node:
     max_range: 50.0
     calibration: "/opt/ros/humble/share/velodyne_pointcloud/params/VLP16db.yaml"
     organize_cloud: true
+    fixed_frame: "odom"            # 2026-05-29 Tier 2 deskew: per-packet ego-motion
+                                   # compensation (computeTransformToFixed). VLP-16
+                                   # sweeps ~100ms; during in-place rotation late-sweep
+                                   # points were mis-rotated into a phantom arc in the
+                                   # costmap. Transforming each packet via odom->velodyne
+                                   # TF at its own stamp removes scan-skew at the source.
+                                   # NOTE: changes output cloud frame_id velodyne->odom.
