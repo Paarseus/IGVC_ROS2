@@ -67,7 +67,7 @@ controller_server:
 
     general_goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 2.0
+      xy_goal_tolerance: 0.2     # 2026-05-30: 2.0->0.2 — persist RTK-precision stops (field-tested 11-15 cm on waypoints 5004/5003). With inflation_radius now 0.3 the obstacle halo is small, so near-obstacle waypoints stay reachable at 0.2 m. CAUTION: if inflation is later raised, a waypoint within ~(inflation+inscribed) of an obstacle becomes UNREACHABLE at 0.2 m tol (goal falls inside the halo -> MPPI "fail to compute path" -> Goal failed; that is why North/5002 failed on 2026-05-30 when inflation was 1.0). Raise tol per-waypoint near obstacles (future mission_manager).
       yaw_goal_tolerance: 0.5
       stateful: true
 
@@ -478,7 +478,7 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0     # smoother gradient — required by MPPI per Macenski
-        inflation_radius: 1.0       # 2026-05-30: 0.3->1.0 RESTORE. This was 1.0 at the working 2026-05-21 obstacle-avoidance test; the 05-28 drop to 0.3 (< inscribed) collapsed the MPPI avoidance gradient -> robot clipped a barrel (no early standoff). 1.0 >= robot_radius restores the gradient + ~1 m standoff. (Lane corridor-fit vs barrel-standoff to be reconciled separately when perception/lanes are on.)
+        inflation_radius: 0.3       # 2026-05-30 (later, field): 1.0->0.3 — chosen for NARROW-LANE FIT (IGVC 2-3 m lanes; large inflation boxed the robot / "scared of narrow ways") and to keep near-obstacle GPS waypoints reachable at 0.2 m goal tol. COST: 0.3 < inscribed -> minimal MPPI early-avoidance gradient + ~no barrel standoff; barrel standoff deferred to the FOOTPRINT right-size per obstacle-stall RCA (docs/obstacle_stall_rca_2026_05_30.md), the real lever. Prior: 1.0 was the 05-21 barrel-standoff value.
                                      # so MPPI gets a real early-avoidance gradient instead
                                      # of cutting obstacles close. The old "1.0 boxed the
                                      # robot in" concern was camera-lane + GPS-smear lethal
@@ -617,7 +617,7 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0     # smoother gradient — required by MPPI per Macenski
-        inflation_radius: 0.65       # 2026-05-30: 0.3->0.65 RESTORE (working 2026-05-21 value; inscribed + margin). See local inflation_radius comment.
+        inflation_radius: 0.3       # 2026-05-30 (later, field): 0.65->0.3 to match local (narrow-lane fit). See local inflation_radius comment for the standoff tradeoff.
                                      # detections accumulated into a lethal blob that boxed
                                      # in the robot. 0.4 < inscribed_radius (0.794) so Nav2
                                      # will warn; accepted trade-off until lane detection

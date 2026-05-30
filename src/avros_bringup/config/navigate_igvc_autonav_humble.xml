@@ -69,13 +69,13 @@
          skip the current waypoint or signal the operator-held wireless
          e-stop. Without this, a wedged MPPI could burn the full 60 s and
          disqualify the run on a single stuck waypoint. -->
-    <Timeout msec="45000">
+    <Timeout msec="120000">  <!-- 2026-05-30: 45000->120000 for FIELD TESTING (no DQ clock). REVERT to 45000 for competition (IGVC 60s Hold-up-Traffic DQ, 15s margin). -->
 
       <!-- OUTER RECOVERY: 3 retries. Each retry runs the recovery sub-tree
            (~8 s) then re-enters the plan-follow pipeline. 3 x 8 s = 24 s
            well under the 45 s Timeout. After 3 failures the Timeout will
            catch us via the FAILURE return. -->
-      <RecoveryNode number_of_retries="3" name="NavigateRecovery">
+      <RecoveryNode number_of_retries="8" name="NavigateRecovery">  <!-- 2026-05-30: 3->8 for field-test persistence. REVERT to 3 for competition (1mph-avg recovery budget). -->
 
         <!-- MAIN PIPELINE: replan + follow, with per-step recovery.
              No RateController — orchestrator fires fresh goals at 2 Hz
