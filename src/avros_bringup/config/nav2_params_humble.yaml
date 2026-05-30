@@ -18,7 +18,7 @@
 
 bt_navigator:
   ros__parameters:
-    global_frame: map
+    global_frame: odom            # 2026-05-29: map->odom. No-RTK AutoNav (IGVC forbids RTK): control in drift-free odom, NOT the GPS map frame. Unaided GPS drifts map->odom ~6-12m + ~70deg heading -> fixed map goals recede -> MPPI runaway. GPS demoted to advisory waypoint carrots (TODO mission_manager).
     robot_base_frame: base_link
     odom_topic: /odometry/filtered
     bt_loop_duration: 10
@@ -499,7 +499,7 @@ global_costmap:
       # off the trailing edge. publish 2 Hz so RViz/consumers see fresh data.
       update_frequency: 10.0
       publish_frequency: 2.0
-      global_frame: map
+      global_frame: odom            # 2026-05-29: map->odom (rolling). See bt_navigator note.
       robot_base_frame: base_link
       rolling_window: true
       width: 100   # 2026-05-28 PM: 40->100 m so waypoints up to ~50 m from chassis are reachable. NavfnPlanner can't compute a path to a goal outside its costmap.
@@ -641,7 +641,7 @@ route_server:
   ros__parameters:
     base_frame: "base_link"
     route_frame: "map"
-    global_frame: "map"
+    global_frame: "odom"            # 2026-05-29: map->odom (consistency; route_server not in active humble BT).
     max_planning_time: 2.0
     prune_route: true
     path_density: 0.5
