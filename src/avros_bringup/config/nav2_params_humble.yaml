@@ -18,7 +18,7 @@
 
 bt_navigator:
   ros__parameters:
-    global_frame: odom            # 2026-05-29: map->odom. No-RTK AutoNav (IGVC forbids RTK): control in drift-free odom, NOT the GPS map frame. Unaided GPS drifts map->odom ~6-12m + ~70deg heading -> fixed map goals recede -> MPPI runaway. GPS demoted to advisory waypoint carrots (TODO mission_manager).
+    global_frame: map            # 2026-05-30: odom->map RESTORE (standard Nav2/REP-105 + GPS waypoint-follower tutorial: global costmap in map, local in odom, goals in map). RTK FIXED via public NTRIP (MDOT CORS; allowed per IGVC ruling — own base stations forbidden, public caster OK) makes map stable + cm-accurate, so the 05-29 odom workaround (for UNAIDED-GPS drift/recession, commit 5e6f279) no longer applies. Verified 2026-05-30: map-frame goals home onto true waypoints at 0.2 m, no extrapolation errors. FALLBACK: if RTK is unavailable/forbidden, revert this + global_costmap + route_server to odom.
     robot_base_frame: base_link
     odom_topic: /odometry/filtered
     bt_loop_duration: 10
@@ -499,7 +499,7 @@ global_costmap:
       # off the trailing edge. publish 2 Hz so RViz/consumers see fresh data.
       update_frequency: 10.0
       publish_frequency: 2.0
-      global_frame: odom            # 2026-05-29: map->odom (rolling). See bt_navigator note.
+      global_frame: map            # 2026-05-30: odom->map RESTORE (RTK FIXED). See bt_navigator note. local_costmap stays odom (robot-centric rolling).
       robot_base_frame: base_link
       rolling_window: true
       width: 100   # 2026-05-28 PM: 40->100 m so waypoints up to ~50 m from chassis are reachable. NavfnPlanner can't compute a path to a goal outside its costmap.
@@ -641,7 +641,7 @@ route_server:
   ros__parameters:
     base_frame: "base_link"
     route_frame: "map"
-    global_frame: "odom"            # 2026-05-29: map->odom (consistency; route_server not in active humble BT).
+    global_frame: "map"            # 2026-05-30: odom->map RESTORE (consistency; route_server not in active humble BT). See bt_navigator note.
     max_planning_time: 2.0
     prune_route: true
     path_density: 0.5
