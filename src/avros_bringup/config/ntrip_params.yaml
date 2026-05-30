@@ -15,9 +15,10 @@
 # MDOT requires the rover to upload GGA at least every 30 s (update_rate handles this).
 ntrip_client:
   ros__parameters:
-    host: "mdotcors.michigan.gov"
-    port: 10010
-    mountpoint: "NS-IMAX-MSM4"
+    host: "148.149.0.87"               # MDOT CORS/MSRN NTRIP caster IP (from official MSRN Port List, eff. 2021-04-15).
+                                       # NOT mdotcors.michigan.gov — that is the Cloudflare web portal; :10010 is blocked there.
+    port: 10010                        # MSM4 network-solution port (RTCM 3.2, GNSS)
+    mountpoint: "NS-IMAX-MSM4"         # "Network Solution - AMC" — MDOT's recommended standard mountpoint
     username: "parsaghasemi0"           # SBC login (NTRIP user field blank -> inherits this)
     password: "Aisa@2329"               # SBC login password (NTRIP pass field blank -> inherits this)
     update_rate: 1.0
