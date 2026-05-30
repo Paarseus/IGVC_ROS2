@@ -478,7 +478,7 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0     # smoother gradient — required by MPPI per Macenski
-        inflation_radius: 0.3       # 2026-05-28 PM: 1.0->0.3 for IGVC corridor (3 m lane width). Lethal lane cells inflate only 0.3 m so corridor stays 2.4 m wide. Lanes still LETHAL (no rule violation possible). Tradeoff: barrels also have 0.3 m inflation instead of 1.0 m — workable per IGVC's 5 ft barrel spec.
+        inflation_radius: 1.0       # 2026-05-30: 0.3->1.0 RESTORE. This was 1.0 at the working 2026-05-21 obstacle-avoidance test; the 05-28 drop to 0.3 (< inscribed) collapsed the MPPI avoidance gradient -> robot clipped a barrel (no early standoff). 1.0 >= robot_radius restores the gradient + ~1 m standoff. (Lane corridor-fit vs barrel-standoff to be reconciled separately when perception/lanes are on.)
                                      # so MPPI gets a real early-avoidance gradient instead
                                      # of cutting obstacles close. The old "1.0 boxed the
                                      # robot in" concern was camera-lane + GPS-smear lethal
@@ -617,7 +617,7 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0     # smoother gradient — required by MPPI per Macenski
-        inflation_radius: 0.3       # 2026-05-28 PM: 0.65->0.3 — match local_costmap for IGVC corridor. See local inflation_radius comment.
+        inflation_radius: 0.65       # 2026-05-30: 0.3->0.65 RESTORE (working 2026-05-21 value; inscribed + margin). See local inflation_radius comment.
                                      # detections accumulated into a lethal blob that boxed
                                      # in the robot. 0.4 < inscribed_radius (0.794) so Nav2
                                      # will warn; accepted trade-off until lane detection
