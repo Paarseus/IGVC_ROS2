@@ -183,7 +183,7 @@ ekf_filter_node_map:
                    false, false, false,
                    false, false, false,
                    false, false, false]
-    odom0_differential: true
+    odom0_differential: false   # 2026-05-30: true->false ABSOLUTE GPS fusion. RTK is now FIXED (cm-accurate, NOT the 2-5 m SBAS this was set for), so fusing absolute position PINS the map frame to GPS -> no more map->odom drift, and /fromLL waypoints land at the right spot. Supersedes the SBAS-era differential mode. (process_noise + rejection-gate re-tune is a later robustness step for RTK FLOAT/dropout, not needed for RTK-FIXED operation.)
     odom0_relative: false
     # 2026-05-28 PM: raised 4.0 -> 13.8 (6σ² ≈ tolerate 5 m gap before rejection).
     # At 4σ² the gate locked out permanently once EKF drifted >3.2 m from GPS
