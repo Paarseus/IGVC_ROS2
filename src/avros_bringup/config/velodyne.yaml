@@ -25,7 +25,7 @@ velodyne_transform_node:
     max_range: 50.0
     calibration: "/opt/ros/humble/share/velodyne_pointcloud/params/VLP16db.yaml"
     organize_cloud: true
-    fixed_frame: "odom"            # 2026-05-29: per-packet ego-motion deskew. Re-enabled after cut_angle fix (with half-scans it dropped 1 scan/~6s on TF extrapolation; with full-rev clouds: 0 drops). Needed to remove rotation scan-skew phantom arc.
+    fixed_frame: ""                # 2026-05-30: DESKEW OFF (was "odom", #21). The deskew published the cloud in the odom frame, so STVL anchored its frustum + raytrace clearing at the odom ORIGIN instead of the robot -> obstacles only cleared via the slow voxel_decay (~8 s) = "clearing takes too long". Empty fixed_frame -> cloud in the velodyne (sensor) frame -> STVL clears from the robot again (fast), and the #21 marking-range blindness goes away too. Tradeoff: ~11% rotation phantom-arc returns, mitigated by mark_threshold:1.
                                    # compensation (computeTransformToFixed). VLP-16
                                    # sweeps ~100ms; during in-place rotation late-sweep
                                    # points were mis-rotated into a phantom arc in the

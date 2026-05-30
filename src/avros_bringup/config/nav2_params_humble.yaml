@@ -283,7 +283,7 @@ local_costmap:
       stvl_layer:
         plugin: "spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer"
         enabled: true
-        voxel_decay: 8.0           # 2026-05-21: 2.0->8.0. Anti-flicker: sparse
+        voxel_decay: 3.0           # 2026-05-30: 8.0->3.0. The 8.0 was an anti-flicker band-aid; flicker is now root-fixed at the sensor (broadcast->unicast), so faster out-of-view clearing is safe. (Was anti-flicker: sparse)
                                    # VLP-16 + CPU-load bursts decayed obstacles out
                                    # (~40% of lethal cells lost while stationary).
                                    # Long timeout = persistence; odom frame has no
