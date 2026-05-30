@@ -78,7 +78,7 @@ controller_server:
     # configs — the universal "out-of-the-box" diff-drive tune.
     FollowPath:
       plugin: "nav2_mppi_controller::MPPIController"
-      time_steps: 25          # 2026-05-28 PM: 56->25.  A 2026-05-29 Phase-0 bump to 40
+      time_steps: 56          # 2026-05-30: 25->56 RESTORE to the 2026-05-21 working horizon (RCA: docs/obstacle_stall_rca_2026_05_30.md). 25 (=1.25s/~0.9m) was too short to commit to a detour before creeping into the inflated halo; 56 (=2.8s/~2m) gives the reach. RE-VERIFY ros2 topic hz /cmd_vel >=18 under field load (cost ~ batch x time_steps). [prior:] 2026-05-28 PM: 56->25.  A 2026-05-29 Phase-0 bump to 40
                               # was REVERTED: it rested on a FALSE "identical compute"
                               # premise. MPPI cost ~ batch_size x time_steps x iters;
                               # model_dt does NOT reduce per-step cost. So 25->40 added
@@ -263,7 +263,7 @@ local_costmap:
       # ABORTS bringup. So we give an explicit 16-pt circle (r=0.914). The tracked robot rotates in
       # place, so the circumscribed circle is its true swept shape. See docs/lidar_rotation_phantom_fix_plan_2026_05_29.md.
       robot_radius: 0.914
-      footprint: "[[0.914,0.0],[0.844,0.35],[0.646,0.646],[0.35,0.844],[0.0,0.914],[-0.35,0.844],[-0.646,0.646],[-0.844,0.35],[-0.914,0.0],[-0.844,-0.35],[-0.646,-0.646],[-0.35,-0.844],[0.0,-0.914],[0.35,-0.844],[0.646,-0.646],[0.844,-0.35]]"
+      footprint: "[[0.81,0.415],[0.81,-0.415],[-0.28,-0.415],[-0.28,0.415]]"   # 2026-05-30: r=0.914 circle -> MEASURED chassis rectangle (base_link=IMU: front +0.81, rear -0.28, full width 0.83). The oversized circle (inscribed 0.896 ~= inflation) collapsed the MPPI gradient to a ~0.1m cliff + boxed escapes -> freeze (RCA docs/obstacle_stall_rca_2026_05_30.md; bag counterfactual at the freeze pose: rect 45 vs circle 19 collision-free fwd rollouts). Rect inscribed=0.28m -> real gradient at inflation 1.0(local)/0.65(global) AND clears the global inflation<inscribed ERROR. Covers the real tracks (no clipping). robot_radius above is now IGNORED (footprint polygon takes precedence).
       # stvl_layer first so semantic_layer's LETHAL writes win on cell conflict via updateWithMax.
       # STVL (spatio_temporal_voxel_layer) replaces nav2_costmap_2d::VoxelLayer
       # for the Velodyne VLP-16 source. voxel_layer is structurally wrong for
@@ -513,7 +513,7 @@ global_costmap:
       # ABORTS bringup. So we give an explicit 16-pt circle (r=0.914). The tracked robot rotates in
       # place, so the circumscribed circle is its true swept shape. See docs/lidar_rotation_phantom_fix_plan_2026_05_29.md.
       robot_radius: 0.914
-      footprint: "[[0.914,0.0],[0.844,0.35],[0.646,0.646],[0.35,0.844],[0.0,0.914],[-0.35,0.844],[-0.646,0.646],[-0.844,0.35],[-0.914,0.0],[-0.844,-0.35],[-0.646,-0.646],[-0.35,-0.844],[0.0,-0.914],[0.35,-0.844],[0.646,-0.646],[0.844,-0.35]]"
+      footprint: "[[0.81,0.415],[0.81,-0.415],[-0.28,-0.415],[-0.28,0.415]]"   # 2026-05-30: r=0.914 circle -> MEASURED chassis rectangle (base_link=IMU: front +0.81, rear -0.28, full width 0.83). The oversized circle (inscribed 0.896 ~= inflation) collapsed the MPPI gradient to a ~0.1m cliff + boxed escapes -> freeze (RCA docs/obstacle_stall_rca_2026_05_30.md; bag counterfactual at the freeze pose: rect 45 vs circle 19 collision-free fwd rollouts). Rect inscribed=0.28m -> real gradient at inflation 1.0(local)/0.65(global) AND clears the global inflation<inscribed ERROR. Covers the real tracks (no clipping). robot_radius above is now IGNORED (footprint polygon takes precedence).
       track_unknown_space: false
       # 2026-05-12: semantic_layer intentionally REMOVED from global_costmap.
       # Rationale: painted-lane perception (camera, short range, no raytrace
