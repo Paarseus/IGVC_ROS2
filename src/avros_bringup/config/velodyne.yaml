@@ -11,6 +11,7 @@ velodyne_driver_node:
     frame_id: "velodyne"
     gps_time: false
     time_offset: 0.0
+    cut_angle: 6.283185307     # 2026-05-29: full-revolution azimuth cut (2pi). Sensor double-broadcasts packets (1508/s) so default fixed npackets=76 = HALF rev @20Hz -> alternating-half clouds + precession beat starved one hemisphere every ~6s -> STVL frustum cleared it -> costmap flicker. Azimuth-cut assembles ONE true 360 rev @~10Hz, duplication-immune.
 
 velodyne_transform_node:
   ros__parameters:
@@ -24,7 +25,7 @@ velodyne_transform_node:
     max_range: 50.0
     calibration: "/opt/ros/humble/share/velodyne_pointcloud/params/VLP16db.yaml"
     organize_cloud: true
-    fixed_frame: "odom"            # 2026-05-29 Tier 2 deskew: per-packet ego-motion
+    fixed_frame: "odom"            # 2026-05-29: per-packet ego-motion deskew. Re-enabled after cut_angle fix (with half-scans it dropped 1 scan/~6s on TF extrapolation; with full-rev clouds: 0 drops). Needed to remove rotation scan-skew phantom arc.
                                    # compensation (computeTransformToFixed). VLP-16
                                    # sweeps ~100ms; during in-place rotation late-sweep
                                    # points were mis-rotated into a phantom arc in the
