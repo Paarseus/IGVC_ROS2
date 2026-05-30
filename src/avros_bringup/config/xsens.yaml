@@ -12,7 +12,7 @@ xsens_mti_node:
     frame_id: "imu_link"
 
     # Output rate
-    enable_deviceConfig: false     # Set true ONCE to flash config, then false
+    enable_deviceConfig: true      # 2026-05-30: TRUE for ONE boot to flash the new GNSS_LeverArm (0.74 m) to the MTi. REVERT to false after a successful launch so it stops re-flashing every boot.
     output_data_rate: 100          # Hz
 
     # Publishers
@@ -43,8 +43,8 @@ xsens_mti_node:
     pub_odometry: false             # Disable — publishes imu_link->base_link TF that conflicts with URDF + EKF (REP 105 violation)
 
     # GNSS lever arm: antenna offset from IMU center [x, y, z] meters
-    # TODO: Measure on real vehicle
-    GNSS_LeverArm: [0.0, 0.0, 0.0]
+    # 2026-05-30: MEASURED — antenna 0.74 m in FRONT of the IMU (+X forward; imu_link is base_link-aligned).
+    GNSS_LeverArm: [0.74, 0.0, 0.0]   # corrects fused position to the IMU origin + removes the omega*r velocity error on turns. If the MTi is physically mounted rotated, adjust the axis/sign.
 
     # u-Blox platform type: 4 = Automotive
     ublox_platform: 4
