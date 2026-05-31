@@ -67,8 +67,8 @@ controller_server:
 
     general_goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.2     # 2026-05-30: 2.0->0.2 — persist RTK-precision stops (field-tested 11-15 cm on waypoints 5004/5003). With inflation_radius now 0.3 the obstacle halo is small, so near-obstacle waypoints stay reachable at 0.2 m. CAUTION: if inflation is later raised, a waypoint within ~(inflation+inscribed) of an obstacle becomes UNREACHABLE at 0.2 m tol (goal falls inside the halo -> MPPI "fail to compute path" -> Goal failed; that is why North/5002 failed on 2026-05-30 when inflation was 1.0). Raise tol per-waypoint near obstacles (future mission_manager).
-      yaw_goal_tolerance: 0.5
+      xy_goal_tolerance: 0.5     # 2026-05-30 (PM): 0.2->0.5 — the robot reliably PARKS ~0.45 m short of GPS waypoints (MPPI decel/grass-stiction + GoalAngleCritic yaw-fidget). Bag maxspeed_north: drove to 0.45 m in 33 s, then sat 88 s with cmd_vx~0 (never closed the last 0.25 m), until a re-send nudged it. 0.5 m lets the goal FIRE where the robot actually stops. IGVC waypoint tolerance is meters, so 0.5 m is fine.
+      yaw_goal_tolerance: 3.15   # 2026-05-30 (PM): 0.5->3.15 (>pi = "don't care") — GPS waypoint nav needs no final heading. The 0.5 rad gate made MPPI fidget rotationally near the goal (GoalAngleCritic) instead of finishing on position -> 88 s parking deadlock (bag maxspeed_north). Position-only completion.
       stateful: true
 
     # MPPIController — sampling-based MPC. Replaces RPP per Macenski's
