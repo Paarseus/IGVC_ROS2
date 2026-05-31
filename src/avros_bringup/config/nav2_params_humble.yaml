@@ -103,8 +103,8 @@ controller_server:
       # this higher than what the motors can deliver causes rollout trajectories
       # MPPI believes-in-but-cannot-execute, which hurts tracking.
       # Raise to 1.5 after bench-fixing kOutputMax via REV Hardware Client.
-      vx_max: 0.7             # m/s forward (was 0.5; raised after T3.3 confirmed motors reach 0.7)
-      vx_min: -0.4            # m/s reverse (symmetric scaling with vx_max)
+      vx_max: 1.5             # 2026-05-30: 0.7->1.5 m/s fwd. Bag (maxspeed_mid) proved `ros2 param set FollowPath.vx_max` does NOT affect the RUNNING MPPI (read at configure-time) — robot stayed ~0.6 m/s regardless of live sets; must edit YAML + restart. Chassis delivers ~1.5 (theoretical 1.89, measured ~1.69). Accel still ramp-limited by actuator max_linear_accel=0.3 m/s² (brown-out safety) -> ~5 s to reach 1.5. NOTE: kOutputMax-0.47-cap premise in the comment above was a MISDIAGNOSIS (duty is NOT clamped, see Known Issues / issue #6).
+      vx_min: -0.6            # 2026-05-30: -0.4->-0.6 (scale reverse with vx_max)
       vy_max: 0.5             # not used on diff-drive but required field
       # wz_max: actuator clamps angular at max_angular_rps=1.5 (raised from
       # 1.0 on 2026-05-12); grass slip caps achievable ω at ~0.7 rad/s peak.
