@@ -478,7 +478,7 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 2.5     # 2026-05-30 (PM v2): 3.0->2.5 SOFTENED. Gentler exp decay so the cost ramps smoothly across the wider 0.7 m band instead of cliffing in the first ~0.2 m — gives MPPI CostCritic an earlier monotonic gradient to steer/slow on (Macenski "smooth inflation critical"). Pairs with inflation_radius 0.7.
-        inflation_radius: 0.5       # 2026-05-30 (PM v3): 0.7->0.5. The 0.7 fattened obstacle halos enough to (a) make Navfn detour the planned route west off the start and (b) clutter the field so MPPI looped 30 m (bag mid_inflation07). Back to 0.5 (band 0.22 m, ~0.5 m reaction) for straighter plans + less clutter; paired with PathAlignCritic 8->16 to hold MPPI on the plan. cost_scaling_factor stays 2.5 (softened). Still steer-not-brake (real braking fix = nav2_collision_monitor, pending). 0.5 grazed inscribed once at 1.5 m/s — acceptable interim; collision_monitor is the durable safety. Prior: 0.7/0.3, 1.0 was 05-21 barrel standoff.
+        inflation_radius: 0.6       # 2026-05-30 (PM v4): 0.5->0.6. 0.5 + PathAlign 16 fixed the wandering (actual path 0.71 m off plan, was 5 m) BUT still hit an obstacle, so more standoff needed. 0.6 -> band 0.6-0.28=0.32 m, ~0.6 m reaction. KEY: with PathAlign now 16 (holds MPPI on the plan), 0.6 should NOT re-introduce the 0.7 wandering (the wander came from low PathAlign + fat halos; PathAlign 16 counters it). Splitting 0.5(grazed/hit) vs 0.7(wandered). cost_scaling 2.5. Still steer-not-brake — durable fix is nav2_collision_monitor (pending). Prior: 0.5/0.7/0.3, 1.0 was 05-21 barrel standoff.
                                      # so MPPI gets a real early-avoidance gradient instead
                                      # of cutting obstacles close. The old "1.0 boxed the
                                      # robot in" concern was camera-lane + GPS-smear lethal
@@ -617,7 +617,7 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 2.5     # 2026-05-30 (PM v2): 3.0->2.5 SOFTENED. Gentler exp decay so the cost ramps smoothly across the wider 0.7 m band instead of cliffing in the first ~0.2 m — gives MPPI CostCritic an earlier monotonic gradient to steer/slow on (Macenski "smooth inflation critical"). Pairs with inflation_radius 0.7.
-        inflation_radius: 0.5       # 2026-05-30 (PM v3): 0.7->0.5 to match local (see local comment — 0.7 cluttered the field + bent the plan; back to 0.5 + PathAlign 16).
+        inflation_radius: 0.6       # 2026-05-30 (PM v4): 0.5->0.6 to match local (0.5 still hit an obstacle; more standoff. PathAlign 16 should prevent 0.7-style wandering).
                                      # detections accumulated into a lethal blob that boxed
                                      # in the robot. 0.4 < inscribed_radius (0.794) so Nav2
                                      # will warn; accepted trade-off until lane detection
