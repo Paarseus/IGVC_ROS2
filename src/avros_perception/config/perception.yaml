@@ -129,7 +129,11 @@
     # the final ROI fillPoly zeros everything inside this polygon, which would
     # otherwise erase the lane it just detected. Now masks only sky/buildings
     # above the near-field band.
-    sky_roi_poly: [0.0, 0.0,  1.0, 0.0,  1.0, 0.46,  0.0, 0.46]
+    # 2026-05-31: 0.46 -> 0.30 (field-tuned this session). The adaptive
+    # pipeline's local threshold handles near-horizon background noise, so a
+    # smaller sky mask is safe (cannot clip lanes, which sit in 0.46-0.70) and
+    # exposes the side lines further ahead.
+    sky_roi_poly: [0.0, 0.0,  1.0, 0.0,  1.0, 0.30,  0.0, 0.30]
 
     # -------- Sooner Robotics 2025 pipeline (selected via pipeline:='sooner25')
     # Copy-pasted from autonav_software_2025/transformations.py.
