@@ -478,7 +478,7 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0     # smoother gradient — required by MPPI per Macenski
-        inflation_radius: 0.3       # 2026-05-30 (later, field): 1.0->0.3 — chosen for NARROW-LANE FIT (IGVC 2-3 m lanes; large inflation boxed the robot / "scared of narrow ways") and to keep near-obstacle GPS waypoints reachable at 0.2 m goal tol. COST: 0.3 < inscribed -> minimal MPPI early-avoidance gradient + ~no barrel standoff; barrel standoff deferred to the FOOTPRINT right-size per obstacle-stall RCA (docs/obstacle_stall_rca_2026_05_30.md), the real lever. Prior: 1.0 was the 05-21 barrel-standoff value.
+        inflation_radius: 0.5       # 2026-05-30 (PM, obstacle-clip test): 0.3->0.5. Bag north_costmap_diag proved MPPI clipped a marked 3-4 m obstacle at full 1.5 m/s (footprint cost 99, nearest lethal 0.56 m) because the gradient band = inflation-inscribed = 0.3-0.28 ~= 0.02 m (near-cliff -> obstacle invisible to CostCritic until 0.3 m, far less than the 0.86 m stop dist). 0.5 -> band 0.22 m, ~0.5 m reaction. PARTIAL: still < 0.86 m stop@1.5, and does NOT make MPPI slow (it steered but never braked); pairs with a CostCritic/collision_monitor change (workflow pending). NARROW-LANE caveat: 0.5 is GLOBAL so it inflates lanes too when perception is ON — re-evaluate then. Prior: 0.3 narrow-lane fit, 1.0 was 05-21 barrel standoff.
                                      # so MPPI gets a real early-avoidance gradient instead
                                      # of cutting obstacles close. The old "1.0 boxed the
                                      # robot in" concern was camera-lane + GPS-smear lethal
@@ -617,7 +617,7 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0     # smoother gradient — required by MPPI per Macenski
-        inflation_radius: 0.3       # 2026-05-30 (later, field): 0.65->0.3 to match local (narrow-lane fit). See local inflation_radius comment for the standoff tradeoff.
+        inflation_radius: 0.5       # 2026-05-30 (PM, obstacle-clip test): 0.3->0.5 to match local (see local inflation_radius comment — obstacle-clip RCA + the 0.86 m stop@1.5 m/s tradeoff).
                                      # detections accumulated into a lethal blob that boxed
                                      # in the robot. 0.4 < inscribed_radius (0.794) so Nav2
                                      # will warn; accepted trade-off until lane detection
