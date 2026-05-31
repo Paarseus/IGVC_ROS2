@@ -477,8 +477,8 @@ local_costmap:
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0     # smoother gradient — required by MPPI per Macenski
-        inflation_radius: 0.5       # 2026-05-30 (PM, obstacle-clip test): 0.3->0.5. Bag north_costmap_diag proved MPPI clipped a marked 3-4 m obstacle at full 1.5 m/s (footprint cost 99, nearest lethal 0.56 m) because the gradient band = inflation-inscribed = 0.3-0.28 ~= 0.02 m (near-cliff -> obstacle invisible to CostCritic until 0.3 m, far less than the 0.86 m stop dist). 0.5 -> band 0.22 m, ~0.5 m reaction. PARTIAL: still < 0.86 m stop@1.5, and does NOT make MPPI slow (it steered but never braked); pairs with a CostCritic/collision_monitor change (workflow pending). NARROW-LANE caveat: 0.5 is GLOBAL so it inflates lanes too when perception is ON — re-evaluate then. Prior: 0.3 narrow-lane fit, 1.0 was 05-21 barrel standoff.
+        cost_scaling_factor: 2.5     # 2026-05-30 (PM v2): 3.0->2.5 SOFTENED. Gentler exp decay so the cost ramps smoothly across the wider 0.7 m band instead of cliffing in the first ~0.2 m — gives MPPI CostCritic an earlier monotonic gradient to steer/slow on (Macenski "smooth inflation critical"). Pairs with inflation_radius 0.7.
+        inflation_radius: 0.7       # 2026-05-30 (PM v2): 0.5->0.7 (obstacle-clip test cont.). 0.5 still grazed inscribed (cost 99) + had 1 abort; 0.7 -> band 0.7-0.28=0.42 m, ~0.7 m reaction (approaching the 0.86 m stop dist @1.5 m/s). With cost_scaling_factor softened 3.0->2.5 the gradient ramps smoothly across the band. STILL a steer-not-brake aid (MPPI CostCritic has no velocity term — the real braking fix is nav2_collision_monitor, pending). NARROW-LANE caveat: 0.7 is GLOBAL -> inflates LETHAL lanes too when perception is ON (2-3 m lane minus 2x0.7 = ~0.6-1.6 m corridor) — re-evaluate before perception goes live. Prior: 0.5/0.3 (clip tests), 1.0 was 05-21 barrel standoff.
                                      # so MPPI gets a real early-avoidance gradient instead
                                      # of cutting obstacles close. The old "1.0 boxed the
                                      # robot in" concern was camera-lane + GPS-smear lethal
@@ -616,8 +616,8 @@ global_costmap:
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0     # smoother gradient — required by MPPI per Macenski
-        inflation_radius: 0.5       # 2026-05-30 (PM, obstacle-clip test): 0.3->0.5 to match local (see local inflation_radius comment — obstacle-clip RCA + the 0.86 m stop@1.5 m/s tradeoff).
+        cost_scaling_factor: 2.5     # 2026-05-30 (PM v2): 3.0->2.5 SOFTENED. Gentler exp decay so the cost ramps smoothly across the wider 0.7 m band instead of cliffing in the first ~0.2 m — gives MPPI CostCritic an earlier monotonic gradient to steer/slow on (Macenski "smooth inflation critical"). Pairs with inflation_radius 0.7.
+        inflation_radius: 0.7       # 2026-05-30 (PM v2): 0.5->0.7 to match local (see local inflation_radius comment — obstacle-clip RCA + 0.86 m stop@1.5 tradeoff + narrow-lane caveat).
                                      # detections accumulated into a lethal blob that boxed
                                      # in the robot. 0.4 < inscribed_radius (0.794) so Nav2
                                      # will warn; accepted trade-off until lane detection
