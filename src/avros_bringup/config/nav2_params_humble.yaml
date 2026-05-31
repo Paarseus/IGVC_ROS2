@@ -298,6 +298,7 @@ local_costmap:
         observation_sources: velodyne_points
         velodyne_points:
           topic: /velodyne_points
+          sensor_frame: "velodyne"   # 2026-05-31: pin STVL clearing/frustum origin to the robot (velodyne) regardless of cloud header.frame_id. Default ("") would fall back to the cloud frame; with deskew re-enabled this insures clearing stays robot-centric even if the cloud comes out in odom. measurement_buffer.cpp:97-98 (origin_frame = sensor_frame ?: cloud.header.frame_id).
           data_type: PointCloud2
           marking: true
           clearing: true
@@ -549,6 +550,7 @@ global_costmap:
         observation_sources: velodyne_points
         velodyne_points:
           topic: /velodyne_points
+          sensor_frame: "velodyne"   # 2026-05-31: pin STVL clearing origin to the robot (velodyne); global_frame=map, so without this the origin would resolve to map-position of the cloud frame. measurement_buffer.cpp:97-98. See local source + velodyne.yaml deskew note.
           data_type: PointCloud2
           marking: true
           clearing: true

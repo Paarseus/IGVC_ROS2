@@ -25,10 +25,5 @@ velodyne_transform_node:
     max_range: 50.0
     calibration: "/opt/ros/humble/share/velodyne_pointcloud/params/VLP16db.yaml"
     organize_cloud: true
-    fixed_frame: ""                # 2026-05-30: DESKEW OFF (was "odom", #21). The deskew published the cloud in the odom frame, so STVL anchored its frustum + raytrace clearing at the odom ORIGIN instead of the robot -> obstacles only cleared via the slow voxel_decay (~8 s) = "clearing takes too long". Empty fixed_frame -> cloud in the velodyne (sensor) frame -> STVL clears from the robot again (fast), and the #21 marking-range blindness goes away too. Tradeoff: ~11% rotation phantom-arc returns, mitigated by mark_threshold:1.
-                                   # compensation (computeTransformToFixed). VLP-16
-                                   # sweeps ~100ms; during in-place rotation late-sweep
-                                   # points were mis-rotated into a phantom arc in the
-                                   # costmap. Transforming each packet via odom->velodyne
-                                   # TF at its own stamp removes scan-skew at the source.
-                                   # NOTE: changes output cloud frame_id velodyne->odom.
+    fixed_frame: "velodyne"        # 2026-05-31: DESKEW ON, written SWAP-AWARE. Upstream velodyne_transform configure() swaps fixed/target args (transform.cpp:138 calls configure(...,target_frame,fixed_frame) into signature (...,fixed_frame,target_frame); confirmed present on the ros2-branch HEAD = the Humble source, NOT fixed by issue #484). So these values are INTENTIONALLY "backwards": at runtime config_.fixed_frame=odom (per-packet ego-motion deskew via computeTransformToFixed) + config_.target_frame=velodyne (assembled cloud re-projected back to the sensor frame at scan stamp). NET: deskew ON, output frame_id stays "velodyne" -> STVL clears robot-centric, NO costmap frame change required. Replaces the 05-30 "DESKEW OFF" workaround (that fixed_frame:"odom" never actually deskewed -- the swap routed it to a per-scan transform-to-odom; see docs/deskew_sensorframe_verification_2026_05_30.md).
+    target_frame: "odom"           # see fixed_frame note. VERIFY on first Jetson launch: `ros2 topic echo --once /velodyne_points --field header.frame_id` MUST print "velodyne". If it prints "odom", the installed apt binary lacks the swap -> flip to fixed_frame:"odom" + target_frame:"velodyne". Belt+suspenders: both STVL velodyne_points sources also set sensor_frame:"velodyne", so clearing stays robot-centric even if the frame comes out wrong.
