@@ -368,16 +368,6 @@ local_costmap:
           labels_topic: /perception/front/label_info
           max_obstacle_distance: 5.0
           min_obstacle_distance: 0.3
-          # ODOM-frame height band (z=0 == ground). Camera marks ONLY near-ground
-          # lane paint; white objects ABOVE the band (tents, barrel tops, signs,
-          # people) are dropped, leaving physical obstacles to the LiDAR STVL layer.
-          # SHIPPED WIDE / fail-open: two_d_mode pins odom level, so chassis pitch
-          # (ramp/bump) shifts a ground point's z by ~r*sin(pitch); -0.5/+0.5 keeps
-          # flat-ground paint + tolerates ~5deg pitch @5m while still rejecting
-          # objects >=0.6 m. CALIBRATE from live data (incl. while pitched) before
-          # tightening. LOCAL (odom) source ONLY — do NOT copy to the global/map layer.
-          min_obstacle_height: -0.5
-          max_obstacle_height: 0.5
           tile_map_decay_time: 0.6
           observation_persistence: 0.0
           # DESIGN CHOICE (2026-05-29): kept true (real-time raytrace clearing) -> cmd_vel ~13-16 Hz.
