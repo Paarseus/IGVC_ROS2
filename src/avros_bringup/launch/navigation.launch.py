@@ -132,11 +132,13 @@ def generate_launch_description():
         ),
 
         DeclareLaunchArgument(
-            'enable_ntrip', default_value='false',
-            description='Enable NTRIP client for RTK corrections. '
-                        'Default false: IGVC 2026 rule §I.2 forbids base '
-                        'stations for positioning. Re-enable explicitly '
-                        'when developing/practicing outside competition.'
+            'enable_ntrip', default_value='true',
+            description='Enable NTRIP client for RTK corrections (public '
+                        'MDOT CORS caster). Default true: IGVC 2026 §I.2 '
+                        'forbids running your OWN base station, but a public '
+                        'NTRIP caster is permitted (user-confirmed 2026-05-30 '
+                        '— get the judge ruling in writing). Set false for '
+                        'unaided GPS.'
         ),
 
         DeclareLaunchArgument(
