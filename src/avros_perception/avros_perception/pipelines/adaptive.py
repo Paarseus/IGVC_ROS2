@@ -91,6 +91,12 @@ class AdaptivePipeline(Pipeline):
         use_open = bool(self.params.get('adaptive_use_open', False))
         channel = str(self.params.get('adaptive_channel', 'L'))
         class_id_lane = int(self.params.get('class_id_lane', 1))
+        # Low-saturation gate (white-paint prior) + tunable pre-blur kernel.
+        max_sat = int(self.params.get('adaptive_max_sat', 255))
+        blur = int(self.params.get('adaptive_blur', 3))
+        bk = blur if blur % 2 == 1 else blur + 1   # GaussianBlur needs odd k
+        if bk < 1:
+            bk = 1
 
         # Single 8-bit lighting-stable channel. adaptiveThreshold REQUIRES an
         # 8-bit single-channel image — passing the 3ch image RAISES
@@ -103,9 +109,11 @@ class AdaptivePipeline(Pipeline):
         else:  # 'L' (HLS-Lightness) — default
             chan = cv2.cvtColor(bgr, cv2.COLOR_BGR2HLS)[:, :, 1]
 
-        # One light 3x3 Gaussian de-speckle (NOT sooner25's 3x 5x5 box-blur,
-        # which smears the thin downsampled line).
-        chan = cv2.GaussianBlur(chan, (3, 3), 0)
+        # Gaussian de-speckle (kernel = adaptive_blur, odd-coerced). A larger
+        # kernel low-passes high-frequency asphalt-aggregate texture (which
+        # otherwise speckles past min_area at full res) while the wider painted
+        # line survives. Default 3 (light); 5 is the field-tuned value.
+        chan = cv2.GaussianBlur(chan, (bk, bk), 0)
 
         # Local Gaussian adaptive threshold. THRESH_BINARY + C<0 marks pixels
         # brighter than their local neighborhood mean by |C| = white paint.
@@ -115,6 +123,16 @@ class AdaptivePipeline(Pipeline):
             cv2.THRESH_BINARY,
             bs, C,
         )
+
+        # Low-saturation (white-paint) gate. White lane paint is near-grey
+        # (low HLS saturation); colored clutter — orange barrels, tan pillar,
+        # green grass — is high-S. Dropping high-S pixels removes that clutter
+        # while keeping paint, regardless of where it sits in the frame (ROI
+        # can't separate barrels from the far line — they're the same height).
+        # 255 disables. Field-added 2026-05-31; see docs offline tuning.
+        if max_sat < 255:
+            sat = cv2.cvtColor(bgr, cv2.COLOR_BGR2HLS)[:, :, 2]
+            raw[sat > max_sat] = 0
 
         # Optional MORPH_OPEN — OFF by default (open erases marginal thin lines:
         # verified line comp 114px -> 17px). Enable only for a rougher surface

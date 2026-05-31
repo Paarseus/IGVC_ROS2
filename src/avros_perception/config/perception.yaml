@@ -101,7 +101,14 @@
     lane_min_area: 120          # drop connected components < this many px (speckle)
     # Run pipeline at incoming image resolution, downsample binary mask
     # to cloud shape with max-pooling (preserves thin lanes that mean-resize loses).
-    process_at_full_res: false
+    process_at_full_res: true   # 2026-05-31: was false. At 224x128 the
+                                # INTER_AREA downscale + block 21 (=16% of
+                                # frame) blurred the faint near-field line into
+                                # the asphalt BEFORE the pipeline ran, so only
+                                # horizon clutter survived. Processing at full
+                                # 480x300 (line crisp, block 21 ~7% of frame)
+                                # then NEAREST-downsampling the binary mask
+                                # recovers the real lines. Offline-verified.
     class_id_lane: 1
 
     # Orange safety barrels: narrow H band around 15 deg, saturated+bright
@@ -129,11 +136,12 @@
     # the final ROI fillPoly zeros everything inside this polygon, which would
     # otherwise erase the lane it just detected. Now masks only sky/buildings
     # above the near-field band.
-    # 2026-05-31: 0.46 -> 0.30 (field-tuned this session). The adaptive
-    # pipeline's local threshold handles near-horizon background noise, so a
-    # smaller sky mask is safe (cannot clip lanes, which sit in 0.46-0.70) and
-    # exposes the side lines further ahead.
-    sky_roi_poly: [0.0, 0.0,  1.0, 0.0,  1.0, 0.30,  0.0, 0.30]
+    # 2026-05-31: 0.46 -> 0.40 (field-tuned). Masks the horizon tents/sky;
+    # the colored horizon clutter (orange barrels, tan pillar, grass) that
+    # sits AT the lane-band height is removed by adaptive_max_sat instead
+    # (ROI can't separate a barrel from the far end of a line — same height).
+    # 0.40 cannot clip near/mid lanes (they sit lower, 0.46-1.0).
+    sky_roi_poly: [0.0, 0.0,  1.0, 0.0,  1.0, 0.40,  0.0, 0.40]
 
     # -------- Sooner Robotics 2025 pipeline (selected via pipeline:='sooner25')
     # Copy-pasted from autonav_software_2025/transformations.py.
@@ -161,11 +169,21 @@
     # -------- Adaptive-threshold pipeline (pipeline:='adaptive') --------
     # Exposure-invariant: local Gaussian adaptive threshold on HLS-L. Rides
     # the ZED auto-exposure swing (no fixed brightness level). KEEP AE ON.
-    # block/C tuned at the 224x128 process resolution (process_at_full_res:false).
-    # Verified offline on 14 real frames: exposure CV 0.031 vs sooner25 1.17-2.24
-    # (38x more stable), 0% asphalt false-positives after min_area=15.
+    # block/C run at FULL res (process_at_full_res:true) — the line is faint
+    # (~8-12 over local mean, same contrast as asphalt speckle), so |C| can't
+    # separate them; shape/area can't either (block 21 catches only line
+    # edges -> fragments). The working levers are: full-res (line crisp),
+    # adaptive_blur (low-pass kills high-freq speckle), adaptive_max_sat
+    # (kills colored clutter). Offline-verified on captured field frames
+    # 2026-05-31: clutter gone, lines traced. NOTE: faint lines remain at the
+    # classical limit — ONNX is the robust answer for worn/low-contrast paint.
     adaptive_block_size: 21    # odd; > line width in px at process res
     adaptive_C: -8.0           # negative => pixel must exceed local mean (bright lines)
     adaptive_channel: 'L'      # HLS-L (or 'V'/'gray' — near-identical)
     adaptive_min_area: 15      # drop speckle comps; do NOT lower to chase faint line
     adaptive_use_open: false   # open erases thin lines — leave off
+    adaptive_blur: 5           # 2026-05-31: 3->5. Low-pass asphalt-texture
+                               # speckle at full res; the wider line survives.
+    adaptive_max_sat: 70       # 2026-05-31 NEW. Drop HLS-S>70 detections:
+                               # white paint is low-S, colored clutter is high-S.
+                               # 255 disables.

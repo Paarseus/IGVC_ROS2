@@ -64,6 +64,7 @@ _PIPELINE_PARAM_NAMES = (
     # adaptive pipeline params
     'adaptive_block_size', 'adaptive_C', 'adaptive_channel',
     'adaptive_min_area', 'adaptive_use_open',
+    'adaptive_max_sat', 'adaptive_blur',
 )
 
 _HSV_BOUND_NAMES = frozenset((
@@ -183,6 +184,25 @@ class PerceptionNode(Node):
             ),
         )
         self.declare_parameter('adaptive_use_open', False)
+        self.declare_parameter(
+            'adaptive_max_sat', 255,
+            ParameterDescriptor(
+                description='Drop detections with HLS saturation above this. '
+                            'White lane paint is low-S; colored clutter '
+                            '(orange barrels, tan pillar, grass) is high-S. '
+                            '255 disables.',
+                integer_range=[IntegerRange(from_value=0, to_value=255, step=1)],
+            ),
+        )
+        self.declare_parameter(
+            'adaptive_blur', 3,
+            ParameterDescriptor(
+                description='Gaussian pre-blur kernel (odd, coerced in '
+                            'pipeline). Larger low-passes high-freq asphalt '
+                            'texture speckle; the wider line survives.',
+                integer_range=[IntegerRange(from_value=1, to_value=15, step=2)],
+            ),
+        )
         self.declare_parameter('process_at_full_res', False)
 
         cam = self.get_parameter('camera_name').value
