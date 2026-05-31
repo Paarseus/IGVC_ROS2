@@ -171,7 +171,7 @@ controller_server:
       PathAlignCritic:
         enabled: true
         cost_power: 1
-        cost_weight: 8.0             # 2026-05-28 PM: 14.0 -> 8.0 to loosen MPPI's commitment to the global path. Lets it deviate to find valid trajectories when corridor + obstacles force a detour.
+        cost_weight: 16.0            # 2026-05-30 (PM v3): 8.0 -> 16.0 RAISE. Bag mid_inflation07 plot proved MPPI ignored a near-direct planned route (14.9 m) and drove a 30 m loop (5 m lateral deviation) — it wandered off the plan in the cluttered/inflated field. Was lowered 14->8 on 05-28 "to loosen commitment to the path"; that loosening is what let it wander. 16 makes MPPI track the global path tightly (keep toward goal) instead of looping around every halo. Tune down if it gets too rigid to dodge a real obstacle.
         max_path_occupancy_ratio: 0.15  # 2026-05-28 PM: 0.05 -> 0.15 to allow global path to be partially obstructed without invalidating.
         trajectory_point_step: 4
         threshold_to_consider: 0.5
@@ -478,7 +478,7 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 2.5     # 2026-05-30 (PM v2): 3.0->2.5 SOFTENED. Gentler exp decay so the cost ramps smoothly across the wider 0.7 m band instead of cliffing in the first ~0.2 m — gives MPPI CostCritic an earlier monotonic gradient to steer/slow on (Macenski "smooth inflation critical"). Pairs with inflation_radius 0.7.
-        inflation_radius: 0.7       # 2026-05-30 (PM v2): 0.5->0.7 (obstacle-clip test cont.). 0.5 still grazed inscribed (cost 99) + had 1 abort; 0.7 -> band 0.7-0.28=0.42 m, ~0.7 m reaction (approaching the 0.86 m stop dist @1.5 m/s). With cost_scaling_factor softened 3.0->2.5 the gradient ramps smoothly across the band. STILL a steer-not-brake aid (MPPI CostCritic has no velocity term — the real braking fix is nav2_collision_monitor, pending). NARROW-LANE caveat: 0.7 is GLOBAL -> inflates LETHAL lanes too when perception is ON (2-3 m lane minus 2x0.7 = ~0.6-1.6 m corridor) — re-evaluate before perception goes live. Prior: 0.5/0.3 (clip tests), 1.0 was 05-21 barrel standoff.
+        inflation_radius: 0.5       # 2026-05-30 (PM v3): 0.7->0.5. The 0.7 fattened obstacle halos enough to (a) make Navfn detour the planned route west off the start and (b) clutter the field so MPPI looped 30 m (bag mid_inflation07). Back to 0.5 (band 0.22 m, ~0.5 m reaction) for straighter plans + less clutter; paired with PathAlignCritic 8->16 to hold MPPI on the plan. cost_scaling_factor stays 2.5 (softened). Still steer-not-brake (real braking fix = nav2_collision_monitor, pending). 0.5 grazed inscribed once at 1.5 m/s — acceptable interim; collision_monitor is the durable safety. Prior: 0.7/0.3, 1.0 was 05-21 barrel standoff.
                                      # so MPPI gets a real early-avoidance gradient instead
                                      # of cutting obstacles close. The old "1.0 boxed the
                                      # robot in" concern was camera-lane + GPS-smear lethal
@@ -617,7 +617,7 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 2.5     # 2026-05-30 (PM v2): 3.0->2.5 SOFTENED. Gentler exp decay so the cost ramps smoothly across the wider 0.7 m band instead of cliffing in the first ~0.2 m — gives MPPI CostCritic an earlier monotonic gradient to steer/slow on (Macenski "smooth inflation critical"). Pairs with inflation_radius 0.7.
-        inflation_radius: 0.7       # 2026-05-30 (PM v2): 0.5->0.7 to match local (see local inflation_radius comment — obstacle-clip RCA + 0.86 m stop@1.5 tradeoff + narrow-lane caveat).
+        inflation_radius: 0.5       # 2026-05-30 (PM v3): 0.7->0.5 to match local (see local comment — 0.7 cluttered the field + bent the plan; back to 0.5 + PathAlign 16).
                                      # detections accumulated into a lethal blob that boxed
                                      # in the robot. 0.4 < inscribed_radius (0.794) so Nav2
                                      # will warn; accepted trade-off until lane detection
