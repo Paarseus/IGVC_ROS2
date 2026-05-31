@@ -93,7 +93,7 @@ controller_server:
       batch_size: 500         # 2026-05-28 PM: 1000->500. Combined with time_steps=25
                               # gives ~6x speedup so MPPI doesn't pause for seconds
                               # to recompute. Was 1000 (5/21 retune from 2000).
-      vx_std: 0.2             # 2026-05-30 (PM): reverted 0.4->0.2. The 0.4 was a WRONG lever — added velocity jitter, barely moved speed. The real cruise cap was prune_distance (see below): cruise = prune_distance/horizon = 1.7/2.8 = 0.6 m/s exactly (Nav2 issue #4970 + MPPI docs).
+      vx_std: 0.3             # 2026-05-30 (PM v2): 0.2->0.3. Source-verified the 0.2 revert was the WRONG direction: vx_std was MASKED while prune_distance=1.7 pinned the carrot (no exploration can buy speed past a closed gate — that is why 0.4 "barely moved it / added jitter"). Now prune=5.0 opens the ceiling to 5/2.8=1.79 > vx_max, so vx_std is the exploration that lets MPPI sample UP toward vx_max=1.5 from the ~0.6 prior. 0.3 (not 0.4) to limit jitter; raise to 0.4 if cruise still lags vx_max. Configure-time -> needs restart.
       vy_std: 0.2
       wz_std: 0.4
       # vx_max/vx_min: matches the firmware ceiling on grass per
@@ -180,7 +180,7 @@ controller_server:
       PathFollowCritic:
         enabled: true
         cost_power: 1
-        cost_weight: 5.0             # 2026-05-30 (PM): reverted 8.0->5.0 (caused steering jitter, wasn't the real speed lever). Real cruise lever is prune_distance, not this weight.
+        cost_weight: 8.0             # 2026-05-30 (PM v2): restored 5.0->8.0. The 8->5 revert was only harmless WHILE prune=1.7 saturated the carrot. With prune=5.0 the carrot now LEADS the rollout fleet (path_follow_critic.cpp: offseted_idx = min(furthest_reached + offset_from_furthest, path_size)), so weight reactivates: cost = weight*dist(traj_end, carrot) -> higher weight rewards the FASTER samples that reach the distant carrot (header docstring confirms "higher weight + offset>1 accelerates samples to full speed"). Raise incrementally; too high -> jerky motion (ROS Answers Q414931).
         offset_from_furthest: 5
         threshold_to_consider: 1.4
       PathAngleCritic:
