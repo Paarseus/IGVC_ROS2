@@ -368,7 +368,7 @@ local_costmap:
           labels_topic: /perception/front/label_info
           max_obstacle_distance: 5.0
           min_obstacle_distance: 0.3
-          tile_map_decay_time: 0.3
+          tile_map_decay_time: 0.6
           observation_persistence: 0.0
           # DESIGN CHOICE (2026-05-29): kept true (real-time raytrace clearing) -> cmd_vel ~13-16 Hz.
           # false (decay-only) buys ~20 Hz but drops the clearing pass; chose full behavior at a healthy
@@ -408,7 +408,7 @@ local_costmap:
           labels_topic: /perception/left/label_info
           max_obstacle_distance: 5.0
           min_obstacle_distance: 0.3
-          tile_map_decay_time: 0.3
+          tile_map_decay_time: 0.6
           observation_persistence: 0.0
           clearing: true
           raytrace_max_range: 8.0
@@ -445,7 +445,7 @@ local_costmap:
           labels_topic: /perception/right/label_info
           max_obstacle_distance: 5.0
           min_obstacle_distance: 0.3
-          tile_map_decay_time: 0.3
+          tile_map_decay_time: 0.6
           observation_persistence: 0.0
           clearing: true
           raytrace_max_range: 8.0
