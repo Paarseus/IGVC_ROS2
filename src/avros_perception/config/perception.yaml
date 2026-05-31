@@ -16,7 +16,7 @@
     rgb_topic: ''
     cloud_topic: ''
 
-    # Pipeline selector: 'stub' | 'hsv' | 'sooner25' | 'onnx' (onnx lands in Phase 6).
+    # Pipeline selector: 'stub' | 'hsv' | 'sooner25' | 'adaptive' | 'onnx' (onnx lands in Phase 6).
     # 'sooner25' is the Sooner Robotics 2025 IGVC AutoNav winning approach —
     # see pipelines/sooner25.py. Switched from 'hsv' 2026-05-11 PM after the
     # legacy per-class HSV pipeline kept misclassifying bright concrete.
@@ -26,7 +26,12 @@
     # output (635 lane px stable, zero asphalt false-positives) with the same
     # tape coverage. Inverted-asphalt approach is more robust to bright-paint
     # variation. See SESSION_FINAL.md PM section for the iteration log.
-    pipeline: 'sooner25'
+    # 2026-05-30: switched to 'adaptive' — sooner25's FIXED-brightness threshold
+    # flickers with the ZED auto-exposure limit cycle (lane px swung 375<->909,
+    # 2.4x, at the same threshold while stationary). 'adaptive' uses a local
+    # Gaussian adaptive threshold (exposure-invariant by construction), keeping
+    # AE ON. See pipelines/adaptive.py + the adaptive block below.
+    pipeline: 'adaptive'
 
     # message_filters ApproximateTimeSynchronizer
     sync_slop: 0.02        # seconds; ZED sensors_image_sync:=true keeps pairs tight
@@ -148,3 +153,15 @@
     sooner25_upper: [255, 255, 215]
     sooner25_blur_weight: 5
     sooner25_blur_iters: 3
+
+    # -------- Adaptive-threshold pipeline (pipeline:='adaptive') --------
+    # Exposure-invariant: local Gaussian adaptive threshold on HLS-L. Rides
+    # the ZED auto-exposure swing (no fixed brightness level). KEEP AE ON.
+    # block/C tuned at the 224x128 process resolution (process_at_full_res:false).
+    # Verified offline on 14 real frames: exposure CV 0.031 vs sooner25 1.17-2.24
+    # (38x more stable), 0% asphalt false-positives after min_area=15.
+    adaptive_block_size: 21    # odd; > line width in px at process res
+    adaptive_C: -8.0           # negative => pixel must exceed local mean (bright lines)
+    adaptive_channel: 'L'      # HLS-L (or 'V'/'gray' — near-identical)
+    adaptive_min_area: 15      # drop speckle comps; do NOT lower to chase faint line
+    adaptive_use_open: false   # open erases thin lines — leave off

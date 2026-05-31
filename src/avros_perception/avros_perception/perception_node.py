@@ -61,6 +61,9 @@ _PIPELINE_PARAM_NAMES = (
     # sooner25 pipeline params
     'sooner25_lower', 'sooner25_upper',
     'sooner25_blur_weight', 'sooner25_blur_iters',
+    # adaptive pipeline params
+    'adaptive_block_size', 'adaptive_C', 'adaptive_channel',
+    'adaptive_min_area', 'adaptive_use_open',
 )
 
 _HSV_BOUND_NAMES = frozenset((
@@ -151,6 +154,35 @@ class PerceptionNode(Node):
         self.declare_parameter('sooner25_upper', [255, 95, 210])
         self.declare_parameter('sooner25_blur_weight', 5)
         self.declare_parameter('sooner25_blur_iters', 3)
+        # Adaptive-threshold pipeline — exposure-invariant local-adaptive
+        # threshold on HLS-L (or V/gray). Rides the ZED auto-exposure swing
+        # that flickers sooner25's fixed-brightness threshold. See
+        # pipelines/adaptive.py. blockSize is odd-coerced in the pipeline
+        # (even RAISES); IntegerRange(step=2) only constrains rqt sliders.
+        self.declare_parameter(
+            'adaptive_block_size', 21,
+            ParameterDescriptor(
+                description='adaptiveThreshold Gaussian neighborhood (odd, >1)',
+                integer_range=[IntegerRange(from_value=3, to_value=199, step=2)],
+            ),
+        )
+        self.declare_parameter(
+            'adaptive_C', -8.0,
+            ParameterDescriptor(
+                description='Constant subtracted from local Gaussian mean; negative marks bright lines',
+                floating_point_range=[FloatingPointRange(
+                    from_value=-50.0, to_value=50.0, step=0.0)],
+            ),
+        )
+        self.declare_parameter('adaptive_channel', 'L')
+        self.declare_parameter(
+            'adaptive_min_area', 15,
+            ParameterDescriptor(
+                description='Drop connected components smaller than this many px',
+                integer_range=[IntegerRange(from_value=1, to_value=500, step=1)],
+            ),
+        )
+        self.declare_parameter('adaptive_use_open', False)
         self.declare_parameter('process_at_full_res', False)
 
         cam = self.get_parameter('camera_name').value
