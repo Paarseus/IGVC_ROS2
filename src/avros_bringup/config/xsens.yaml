@@ -12,7 +12,7 @@ xsens_mti_node:
     frame_id: "imu_link"
 
     # Output rate
-    enable_deviceConfig: true      # 2026-05-30: TRUE for ONE boot to flash the new GNSS_LeverArm (0.74 m) to the MTi. REVERT to false after a successful launch so it stops re-flashing every boot.
+    enable_deviceConfig: false     # 2026-05-30: GNSS_LeverArm (0.74 m) already flashed (nav ran clean to wp 5004). Back to false so it stops re-flashing the MTi firmware every boot. Set true ONCE only when changing a flashed device param (lever arm, filter profile).
     output_data_rate: 100          # Hz
 
     # Publishers
