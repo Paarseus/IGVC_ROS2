@@ -26,7 +26,7 @@
     # output (635 lane px stable, zero asphalt false-positives) with the same
     # tape coverage. Inverted-asphalt approach is more robust to bright-paint
     # variation. See SESSION_FINAL.md PM section for the iteration log.
-    pipeline: 'sooner25'
+    pipeline: 'hsv'   # 2026-05-31: sooner25->hsv for a field HSV-tuning session (user request). lane_low/lane_high are live-tunable via ros2 param set; commit final values after tuning. Revert to sooner25 if HSV can't beat the bright-asphalt false-positives it had before.
 
     # message_filters ApproximateTimeSynchronizer
     sync_slop: 0.02        # seconds; ZED sensors_image_sync:=true keeps pairs tight
