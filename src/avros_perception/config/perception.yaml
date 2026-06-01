@@ -141,7 +141,7 @@
     # sits AT the lane-band height is removed by adaptive_max_sat instead
     # (ROI can't separate a barrel from the far end of a line — same height).
     # 0.40 cannot clip near/mid lanes (they sit lower, 0.46-1.0).
-    sky_roi_poly: [0.0, 0.0,  1.0, 0.0,  1.0, 0.70,  0.0, 0.70]   # 2026-06-01: 0.40 -> 0.70. Mask top 70% (keep near-field bottom 30% only) — cuts horizon/mid-field noise.
+    sky_roi_poly: [0.0, 0.0,  1.0, 0.0,  1.0, 0.60,  0.0, 0.60]   # 2026-06-01: 0.70 -> 0.60. Mask top 60% (keep near-field bottom 40%) — was 0.70; reduced to recover a bit more mid-field lane.
 
     # -------- Sooner Robotics 2025 pipeline (selected via pipeline:='sooner25')
     # Copy-pasted from autonav_software_2025/transformations.py.
