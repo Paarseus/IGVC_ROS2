@@ -190,9 +190,12 @@ def generate_launch_description():
         ),
 
         DeclareLaunchArgument(
-            'enable_mission_manager', default_value='false',
+            'enable_mission_manager', default_value='true',
             description='Enable mission_manager waypoint orchestrator '
-                        '(drives the BT through waypoints.yaml — robot will move)'
+                        '(drives the BT through waypoints.yaml — robot will move). '
+                        'DEFAULT ON (2026-06-01): a bare navigation.launch.py '
+                        'AUTO-STARTS the waypoint mission ~20 s after launch. '
+                        'Disable for bench/no-drive testing: enable_mission_manager:=false'
         ),
 
         # Localization (sensors + EKF + navsat)
@@ -279,10 +282,12 @@ def generate_launch_description():
             output='screen',
         ),
 
-        # mission_manager — gated off by default so a bare `ros2 launch ...`
-        # doesn't auto-drive the robot. Enable with enable_mission_manager:=true
-        # for a real run; the orchestrator owns the waypoint cursor and feeds
-        # NavigateToPose goals to the BT.
+        # mission_manager — DEFAULT ON (2026-06-01). A bare `ros2 launch ...`
+        # AUTO-STARTS the waypoint mission ~20 s after launch — THE ROBOT WILL
+        # DRIVE through waypoints.yaml. Disable for bench/no-drive testing with
+        # enable_mission_manager:=false. The orchestrator owns the waypoint
+        # cursor and feeds NavigateToPose goals to the BT (skip-on-failure: an
+        # ABORTED/CANCELED waypoint is logged and skipped, not retried).
         #
         # Wrapped in a 20 s TimerAction. Two concurrent races otherwise fire:
         #   (1) navsat_transform advertises /fromLL before its datum is fully
