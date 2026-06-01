@@ -33,7 +33,8 @@ morphology, so the single clean line component survives while 4-7px
 asphalt-texture specks are dropped.
 
 Single output class — the whole mask maps to class_id_lane (1), identical
-kiwicampus / Nav2 contract to sooner25.py.
+kiwicampus / Nav2 contract to sooner25.py: a mono8 class-ID mask + a uint8
+confidence plane, same HxW as the input, with the sky/horizon ROI zeroed last.
 """
 
 import cv2
@@ -50,7 +51,15 @@ class AdaptivePipeline(Pipeline):
     HxW as the input, with the sky/horizon ROI zeroed last.
     """
 
+    # NOTE (DRY): _reshape_poly + _roi_polygon_px are byte-identical across
+    # adaptive.py, sooner25.py, and hsv.py. The standard fix is to hoist them
+    # once into the Pipeline base class (base.py, alongside warmup) and have all
+    # three call self._roi_polygon_px. That edit spans two files, so it is left
+    # to the base-class refactor; the logic itself is correct and load-bearing
+    # (the sky/horizon ROI is non-negotiable and zeroed LAST — see run()).
+
     def _reshape_poly(self, seq):
+        """Flat [x0,y0,x1,y1,...] normalized list -> [(x0,y0),(x1,y1),...]."""
         if not seq:
             return []
         if len(seq) % 2 != 0:
@@ -60,10 +69,13 @@ class AdaptivePipeline(Pipeline):
         return [(float(seq[i]), float(seq[i + 1])) for i in range(0, len(seq), 2)]
 
     def _roi_polygon_px(self, h, w):
-        """Same sky_roi_poly handling as the sooner25 / legacy HSV pipeline."""
+        """sky_roi_poly (normalized) -> int32 pixel polygon, or None if empty.
+
+        Default mirrors the field-tuned perception.yaml value (top 40% zeroed).
+        """
         raw_poly = self.params.get(
             'sky_roi_poly',
-            [0.0, 0.0, 1.0, 0.0, 1.0, 0.35, 0.0, 0.35],
+            [0.0, 0.0, 1.0, 0.0, 1.0, 0.40, 0.0, 0.40],
         )
         poly_norm = self._reshape_poly(raw_poly)
         if not poly_norm:
@@ -77,42 +89,54 @@ class AdaptivePipeline(Pipeline):
         if bgr.ndim != 3 or bgr.shape[2] != 3:
             raise ValueError(f'AdaptivePipeline expects HxWx3 BGR; got {bgr.shape}')
 
-        # Live-tunable params (re-read every frame, same pattern as sooner25.py).
+        # ---- Live-tunable params (re-read every frame, same pattern as sooner25).
+        # In-code defaults match the field-tuned perception.yaml so a YAML-less
+        # launch matches the known-good field config.
         block = int(self.params.get('adaptive_block_size', 21))
-        # MANDATORY odd-coercion: cv2.adaptiveThreshold RAISES on an even
-        # blockSize (thresh.cpp:1909). IntegerRange(step=2) only constrains rqt
-        # sliders, NOT a raw `ros2 param set adaptive_block_size 20`, so this
-        # guard is load-bearing — without it one bad set kills all perception.
-        bs = block if block % 2 == 1 else block + 1
-        if bs < 3:
-            bs = 3
         C = float(self.params.get('adaptive_C', -8.0))
-        min_area = int(self.params.get('adaptive_min_area', 15))
+        min_area = int(self.params.get('adaptive_min_area', 80))
         use_open = bool(self.params.get('adaptive_use_open', False))
         channel = str(self.params.get('adaptive_channel', 'L'))
         class_id_lane = int(self.params.get('class_id_lane', 1))
-        # Low-saturation gate (white-paint prior) + tunable pre-blur kernel.
-        max_sat = int(self.params.get('adaptive_max_sat', 255))
-        blur = int(self.params.get('adaptive_blur', 3))
-        bk = blur if blur % 2 == 1 else blur + 1   # GaussianBlur needs odd k
-        if bk < 1:
-            bk = 1
+        max_sat = int(self.params.get('adaptive_max_sat', 70))
+        blur = int(self.params.get('adaptive_blur', 9))
 
-        # Single 8-bit lighting-stable channel. adaptiveThreshold REQUIRES an
-        # 8-bit single-channel image — passing the 3ch image RAISES
-        # (thresh.cpp:1908). HLS-L is the default; 'V' (HSV-Value) and 'gray'
-        # are near-identical here (CV 0.029-0.031), selectable via param.
+        # MANDATORY odd-coercion (load-bearing, verified on cv2 4.13.0):
+        # cv2.adaptiveThreshold RAISES on an even blockSize (thresh.cpp:1909) and
+        # cv2.GaussianBlur RAISES on an even kernel. The rqt IntegerRange(step=2)
+        # only constrains sliders, NOT a raw `ros2 param set adaptive_block_size
+        # 20`, so without these guards one bad set stalls _on_synced and kills
+        # ALL perception. Lower bounds (block<3, blur<1) are also reachable via
+        # raw set, hence the floor clamps.
+        bs = block if block % 2 == 1 else block + 1
+        bs = max(bs, 3)
+        bk = blur if blur % 2 == 1 else blur + 1
+        bk = max(bk, 1)
+
+        # ---- Single 8-bit lighting-stable channel + (optional) saturation plane.
+        # adaptiveThreshold REQUIRES an 8-bit single-channel image — passing the
+        # 3ch image RAISES (thresh.cpp:1908). HLS-L is the default; 'V'
+        # (HSV-Value) and 'gray' are near-identical here (CV 0.029-0.031).
+        #
+        # The low-saturation gate (below) needs HLS-S. When channel == 'L' we do
+        # ONE BGR2HLS and slice both L (idx 1) and S (idx 2) — verified
+        # byte-identical to two separate conversions on cv2 4.13.0, so the old
+        # double-convert was pure dead work. The 'V'/'gray' paths use a different
+        # colorspace, so they take their own BGR2HLS only if the sat gate is on.
+        sat = None
         if channel == 'gray':
             chan = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
         elif channel == 'V':
             chan = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)[:, :, 2]
         else:  # 'L' (HLS-Lightness) — default
-            chan = cv2.cvtColor(bgr, cv2.COLOR_BGR2HLS)[:, :, 1]
+            hls = cv2.cvtColor(bgr, cv2.COLOR_BGR2HLS)
+            chan = hls[:, :, 1]
+            sat = hls[:, :, 2]   # reuse — no second conversion
 
         # Gaussian de-speckle (kernel = adaptive_blur, odd-coerced). A larger
-        # kernel low-passes high-frequency asphalt-aggregate texture (which
-        # otherwise speckles past min_area at full res) while the wider painted
-        # line survives. Default 3 (light); 5 is the field-tuned value.
+        # kernel low-passes the 1-3px asphalt-aggregate spikes (which otherwise
+        # out-contrast the faint paint and speckle past min_area) while the wider
+        # painted line survives. Default 9 is the field-tuned value.
         chan = cv2.GaussianBlur(chan, (bk, bk), 0)
 
         # Local Gaussian adaptive threshold. THRESH_BINARY + C<0 marks pixels
@@ -124,38 +148,38 @@ class AdaptivePipeline(Pipeline):
             bs, C,
         )
 
-        # Low-saturation (white-paint) gate. White lane paint is near-grey
+        # ---- Low-saturation (white-paint) gate. White lane paint is near-grey
         # (low HLS saturation); colored clutter — orange barrels, tan pillar,
-        # green grass — is high-S. Dropping high-S pixels removes that clutter
-        # while keeping paint, regardless of where it sits in the frame (ROI
-        # can't separate barrels from the far line — they're the same height).
-        # 255 disables. Field-added 2026-05-31; see docs offline tuning.
+        # green grass, tents — is high-S and sits AT lane-band height where the
+        # ROI cannot separate it from the far line. Dropping high-S pixels
+        # removes that clutter while keeping near-grey paint. 255 disables.
         if max_sat < 255:
-            sat = cv2.cvtColor(bgr, cv2.COLOR_BGR2HLS)[:, :, 2]
+            if sat is None:  # 'V'/'gray' channels didn't compute HLS-S yet
+                sat = cv2.cvtColor(bgr, cv2.COLOR_BGR2HLS)[:, :, 2]
             raw[sat > max_sat] = 0
 
-        # Optional MORPH_OPEN — OFF by default (open erases marginal thin lines:
-        # verified line comp 114px -> 17px). Enable only for a rougher surface
-        # that speckles past min_area.
+        # ---- Optional MORPH_OPEN — OFF by default (open erases marginal thin
+        # lines: verified line comp 114px -> 17px). A guarded escape hatch for a
+        # rougher surface that speckles past min_area; zero cost when off.
         if use_open:
             kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
             raw = cv2.morphologyEx(raw, cv2.MORPH_OPEN, kernel)
 
-        # Connected-component speckle filter: keep only components whose area
-        # >= min_area; drop everything smaller (4-7px asphalt-texture specks).
+        # ---- Connected-component speckle filter, mapped straight to class IDs.
+        # Keep only components with area >= min_area, writing class_id_lane
+        # directly into the mask (no intermediate binary array). The Python loop
+        # is intentional and measured FASTER than the np.where(keep[labels])
+        # vectorization (it short-circuits on the few surviving large comps and
+        # only writes their pixels, rather than fancy-indexing the whole frame).
         n, labels, stats, _ = cv2.connectedComponentsWithStats(raw, 8)
         h, w = raw.shape[:2]
-        clean = np.zeros((h, w), dtype=np.uint8)
+        mask = np.zeros((h, w), dtype=np.uint8)
         for i in range(1, n):  # skip label 0 (background)
             if stats[i, cv2.CC_STAT_AREA] >= min_area:
-                clean[labels == i] = 255
+                mask[labels == i] = class_id_lane
 
-        # Map binary -> class IDs for kiwicampus (single 'danger' class).
-        mask = np.zeros((h, w), dtype=np.uint8)
-        mask[clean > 0] = class_id_lane
-
-        # Sky / out-of-interest ROI zeroed LAST (background tents/cones are
-        # V255 — the ROI is non-negotiable). Identical to sooner25.
+        # ---- Sky / out-of-interest ROI zeroed LAST (background tents/cones are
+        # bright — the ROI is non-negotiable and must run after detection).
         poly = self._roi_polygon_px(h, w)
         if poly is not None:
             cv2.fillPoly(mask, [poly], 0)
