@@ -40,31 +40,40 @@ def generate_launch_description():
     cyclonedds_file = os.path.join(pkg_dir, 'config', 'cyclonedds.xml')
     waypoints_file = os.path.join(pkg_dir, 'config', 'waypoints.yaml')
 
-    # Select distro-specific config (params + default BT XML)
+    # Select distro-specific config (params + default BT XML). These are the
+    # DEFAULTS for the nav2_params / bt_xml launch args below; both are FILENAMES
+    # relative to config/, so either can be overridden at launch without editing
+    # this file.
     ros_distro = os.environ.get('ROS_DISTRO', 'humble')
     if ros_distro == 'humble':
-        nav2_config = os.path.join(pkg_dir, 'config', 'nav2_params_humble.yaml')
-        # 2026-05-21: default to the recovery BT (clear-costmap/wait/back-up/crawl
-        # + 45 s watchdog) — validated in lidar obstacle-avoidance testing. The
-        # old simple BT aborted on the FIRST planner failure (no recoveries); the
-        # recovery BT replans through transient failures. See
-        # docs/lidar_obstacle_avoidance_test_2026_05_21.md. Override with
-        # bt_xml:=navigate_to_pose_simple_humble.xml for clean-signal debugging.
-        default_bt = 'navigate_igvc_autonav_humble.xml'
+        # 2026-06-01: DEFAULT is now the IGVC AutoNav COMPETITION pair (the freeze
+        # fix — inflation gradient restored to 0.85/0.65, prompt recovery, 45 s
+        # watchdog / 4 retries). The competition params + BT are a MATCHED PAIR and
+        # default together. To fall back to the field-test pair (no DQ clock — wider
+        # 120 s Timeout, thin 0.4 inflation), launch with BOTH:
+        #   nav2_params:=nav2_params_humble.yaml bt_xml:=navigate_igvc_autonav_humble.xml
+        # See docs/igvc_autonav_tuning_2026_06_01.md.
+        default_nav2_params = 'nav2_params_igvc_autonav.yaml'
+        default_bt = 'navigate_igvc_autonav_2026.xml'
     else:
-        nav2_config = os.path.join(pkg_dir, 'config', 'nav2_params.yaml')
+        default_nav2_params = 'nav2_params.yaml'
         default_bt = 'navigate_route_graph.xml'
 
     use_sim_time = LaunchConfiguration('use_sim_time')
-    # bt_xml is the FILENAME (relative to config/), not the full path. Lets you
-    # swap between e.g. 'navigate_route_graph_humble.xml' (default — graph-based
-    # routing) and 'navigate_to_pose_simple_humble.xml' (ComputePathToPose-based
-    # for arbitrary-goal testing) without editing the launch file.
+    # bt_xml / nav2_params are FILENAMES (relative to config/), not full paths.
+    # Lets you swap configs without editing this file. The IGVC competition pair
+    # MUST be selected together:
+    #   ros2 launch avros_bringup navigation.launch.py \
+    #       nav2_params:=nav2_params_igvc_autonav.yaml \
+    #       bt_xml:=navigate_igvc_autonav_2026.xml
     bt_xml_filename = LaunchConfiguration('bt_xml')
+    nav2_params_filename = LaunchConfiguration('nav2_params')
 
-    # Rewrite nav2 params with resolved paths and use_sim_time
+    # Rewrite nav2 params with resolved paths and use_sim_time. source_file is a
+    # substitution list ([pkg]/config/<nav2_params>) so the params file is
+    # selectable at launch time (RewrittenYaml normalizes the list internally).
     configured_params = RewrittenYaml(
-        source_file=nav2_config,
+        source_file=[pkg_dir, '/config/', nav2_params_filename],
         param_rewrites={
             'use_sim_time': use_sim_time,
             'default_nav_to_pose_bt_xml': [pkg_dir, '/config/', bt_xml_filename],
@@ -124,11 +133,20 @@ def generate_launch_description():
 
         DeclareLaunchArgument(
             'bt_xml', default_value=default_bt,
-            description='Behavior tree XML filename (in config/ dir). '
-                        'Default (humble) is navigate_to_pose_simple_humble.xml '
-                        '(ComputePathToPose-based, arbitrary goals). '
-                        'Pass navigate_route_graph_humble.xml to route via '
-                        'cpp_campus_graph instead.'
+            description='Behavior tree XML filename (in config/ dir). Default '
+                        '(humble) is now navigate_igvc_autonav_2026.xml (IGVC '
+                        'COMPETITION BT). Pass navigate_igvc_autonav_humble.xml '
+                        'for the field-test BT (use WITH '
+                        'nav2_params:=nav2_params_humble.yaml — matched pair).'
+        ),
+
+        DeclareLaunchArgument(
+            'nav2_params', default_value=default_nav2_params,
+            description='Nav2 params YAML filename (in config/ dir). Default '
+                        '(humble) is now nav2_params_igvc_autonav.yaml (IGVC '
+                        'COMPETITION config). Pass nav2_params_humble.yaml for '
+                        'the field-test config (use WITH '
+                        'bt_xml:=navigate_igvc_autonav_humble.xml — matched pair).'
         ),
 
         DeclareLaunchArgument(
