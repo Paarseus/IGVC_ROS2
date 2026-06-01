@@ -65,6 +65,11 @@ _PIPELINE_PARAM_NAMES = (
     'adaptive_block_size', 'adaptive_C', 'adaptive_channel',
     'adaptive_min_area', 'adaptive_use_open',
     'adaptive_max_sat', 'adaptive_blur',
+    # yolopv2 (ONNX) pipeline params — model_path/providers/threads/fp16 take
+    # effect at warmup; lane_thresh/min_area/pre_resize are re-read every frame.
+    'yolopv2_model_path', 'yolopv2_providers', 'yolopv2_lane_thresh',
+    'yolopv2_min_area', 'yolopv2_pre_resize', 'yolopv2_fp16',
+    'yolopv2_intra_op_threads', 'yolopv2_trt_cache',
 )
 
 _HSV_BOUND_NAMES = frozenset((
@@ -204,6 +209,45 @@ class PerceptionNode(Node):
             ),
         )
         self.declare_parameter('process_at_full_res', False)
+
+        # -------- YOLOPv2 (ONNX) pipeline params --------
+        # Learned lane-line segmentation (pipeline:='yolopv2'). The model is the
+        # YOLOPv2 lane head exported to ONNX (1x3x384x640 -> 1x1x384x640). Build
+        # it with scripts/fetch_yolopv2_model.py and point yolopv2_model_path at
+        # the .onnx (or set $YOLOPV2_ONNX_PATH). See pipelines/yolopv2.py and
+        # docs/cv_yolopv2_2026_06_01/.
+        self.declare_parameter('yolopv2_model_path', '')
+        # ExecutionProvider preference order; filtered against what ORT actually
+        # has. On the Jetson install onnxruntime-gpu (Jetson-Zoo/NVIDIA wheel) so
+        # TensorRT/CUDA are available; on a CPU-only box it degrades to CPU.
+        self.declare_parameter(
+            'yolopv2_providers',
+            ['TensorrtExecutionProvider', 'CUDAExecutionProvider',
+             'CPUExecutionProvider'],
+        )
+        self.declare_parameter(
+            'yolopv2_lane_thresh', 0.5,
+            ParameterDescriptor(
+                description='Lane sigmoid threshold (official demo uses 0.5 via '
+                            'round). Lower => more recall on faint lines.',
+                floating_point_range=[FloatingPointRange(
+                    from_value=0.0, to_value=1.0, step=0.0)],
+            ),
+        )
+        self.declare_parameter(
+            'yolopv2_min_area', 0,
+            ParameterDescriptor(
+                description='Drop lane connected-components smaller than this '
+                            'many px. 0 disables (the net output is already clean).',
+                integer_range=[IntegerRange(from_value=0, to_value=2000, step=1)],
+            ),
+        )
+        # Demo-faithful pre-resize to BDD framing before letterbox. [1280, 720]
+        # matches demo.py; set [] to letterbox the native frame directly.
+        self.declare_parameter('yolopv2_pre_resize', [1280, 720])
+        self.declare_parameter('yolopv2_fp16', True)
+        self.declare_parameter('yolopv2_intra_op_threads', 1)
+        self.declare_parameter('yolopv2_trt_cache', '~/.cache/yolopv2_trt')
 
         cam = self.get_parameter('camera_name').value
         # zed-ros2-wrapper v5.x topic names:

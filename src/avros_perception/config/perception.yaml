@@ -198,3 +198,28 @@
     adaptive_max_sat: 70       # 2026-05-31 NEW. Drop HLS-S>70 detections:
                                # white paint is low-S, colored clutter is high-S.
                                # 255 disables.
+
+    # -------- YOLOPv2 (learned ONNX) pipeline (pipeline:='yolopv2') --------
+    # YOLOPv2 lane-line segmentation head (CAIC-AD/YOLOPv2, MIT), exported to
+    # ONNX (images 1x3x384x640 -> lane 1x1x384x640 sigmoid). See
+    # pipelines/yolopv2.py + docs/cv_yolopv2_2026_06_01/ for the validation
+    # (zero-shot traces continuous IGVC tape cleanly; misses short isolated
+    # stubs). To use it: set `pipeline: 'yolopv2'` above, build the model with
+    #   python3 scripts/fetch_yolopv2_model.py --out ~/yolopv2_lane_384x640.onnx
+    # (needs torch+onnx on a build box; copy the .onnx to the Jetson), then set
+    # yolopv2_model_path. RECOMMENDED with process_at_full_res: true (the model
+    # letterboxes internally; full-res input -> cleaner NEAREST downsample).
+    #
+    # On the Jetson, install onnxruntime-gpu (Jetson-Zoo/NVIDIA wheel — stock
+    # `pip install onnxruntime-gpu` often ships CPU/Azure EP only). Verify:
+    #   python3 -c "import onnxruntime as o; print(o.get_available_providers())"
+    # must list CUDAExecutionProvider / TensorrtExecutionProvider.
+    yolopv2_model_path: ''     # '' -> $YOLOPV2_ONNX_PATH -> ~/yolopv2_lane_384x640.onnx
+    yolopv2_providers: ['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']
+    yolopv2_lane_thresh: 0.5   # sigmoid threshold (demo default); lower => more recall on faint lines
+    yolopv2_min_area: 0        # drop lane components < N px; 0 = off (net output is clean)
+    yolopv2_pre_resize: [1280, 720]   # demo-faithful BDD framing before letterbox; [] = native
+    yolopv2_fp16: true         # TensorRT FP16 (Jetson); ignored by CPU EP
+    yolopv2_intra_op_threads: 1  # cap CPU pre/post threads (inter_op also pinned to 1 in code)
+                                 # so MPPI's 20 Hz loop is not starved on the saturated Orin
+    yolopv2_trt_cache: '~/.cache/yolopv2_trt'   # TensorRT engine cache (first build is slow)

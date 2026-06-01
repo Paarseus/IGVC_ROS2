@@ -9,6 +9,11 @@ src/xsens_mti/
 src/zed-ros2-wrapper/
 src/semantic_segmentation_layer/
 
+# Model weights — never commit (156 MB+). Built by scripts/fetch_yolopv2_model.py
+# and kept out of the tree; the pipeline finds them via yolopv2_model_path / env.
+*.onnx
+*.pt
+
 # Claude Code working dirs
 .claude/
 .playwright-mcp/
