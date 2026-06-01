@@ -125,7 +125,7 @@ controller_server:
       # MPPI believes-in-but-cannot-execute, which hurts tracking.
       # Raise to 1.5 after bench-fixing kOutputMax via REV Hardware Client.
       vx_max: 0.7             # IGVC-AUTONAV 2026-06-01: KEEP the field-VALIDATED Jetson-live 0.7 m/s (1.57 mph), NOT the laptop-committed 1.5 (which was never deployed — reverted to 0.7 uncommitted). 0.7 still clears the IGVC 1 mph (0.447 m/s) average DQ floor with the freeze fixed, and the freeze fix is the real win; do NOT chase top-speed score until an asphalt speed test validates higher. vx_min stays -0.6. prune_distance 5.0 >> reach@0.7 (0.7*2.8=1.96 m) so cruise is NOT prune-pinned. To go faster post-validation: raise here (configure-time -> restart). Chassis can deliver ~1.5 (measured ~1.69) on better traction; accel ramp-limited by actuator 0.3 m/s² brown-out cap regardless.
-      vx_min: -0.6            # 2026-05-30: -0.4->-0.6 (scale reverse with vx_max)
+      vx_min: 0.0             # 2026-06-01: -0.6->0.0 — FORBID cruise reverse. The robot drove straight BACKWARD ~10 s toward a behind-goal; PreferForwardCritic (weight 5) alone did NOT prevent it, so this is a hard forward-only cruise limit. Stuck-backout is still available via the recovery BackUp behavior (0.25 m last-resort, separate from cruise). Does NOT stop an in-place turn-around to a behind-goal — keep waypoints AHEAD (place robot facing down-course).
       vy_max: 0.5             # not used on diff-drive but required field
       # wz_max: actuator clamps angular at max_angular_rps=1.5 (raised from
       # 1.0 on 2026-05-12); grass slip caps achievable ω at ~0.7 rad/s peak.
