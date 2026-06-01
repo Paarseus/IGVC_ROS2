@@ -389,7 +389,7 @@ local_costmap:
           labels_topic: /perception/front/label_info
           max_obstacle_distance: 5.0
           min_obstacle_distance: 0.3
-          tile_map_decay_time: 1.5
+          tile_map_decay_time: 1000000.0   # 2026-06-01: decay REMOVED — lanes persist (no flicker) within the rolling window; whole-course persistence is on the global semantic_layer below
           observation_persistence: 0.0
           # DESIGN CHOICE (2026-05-29): kept true (real-time raytrace clearing) -> cmd_vel ~13-16 Hz.
           # false (decay-only) buys ~20 Hz but drops the clearing pass; chose full behavior at a healthy
@@ -429,7 +429,7 @@ local_costmap:
           labels_topic: /perception/left/label_info
           max_obstacle_distance: 5.0
           min_obstacle_distance: 0.3
-          tile_map_decay_time: 1.5
+          tile_map_decay_time: 1000000.0   # 2026-06-01: decay REMOVED — lanes persist (no flicker) within the rolling window; whole-course persistence is on the global semantic_layer below
           observation_persistence: 0.0
           clearing: true
           raytrace_max_range: 8.0
@@ -466,7 +466,7 @@ local_costmap:
           labels_topic: /perception/right/label_info
           max_obstacle_distance: 5.0
           min_obstacle_distance: 0.3
-          tile_map_decay_time: 1.5
+          tile_map_decay_time: 1000000.0   # 2026-06-01: decay REMOVED — lanes persist (no flicker) within the rolling window; whole-course persistence is on the global semantic_layer below
           observation_persistence: 0.0
           clearing: true
           raytrace_max_range: 8.0
@@ -537,17 +537,20 @@ global_costmap:
       robot_radius: 0.914
       footprint: "[[0.8128,0.415],[0.8128,-0.415],[-0.2794,-0.415],[-0.2794,0.415]]"   # 2026-05-30: r=0.914 circle -> MEASURED chassis rectangle (base_link=IMU: front +0.8128 (32"), rear -0.2794 (11"), full width 0.83). The oversized circle (inscribed 0.896 ~= inflation) collapsed the MPPI gradient to a ~0.1m cliff + boxed escapes -> freeze (RCA docs/obstacle_stall_rca_2026_05_30.md; bag counterfactual at the freeze pose: rect 45 vs circle 19 collision-free fwd rollouts). Rect inscribed=0.2794m -> real gradient at inflation 1.0(local)/0.65(global) AND clears the global inflation<inscribed ERROR. Covers the real tracks (no clipping). robot_radius above is now IGNORED (footprint polygon takes precedence).
       track_unknown_space: false
-      # 2026-05-12: semantic_layer intentionally REMOVED from global_costmap.
-      # Rationale: painted-lane perception (camera, short range, no raytrace
-      # clearing, sensitive to map→odom drift) smears in the global costmap
-      # under unaided GPS. Matches TnTech IGVC 2026 + SoonerRobotics 2024+2025
-      # pattern: painted lanes live only in the LOCAL costmap (odom frame),
-      # MPPI handles all lane avoidance via its 3m planning horizon. Geometric
-      # 3D obstacles (LiDAR / Velodyne) continue to live in BOTH costmaps via
-      # obstacle_layer below — they have long range, raytrace clearing, and
-      # stable TF chains that justify routing-level awareness. The semantic_layer:
-      # block below is retained but DISABLED so the config is easy to revert.
-      plugins: ["stvl_layer", "inflation_layer"]
+      # 2026-06-01: semantic_layer RE-ENABLED on the global costmap to PERSIST
+      # detected lanes across the course ("everything stays in the map as we go
+      # forward"). The 2026-05-12 removal was due to map->odom GPS-drift SMEAR
+      # under unaided SBAS GPS; with RTK FIXED (GPS status 2, global_frame=map
+      # restored 2026-05-30) the map frame is cm-stable, so persisted lanes no
+      # longer smear. Decay is REMOVED on the semantic_layer below
+      # (tile_map_decay_time huge) so passed/out-of-view lanes accumulate;
+      # clearing:true keeps in-view cells honest. The 100 m rolling window covers
+      # the ~37 m course. REVERT: drop "semantic_layer" from this list + set its
+      # enabled:false + restore tile_map_decay_time:0.3. RISK: if RTK drops to
+      # FLOAT/no-fix, persisted lanes WILL smear and can box the planner -> revert
+      # or RTK-gate. Accumulated false-positives don't decay (precision-biased
+      # sooner25 keeps this low).
+      plugins: ["stvl_layer", "semantic_layer", "inflation_layer"]
 
       # 2026-05-19 (L6 fix): was nav2_costmap_2d::ObstacleLayer (raytrace-only,
       # no decay). Swapped to STVL to mirror the local costmap's time-decay so
@@ -585,13 +588,12 @@ global_costmap:
           decay_acceleration: 0.5       # IGVC-AUTONAV 2026-06-01: adopt Jetson-LIVE 0.5 (match local; barrel persistence while maneuvering). [prior 2.0:] 2026-05-21: 10->5; 2026-05-27: 5->2 (further anti-flicker, see local comment)
           clear_after_reading: true
 
-      # Mirror of local_costmap.semantic_layer — RETAINED BUT NOT IN PLUGINS LIST
-      # as of 2026-05-12 (see plugins-list comment above for full rationale).
-      # The block is left below for documentation + easy revert (just add back
-      # "semantic_layer" to the plugins list above).
+      # 2026-06-01: ENABLED and added to the plugins list above to PERSIST lanes
+      # in the global map (decay removed below). Mirror of
+      # local_costmap.semantic_layer. Set enabled:false + remove from plugins to revert.
       semantic_layer:
         plugin: "semantic_segmentation_layer::SemanticSegmentationLayer"
-        enabled: false
+        enabled: true
         observation_sources: front
         front:
           segmentation_topic: /perception/front/semantic_mask
@@ -600,13 +602,11 @@ global_costmap:
           labels_topic: /perception/front/label_info
           max_obstacle_distance: 5.0
           min_obstacle_distance: 0.3
-          # 2026-05-11 PM: dropped from 1.5 -> 0.5 + raytrace 8 -> 30 so
-          # drift-leftover cells in the map frame clear faster. SBAS GPS
-          # drifts ~30 cm per fix, so each observation lands at a fresh
-          # map-frame position; old cells stayed lethal for 1.5 s and
-          # accumulated into phantom blobs. Shorter decay + wider raytrace
-          # range catches stale cells via the new observation's clearing ray.
-          tile_map_decay_time: 0.3
+          # 2026-06-01: decay REMOVED (huge) so lanes PERSIST in the global map
+          # as the robot drives. The prior 0.3 was to evaporate SBAS GPS-drift
+          # smear (~30 cm/fix); with RTK FIXED the map is cm-stable so no smear
+          # to clear. clearing:true + raytrace still corrects in-view cells.
+          tile_map_decay_time: 1000000.0
           observation_persistence: 0.0
           clearing: true
           raytrace_max_range: 30.0
