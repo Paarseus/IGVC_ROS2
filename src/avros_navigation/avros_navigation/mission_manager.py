@@ -23,19 +23,8 @@ from nav_msgs.msg import Odometry
 from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionClient
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy, HistoryPolicy
 from robot_localization.srv import FromLL
-from std_msgs.msg import Bool
 
-
-# Latched QoS for /autonomous_mode so actuator_node picks up the current state
-# even if it (re)starts mid-mission. Must match the subscriber in actuator_node.
-LATCHED_QOS = QoSProfile(
-    depth=1,
-    reliability=ReliabilityPolicy.RELIABLE,
-    durability=DurabilityPolicy.TRANSIENT_LOCAL,
-    history=HistoryPolicy.KEEP_LAST,
-)
 
 FROMLL_WAIT_TIMEOUT_S = 30.0
 FROMLL_CALL_TIMEOUT_S = 5.0
@@ -68,14 +57,12 @@ class MissionManager(Node):
         self._fromll_client = self.create_client(FromLL, '/fromLL')
         self._map_waypoints: List[Point] = self._convert_to_map_frame(self._ll_waypoints)
 
-        # IGVC §I.2 safety light: flag the vehicle as autonomous for the whole
-        # mission (first goal accepted -> mission complete), latched so a
-        # restarted actuator_node re-syncs. Published once on each transition,
-        # not per-waypoint, so the light never flickers between goals.
-        self._auto_pub = self.create_publisher(Bool, '/autonomous_mode', LATCHED_QOS)
-        self._autonomous = None
-        self._set_autonomous(False)
-
+        # IGVC §I.2 safety light is NOT driven here anymore. The always-on
+        # autonomy_monitor node derives /autonomous_mode from the NavigateToPose
+        # action-server status, so the light flashes for ANY goal source —
+        # including the manual odom-frame goals mission_manager never sees. A
+        # second publisher here would race it on the latched topic. See
+        # avros_navigation/autonomy_monitor.py.
         self._nav_client = ActionClient(self, NavigateToPose, '/navigate_to_pose')
         self._goal_handle = None
         self._cursor = 0
@@ -151,16 +138,6 @@ class MissionManager(Node):
             )
         return out
 
-    def _set_autonomous(self, val: bool) -> None:
-        """Publish the §I.2 autonomy flag, but only on an actual change."""
-        if val == self._autonomous:
-            return
-        self._autonomous = val
-        self._auto_pub.publish(Bool(data=val))
-        self.get_logger().info(
-            f'autonomous_mode -> {val} (safety light {"FLASH" if val else "SOLID"})'
-        )
-
     def _send_goal(self, index: int) -> None:
         point = self._map_waypoints[index]
         goal_msg = NavigateToPose.Goal()
@@ -181,7 +158,6 @@ class MissionManager(Node):
             self._goal_handle = None
             return
         self.get_logger().info(f'wp{index} accepted by /navigate_to_pose')
-        self._set_autonomous(True)   # navigating -> flash the safety light
         self._goal_handle = goal_handle
         goal_handle.get_result_async().add_done_callback(
             lambda f: self._on_result(f, index)
@@ -228,7 +204,6 @@ class MissionManager(Node):
         self.get_logger().info(
             f'all {len(self._map_waypoints)} waypoints reached — mission complete ({reason})'
         )
-        self._set_autonomous(False)   # out of autonomous -> safety light solid
         if self._proximity_timer is not None:
             self._proximity_timer.cancel()
             self._proximity_timer = None
@@ -237,15 +212,6 @@ class MissionManager(Node):
 
     def _on_done_heartbeat(self) -> None:
         self.get_logger().info('mission complete — idling')
-
-    def destroy_node(self) -> None:
-        # Best-effort: dropping out of autonomous on shutdown -> light solid.
-        # (Judges' e-stop also forces A0 at the actuator, so this is belt-and-braces.)
-        try:
-            self._set_autonomous(False)
-        except Exception:
-            pass
-        super().destroy_node()
 
     def _on_odom(self, msg: Odometry) -> None:
         self._latest_robot_xy = (msg.pose.pose.position.x, msg.pose.pose.position.y)

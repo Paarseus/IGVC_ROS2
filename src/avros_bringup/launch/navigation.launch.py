@@ -244,6 +244,23 @@ def generate_launch_description():
             output='screen',
         ),
 
+        # autonomy_monitor — ALWAYS ON. Drives the IGVC §I.2 safety light by
+        # watching the NavigateToPose action-server status and publishing the
+        # latched /autonomous_mode flag (FLASH while a goal is active, SOLID
+        # otherwise). Source-agnostic: covers mission_manager, RViz "Nav2 Goal",
+        # and manual CLI goals alike — so the light flashes in autonomous mode
+        # no matter how the goal was sent. Pure observer (no /cmd_vel, no goals),
+        # so it's safe to run unconditionally; it never moves the robot.
+        Node(
+            package='avros_navigation',
+            executable='autonomy_monitor',
+            name='autonomy_monitor',
+            parameters=[{
+                'use_sim_time': use_sim_time,
+            }],
+            output='screen',
+        ),
+
         # mission_manager — gated off by default so a bare `ros2 launch ...`
         # doesn't auto-drive the robot. Enable with enable_mission_manager:=true
         # for a real run; the orchestrator owns the waypoint cursor and feeds

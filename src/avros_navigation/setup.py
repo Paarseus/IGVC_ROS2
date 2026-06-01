@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'mission_manager = avros_navigation.mission_manager:main',
+            'autonomy_monitor = avros_navigation.autonomy_monitor:main',
         ],
     },
 )
