@@ -31,7 +31,7 @@
     # 2.4x, at the same threshold while stationary). 'adaptive' uses a local
     # Gaussian adaptive threshold (exposure-invariant by construction), keeping
     # AE ON. See pipelines/adaptive.py + the adaptive block below.
-    pipeline: 'adaptive'
+    pipeline: 'sooner25'
 
     # message_filters ApproximateTimeSynchronizer
     sync_slop: 0.02        # seconds; ZED sensors_image_sync:=true keeps pairs tight
@@ -162,7 +162,7 @@
     sooner25_lower: [0,   0,   0]
     # 2026-05-28 PM: V_upper 200 -> 215 for IGVC practice course bright
     # asphalt (asphalt p95 V=204). Sample with sample_hsv.py if scene differs.
-    sooner25_upper: [255, 255, 215]
+    sooner25_upper: [255, 255, 195]
     sooner25_blur_weight: 5
     sooner25_blur_iters: 3
 
