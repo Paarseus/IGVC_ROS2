@@ -69,3 +69,10 @@
       publish_mag: false
       publish_baro: false
       publish_temp: false
+
+    # 2026-06-01: exposure lock + line-detection tuning (camera-line-tune-loop: 8 iters -> clean line, 0 FP)
+    video:
+      auto_exposure_gain: false      # lock exposure -> kills AE limit-cycle flicker
+      exposure_time: 180             # us, tuned for line/asphalt contrast (morning daylight). RE-TUNE for midday.
+      analog_gain: 1000              # mDB sensor min (daylight)
+      auto_whitebalance: true        # KEEP auto -> locking WB yellow-tinted the image + gated out the white line
