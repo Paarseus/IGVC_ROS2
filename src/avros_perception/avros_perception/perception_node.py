@@ -61,6 +61,10 @@ _PIPELINE_PARAM_NAMES = (
     # sooner25 pipeline params
     'sooner25_lower', 'sooner25_upper',
     'sooner25_blur_weight', 'sooner25_blur_iters',
+    # sooner25 robustness tuning (2026-06-01): floored-adaptive V-ceiling +
+    # post-detection high-S clutter drop. All re-read every frame.
+    'sooner25_adaptive', 'sooner25_band', 'sooner25_vfloor', 'sooner25_vcap',
+    'sooner25_post_sdrop',
     # adaptive pipeline params
     'adaptive_block_size', 'adaptive_C', 'adaptive_channel',
     'adaptive_min_area', 'adaptive_use_open',
@@ -160,6 +164,37 @@ class PerceptionNode(Node):
         self.declare_parameter('sooner25_upper', [255, 95, 210])
         self.declare_parameter('sooner25_blur_weight', 5)
         self.declare_parameter('sooner25_blur_iters', 3)
+        # sooner25 robustness tuning (2026-06-01) — see
+        # docs/cv_sooner25_tuning_2026_06_01/. 'none' keeps the original fixed
+        # sooner25_upper[V] behaviour; 'p93' / 'mean+2.0sd' enable the per-frame
+        # floored-adaptive V-ceiling. sooner25_post_sdrop=0 disables the high-S
+        # clutter drop. Defaults are the original behaviour (off).
+        self.declare_parameter('sooner25_adaptive', 'none')
+        self.declare_parameter('sooner25_band', [0.40, 1.0])
+        self.declare_parameter(
+            'sooner25_vfloor', 185,
+            ParameterDescriptor(
+                description='Hard floor on the adaptive V-ceiling — keeps shadowed '
+                            'asphalt classed as asphalt (kills the adaptive shadow flood)',
+                integer_range=[IntegerRange(from_value=0, to_value=255, step=1)],
+            ),
+        )
+        self.declare_parameter(
+            'sooner25_vcap', 255,
+            ParameterDescriptor(
+                description='Upper clamp on the adaptive V-ceiling (lets bright '
+                            'scenes raise it fully)',
+                integer_range=[IntegerRange(from_value=0, to_value=255, step=1)],
+            ),
+        )
+        self.declare_parameter(
+            'sooner25_post_sdrop', 0,
+            ParameterDescriptor(
+                description='Drop detected lane px with blurred HSV-S above this '
+                            '(rejects colored clutter: barrels/grass/tents). 0 disables.',
+                integer_range=[IntegerRange(from_value=0, to_value=255, step=1)],
+            ),
+        )
         # Adaptive-threshold pipeline — exposure-invariant local-adaptive
         # threshold on HLS-L (or V/gray). Rides the ZED auto-exposure swing
         # that flickers sooner25's fixed-brightness threshold. See

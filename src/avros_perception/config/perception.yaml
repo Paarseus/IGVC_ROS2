@@ -160,11 +160,31 @@
     #     some specular hot-spots on grass; V=205 caught nothing.
     # Re-tune upper_val per scene — see commented sweep above.
     sooner25_lower: [0,   0,   0]
-    # 2026-05-28 PM: V_upper 200 -> 215 for IGVC practice course bright
-    # asphalt (asphalt p95 V=204). Sample with sample_hsv.py if scene differs.
-    sooner25_upper: [255, 255, 195]
+    # 2026-06-01 ROBUSTNESS TUNING (docs/cv_sooner25_tuning_2026_06_01/): the V
+    # channel below is now the FALLBACK only (used when sooner25_adaptive=='none').
+    # The live ceiling is the FLOORED-ADAPTIVE value computed per frame (below),
+    # which the workflow proved robust across 8 angle/lighting augmentations
+    # (worst-case lane flood 87.7% [fixed V195] -> 3.06%, zero flood-class frames).
+    sooner25_upper: [255, 255, 185]
     sooner25_blur_weight: 5
     sooner25_blur_iters: 3
+
+    # --- sooner25 robustness tuning (2026-06-01) ---
+    # Per-frame floored-adaptive V-ceiling: ceiling = clamp(p93(asphalt-band V),
+    # vfloor, vcap). The FLOOR (185) keeps shadowed asphalt classed as asphalt
+    # (kills the adaptive shadow-flood); the percentile lets bright scenes raise
+    # the ceiling (keeps the bright-flood protection a fixed ceiling lacks).
+    # REVERT to the original fixed-threshold behaviour: set sooner25_adaptive: 'none'
+    # (then sooner25_upper[V]=185 is used directly) and sooner25_post_sdrop: 0.
+    # Best paired with the ZED exposure lock (commit 27daf71) so p93 is steady.
+    sooner25_adaptive: 'p93'      # 'none' | 'pNN' | 'mean+K.Ksd'
+    sooner25_band: [0.40, 1.0]    # asphalt-band rows for the percentile (below sky ROI)
+    sooner25_vfloor: 185          # hard floor on the ceiling (shadow-flood guard)
+    sooner25_vcap: 255            # upper clamp (bright scenes raise ceiling fully)
+    # Post-detection high-S drop — rejects colored clutter (orange barrels, grass,
+    # tents) that the inverted scheme marks as lane and that sky_roi misses at
+    # off-angles. White paint is low-S; clutter is high-S. 0 disables.
+    sooner25_post_sdrop: 80
 
     # -------- Adaptive-threshold pipeline (pipeline:='adaptive') --------
     # Exposure-invariant: local Gaussian adaptive threshold on HLS-L. Rides

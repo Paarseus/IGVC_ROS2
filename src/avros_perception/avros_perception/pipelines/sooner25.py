@@ -91,21 +91,60 @@ class Sooner25Pipeline(Pipeline):
         if bgr.ndim != 3 or bgr.shape[2] != 3:
             raise ValueError(f'Sooner25Pipeline expects HxWx3 BGR; got {bgr.shape}')
 
+        # h, w BEFORE blur (blur is dimension-preserving) — needed for the
+        # adaptive band slice below.
+        h, w = bgr.shape[:2]
+
         # Live-tunable params (re-read every frame, same pattern as hsv.py).
         blur_weight = int(self.params.get('sooner25_blur_weight', 5))
         blur_iters = int(self.params.get('sooner25_blur_iters', 3))
         lower = tuple(int(x) for x in self.params.get('sooner25_lower', [0, 0, 0]))
-        upper = tuple(int(x) for x in self.params.get('sooner25_upper', [255, 95, 210]))
+        upper = list(int(x) for x in self.params.get('sooner25_upper', [255, 95, 210]))
         class_id_lane = int(self.params.get('class_id_lane', 1))
+
+        # --- Per-frame FLOORED adaptive V-ceiling (robustness tuning 2026-06-01,
+        # see docs/cv_sooner25_tuning_2026_06_01/). The fixed sooner25_upper[V]
+        # does NOT generalise across lighting: a fixed ceiling FLOODS the whole
+        # asphalt into 'lane' when the scene brightens (inverted scheme), while a
+        # raw per-frame ceiling FLOODS under shadow (shadowed asphalt drops below
+        # the ceiling and inverts to lane). Fix: ceiling = clamp(stat, floor, cap)
+        # where the FLOOR (185) keeps shadowed asphalt classed as asphalt and the
+        # stat (p93 / mean+kσ of the asphalt band) lets bright scenes raise it.
+        # 'none' => use the fixed sooner25_upper[V] (original behaviour, default).
+        adaptive_mode = str(self.params.get('sooner25_adaptive', 'none'))
+        if adaptive_mode != 'none':
+            vfloor = int(self.params.get('sooner25_vfloor', 185))
+            vcap = int(self.params.get('sooner25_vcap', 255))
+            band = self.params.get('sooner25_band', [0.40, 1.0])
+            y0, y1 = int(float(band[0]) * h), int(float(band[1]) * h)
+            vch = cv2.cvtColor(bgr[y0:y1], cv2.COLOR_BGR2HSV)[:, :, 2]
+            if adaptive_mode.startswith('p'):
+                v_adapt = int(np.percentile(vch, float(adaptive_mode[1:])))
+            else:  # 'mean+Ksd'
+                k = float(adaptive_mode[len('mean+'):].rstrip('sd'))
+                v_adapt = int(vch.mean() + k * vch.std())
+            upper[2] = max(vfloor, min(v_adapt, vcap))
+        upper = tuple(upper)
 
         # Sooner pipeline.
         blurred = apply_blur(bgr, blur_weight, blur_iters)
         binary = apply_hsv(blurred, lower, upper)   # 255 = obstacle, 0 = drivable
 
         # Map binary -> class IDs for kiwicampus.
-        h, w = binary.shape[:2]
         mask = np.zeros((h, w), dtype=np.uint8)
         mask[binary > 0] = class_id_lane
+
+        # --- Post-detection high-S drop (the real colored-clutter rejection the
+        # inverted-asphalt threshold cannot do — asphalt is already low-S, so
+        # inRange's S-upper does nothing; and at off-angles colored clutter
+        # (orange barrels, grass, tents) drops below sky_roi). White lane paint
+        # is low-S; clutter is high-S. Drop detected lane px whose blurred S
+        # exceeds the threshold. 0 disables (default). Runs on detected lane px
+        # ONLY (cannot resurrect masked pixels); reuses the SAME blurred image.
+        post_sdrop = int(self.params.get('sooner25_post_sdrop', 0))
+        if post_sdrop > 0:
+            s_ch = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)[:, :, 1]
+            mask[(mask > 0) & (s_ch > post_sdrop)] = 0
 
         # Sky / out-of-interest ROI zeroed last so we don't paint trees as lanes.
         poly = self._roi_polygon_px(h, w)
