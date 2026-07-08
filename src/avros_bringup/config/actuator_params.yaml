@@ -22,8 +22,8 @@ actuator_node:
   ros__parameters:
     # ---- Teensy serial [INIT-ONLY] ----
     # 2026-05-29: stable by-id path instead of /dev/ttyACM0 (which renumbers to
-    # ttyACM1 on reconnect). Tied to this Teensy's serial 18639150.
-    serial_port: "/dev/serial/by-id/usb-Teensyduino_USB_Serial_18639150-if00"
+    # ttyACM1 on reconnect). Tied to this Teensy's serial 19915500.
+    serial_port: "/dev/serial/by-id/usb-Teensyduino_USB_Serial_19915500-if00"
     serial_baud: 115200
 
     # ---- Vehicle geometry [INIT-ONLY] ----

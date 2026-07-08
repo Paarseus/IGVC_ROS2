@@ -132,18 +132,31 @@ def create_app(node: WebUINode) -> FastAPI:
     async def websocket_endpoint(websocket: WebSocket):
         nonlocal active_controller
 
+        # Check-and-claim under the lock WITHOUT awaiting: controller_lock is
+        # a threading.Lock, so blocking on it inside a coroutine stalls the
+        # whole event loop. Holding it across an await deadlocks the server
+        # (observed 2026-07-02: two devices connecting concurrently wedged
+        # uvicorn's accept loop; every later connection hung "Connecting...").
         with controller_lock:
-            if active_controller is not None:
-                await websocket.accept()
-                await websocket.send_json(
-                    {'error': 'Another controller is connected'}
-                )
-                await websocket.close(code=1008)
-                return
+            rejected = active_controller is not None
+            if not rejected:
+                active_controller = websocket
 
-        await websocket.accept()
-        with controller_lock:
-            active_controller = websocket
+        if rejected:
+            await websocket.accept()
+            await websocket.send_json(
+                {'error': 'Another controller is connected'}
+            )
+            await websocket.close(code=1008)
+            return
+
+        try:
+            await websocket.accept()
+        except Exception:
+            # never leak the claim if the handshake dies mid-flight
+            with controller_lock:
+                active_controller = None
+            raise
 
         estop = False
         mode = 'N'
