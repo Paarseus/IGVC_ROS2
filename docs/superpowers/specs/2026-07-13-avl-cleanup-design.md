@@ -43,13 +43,19 @@ Currently: 1 unpushed commit + a large uncommitted diff + several untracked addi
 
 `boot_stack.sh` and `full_stack_restart.sh` are near-duplicates; the only difference is that `full_stack_restart.sh` wraps the tmux server start in a `systemd-run --user --scope` for persistence across SSH teardown. Merge into a single script (keep the `full_stack_restart.sh` name, since restart is the common case) with a flag, e.g. `--boot`, that skips the scope-wrapping for the boot-time invocation (where the service cgroup already provides persistence). Delete the other file. Update any reference to the old script names (systemd service file, docs).
 
-## 5. Live dashboard snapshot refresher
+## 5. Live dashboard — switch to real MJPEG streaming (not snapshot polling)
 
-Currently `~/live_dashboard/*.jpg` are static files from 2026-07-09 that nothing refreshes — the dashboard at `:8090` shows frozen images. Add a small loop (new script, e.g. `deploy/refresh_dashboard.sh` or a tiny Python script) that periodically (~1s) pulls each snapshot from `web_video_server`'s `:8080/snapshot?topic=...` endpoint for `/viz/fused_bev`, `/viz/costmap_render`, and the 3 ZED rgb topics, writing them into `~/live_dashboard/*.jpg`. Wire it into the consolidated deploy script as a new tmux window (alongside `viz`, `wvs`, `www`), so it starts automatically on every future boot/restart.
+**Revised per explicit feedback: never show stagnant/polled footage — always genuinely live.** The original plan (periodically re-pull a snapshot into a static `.jpg`) is still fundamentally stale between polls, just less stale. Rejected.
+
+Root cause of today's frozen dashboard: `index.html` was deliberately switched from live MJPEG `<img>` tags to static-snapshot polling during the 2026-07-09 calibration session, per an inline comment, because MJPEG "didn't render reliably in the remote NoMachine Firefox session." That's a narrow, NoMachine-specific rendering quirk — not a reason to give up on live video for normal browser access (phone, laptop Chrome/Firefox/Safari all handle `multipart/x-mixed-replace` MJPEG fine in a plain `<img>` tag, which is exactly how `web_video_server`'s `/stream?topic=...` endpoint serves it).
+
+Fix: point `index.html`'s `<img>` tags directly at `web_video_server` (`:8080/stream?topic=/viz/fused_bev` etc.) instead of local snapshot files. No refresh loop, no new script, no new tmux window — genuinely live, zero staleness, less moving parts than the snapshot approach. Keep the existing dark dashboard layout/styling, just change the image source and drop the polling JS.
+
+If NoMachine/embedded-Firefox viewing turns out to still be needed later and MJPEG really doesn't render there, that's a separate, narrower problem to solve then (e.g. a NoMachine-specific fallback) — not a reason to default the primary dashboard to stale snapshots.
 
 ## Verification
 
 - After each repo change: `git status` clean (only intentional untracked items — `bags/`, `src/realsense-ros/` — remain, both gitignored), `git log` shows the expected new commits, `git push` succeeds.
 - After deploy script merge: run the merged script in restart mode against the live stack, confirm `tmux -L percept list-windows` shows the same 9 windows as before (plus the new dashboard-refresh window), and all topics/services (cameras, IMU, costmap, webui:8000, wvs:8080) are healthy exactly as verified earlier this session.
-- After dashboard fix: open `:8090`, confirm images visibly update in real time (not just timestamp-bumped stale bytes) — compare a snapshot against the live `:8080` MJPEG stream for the same topic.
+- After dashboard fix: open `:8090`, confirm every tile is a live, continuously-updating MJPEG stream (motion visible in real time — wave a hand in front of a camera and see it immediately), not a periodically-bumped static image.
 - Vehicle stays live throughout: no step should require killing `avros-webui.service` or the running `percept` tmux session except the deliberate, brief restart in the deploy-script verification step above (confirm with operator immediately before doing that one).
