@@ -92,7 +92,7 @@
                most common failure mode on this stack (kiwicampus tile_map_decay_time=1.5
                + raytrace patch usually resolves them, but a forced clear unblocks
                the planner immediately). -->
-          <RateController hz="1.0">
+          <RateController hz="3.0">
             <RecoveryNode number_of_retries="1" name="ComputePathToPose">
               <ComputePathToPose goal="{goal}"
                                  path="{path}"
