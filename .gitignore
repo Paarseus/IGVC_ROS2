@@ -27,3 +27,9 @@ src/semantic_segmentation_layer/
 /scale-page.png
 /sheet-*.png
 /solidremote.png
+
+# Field-test rosbag recordings (hundreds of GB) — never commit.
+bags/
+
+# Third-party driver, its own upstream git repo — not part of this history.
+src/realsense-ros/
