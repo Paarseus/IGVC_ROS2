@@ -278,7 +278,25 @@ local_costmap:
       # decay_acceleration (frustum), which works on a stationary robot.
       # Recommended by Steve Macenski (nav2 maintainer) for VLP-16; used by
       # his vlp16_config.yaml, OmniLRS, and Jackal-UAO. Migrated 2026-05-13.
-      plugins: ["stvl_layer", "semantic_layer", "inflation_layer"]
+      plugins: ["perception_layer", "stvl_layer", "semantic_layer", "inflation_layer"]
+
+      # Fused camera perception (carla-nav2-avl perception_costmap): TwinLiteNet
+      # drivable-surface + YOLO/cone obstacles from the 3 ZED X, already graded
+      # 0-100 (road-edge ramp, per-class obstacle halos, near-lethal off-road,
+      # infilled blind spots) in base_link. StaticLayer is nav2's supported way
+      # to ingest an external OccupancyGrid topic; trinary_costmap: false
+      # preserves the gradient instead of squashing to free/lethal. Publisher
+      # QoS is volatile+reliable, hence map_subscribe_transient_local: false.
+      # First in the plugin list: it paints the base drivable corridor; lidar
+      # voxels and inflation stack on top.
+      perception_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        enabled: true
+        map_topic: /perception/costmap
+        map_subscribe_transient_local: false
+        subscribe_to_updates: false
+        trinary_costmap: false
+        transform_tolerance: 0.5
 
       stvl_layer:
         plugin: "spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer"
@@ -526,7 +544,25 @@ global_costmap:
       # obstacle_layer below — they have long range, raytrace clearing, and
       # stable TF chains that justify routing-level awareness. The semantic_layer:
       # block below is retained but DISABLED so the config is easy to revert.
-      plugins: ["stvl_layer", "inflation_layer"]
+      plugins: ["perception_layer", "stvl_layer", "inflation_layer"]
+
+      # Fused camera perception (carla-nav2-avl perception_costmap): TwinLiteNet
+      # drivable-surface + YOLO/cone obstacles from the 3 ZED X, already graded
+      # 0-100 (road-edge ramp, per-class obstacle halos, near-lethal off-road,
+      # infilled blind spots) in base_link. StaticLayer is nav2's supported way
+      # to ingest an external OccupancyGrid topic; trinary_costmap: false
+      # preserves the gradient instead of squashing to free/lethal. Publisher
+      # QoS is volatile+reliable, hence map_subscribe_transient_local: false.
+      # First in the plugin list: it paints the base drivable corridor; lidar
+      # voxels and inflation stack on top.
+      perception_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        enabled: true
+        map_topic: /perception/costmap
+        map_subscribe_transient_local: false
+        subscribe_to_updates: false
+        trinary_costmap: false
+        transform_tolerance: 0.5
 
       # 2026-05-19 (L6 fix): was nav2_costmap_2d::ObstacleLayer (raytrace-only,
       # no decay). Swapped to STVL to mirror the local costmap's time-decay so
