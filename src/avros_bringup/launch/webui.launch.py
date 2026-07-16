@@ -53,6 +53,17 @@ def generate_launch_description():
                 {'use_sim_time': LaunchConfiguration('use_sim_time')},
             ],
             output='screen',
+            # 2026-07-16: without this, a boot-time race against Teensy USB
+            # enumeration (the /dev/serial/by-id symlink isn't created yet
+            # when this node opens the port) crashes it ONCE with
+            # FileNotFoundError and it never comes back -- webui_node keeps
+            # running and looks "connected" in the phone UI the whole time,
+            # so the joystick appeared to work but every command went
+            # nowhere for 2.5 hours before this was caught. Nav2's servers
+            # already use this same respawn pattern for the same class of
+            # startup race; actuator_node had no such protection.
+            respawn=True,
+            respawn_delay=2.0,
         ),
 
         # Web UI node
