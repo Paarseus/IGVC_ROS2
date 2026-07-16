@@ -242,6 +242,13 @@ local_costmap:
       always_send_full_costmap: true
       global_frame: odom
       robot_base_frame: base_link
+      # OccupancyGrid interpretation for StaticLayer (perception_layer). These
+      # are COSTMAP-NODE-level params in Humble, not per-layer -- a
+      # perception_layer.trinary_costmap is silently ignored (verified against
+      # the live param list). trinary_costmap: false preserves the graded
+      # 0-100 perception costs instead of squashing everything <100 to free.
+      trinary_costmap: false
+      lethal_cost_threshold: 100
       # 2026-05-29 (Phase 0, Issue #18): was absent -> Nav2 default 0.3 s. The
       # ZED cloud header.stamp lags wall-clock ~0.3-0.4 s, so exact-stamp TF
       # lookups in the kiwicampus semantic_segmentation_layer intermittently
@@ -295,7 +302,6 @@ local_costmap:
         map_topic: /perception/costmap
         map_subscribe_transient_local: false
         subscribe_to_updates: false
-        trinary_costmap: false
         transform_tolerance: 0.5
 
       stvl_layer:
@@ -520,6 +526,13 @@ global_costmap:
       publish_frequency: 2.0
       global_frame: map            # 2026-05-30: odom->map RESTORE (RTK FIXED). See bt_navigator note. local_costmap stays odom (robot-centric rolling).
       robot_base_frame: base_link
+      # OccupancyGrid interpretation for StaticLayer (perception_layer). These
+      # are COSTMAP-NODE-level params in Humble, not per-layer -- a
+      # perception_layer.trinary_costmap is silently ignored (verified against
+      # the live param list). trinary_costmap: false preserves the graded
+      # 0-100 perception costs instead of squashing everything <100 to free.
+      trinary_costmap: false
+      lethal_cost_threshold: 100
       rolling_window: true
       width: 100   # 2026-05-28 PM: 40->100 m so waypoints up to ~50 m from chassis are reachable. NavfnPlanner can't compute a path to a goal outside its costmap.
       height: 100  # 2026-05-28 PM: 40->100 m — see width comment.
@@ -561,7 +574,6 @@ global_costmap:
         map_topic: /perception/costmap
         map_subscribe_transient_local: false
         subscribe_to_updates: false
-        trinary_costmap: false
         transform_tolerance: 0.5
 
       # 2026-05-19 (L6 fix): was nav2_costmap_2d::ObstacleLayer (raytrace-only,
