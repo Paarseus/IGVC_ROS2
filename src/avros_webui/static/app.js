@@ -7,6 +7,7 @@ const statusEl = document.getElementById('status');
 const valuesEl = document.getElementById('values');
 const estopBtn = document.getElementById('estop');
 const autoBtn = document.getElementById('autobtn');
+const joystickZone = document.getElementById('joystick-zone');
 const modeButtons = document.querySelectorAll('.modes button');
 
 let ws = null;
@@ -17,6 +18,10 @@ let joystickX = 0;
 let joystickY = 0;
 let sendInterval = null;
 
+function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+}
+
 // ===== WEBSOCKET =====
 function connect() {
     ws = new WebSocket(WS_URL);
@@ -24,6 +29,9 @@ function connect() {
     ws.onopen = () => {
         statusEl.textContent = 'Connected';
         statusEl.className = '';
+        send({ type: 'mode', value: mode });
+        send({ type: 'estop', value: estop });
+        send({ type: 'autonomous', value: autonomous });
         startSending();
     };
 
@@ -73,25 +81,89 @@ function stopSending() {
 }
 
 // ===== JOYSTICK =====
-const joystick = nipplejs.create({
-    zone: document.getElementById('joystick-zone'),
-    mode: 'static',
-    position: { left: '50%', top: '50%' },
-    color: '#1976d2',
-    size: 150,
-    restOpacity: 0.7
-});
-
-joystick.on('move', (evt, data) => {
-    const maxDist = 75;
-    joystickX = Math.max(-1, Math.min(1, data.vector.x * data.distance / maxDist));
-    joystickY = Math.max(-1, Math.min(1, data.vector.y * data.distance / maxDist));
-});
-
-joystick.on('end', () => {
+function resetJoystick() {
     joystickX = 0;
     joystickY = 0;
-});
+}
+
+// Pointer-events based joystick: no external library, no fixed anchor point.
+// A drag starting anywhere in the zone tracks relative to where it started,
+// so there's no dependency on network reachability (previously loaded from
+// an external CDN, which silently failed with no visible error whenever the
+// device had no general internet access) and no requirement to touch one
+// exact pixel (previously nipplejs 'static' mode only responded to drags
+// starting on its fixed anchor point).
+function createJoystick() {
+    const maxDist = 75;
+    const handle = document.createElement('div');
+    handle.style.cssText = [
+        'position:absolute',
+        'left:50%',
+        'top:50%',
+        'width:90px',
+        'height:90px',
+        'margin-left:-45px',
+        'margin-top:-45px',
+        'border-radius:50%',
+        'background:#1976d2',
+        'box-shadow:0 0 24px rgba(25,118,210,0.6)',
+        'pointer-events:none',
+        'touch-action:none'
+    ].join(';');
+    joystickZone.appendChild(handle);
+
+    let activePointerId = null;
+    let originX = 0; // px, zone-relative — set to wherever the drag started
+    let originY = 0;
+
+    function updateHandle() {
+        handle.style.left = `${originX}px`;
+        handle.style.top = `${originY}px`;
+        handle.style.transform = `translate(${joystickX * maxDist}px, ${-joystickY * maxDist}px)`;
+    }
+
+    function recenterHandle() {
+        const rect = joystickZone.getBoundingClientRect();
+        originX = rect.width / 2;
+        originY = rect.height / 2;
+        updateHandle();
+    }
+
+    joystickZone.addEventListener('pointerdown', (event) => {
+        activePointerId = event.pointerId;
+        joystickZone.setPointerCapture(event.pointerId);
+        const rect = joystickZone.getBoundingClientRect();
+        originX = event.clientX - rect.left;
+        originY = event.clientY - rect.top;
+        joystickX = 0;
+        joystickY = 0;
+        updateHandle();
+    });
+
+    joystickZone.addEventListener('pointermove', (event) => {
+        if (event.pointerId !== activePointerId) return;
+        const rect = joystickZone.getBoundingClientRect();
+        const dx = (event.clientX - rect.left) - originX;
+        const dy = (event.clientY - rect.top) - originY;
+        joystickX = clamp(dx / maxDist, -1, 1);
+        joystickY = clamp(-dy / maxDist, -1, 1);
+        updateHandle();
+    });
+
+    function release() {
+        activePointerId = null;
+        resetJoystick();
+        recenterHandle();
+    }
+
+    joystickZone.addEventListener('pointerup', release);
+    joystickZone.addEventListener('pointercancel', release);
+    joystickZone.addEventListener('lostpointercapture', release);
+
+    recenterHandle();
+}
+
+createJoystick();
 
 // ===== E-STOP =====
 estopBtn.addEventListener('click', () => {
