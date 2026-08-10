@@ -20,6 +20,13 @@
 //                     via PARAMETER_WRITE (cls=14 idx=0). Echoes OK K<x>=<val>.
 //   KZ<val>           tune SparkMAX kIZone (integrator zone) — param ID 17
 //   BURN              persist current PID gains to SparkMAX flash (cls=63 idx=15)
+//   CS/CF<val>        [ADDED 2026-08-05] SparkMAX Smart Current Limit (amps) --
+//                     CS=kSmartCurrentStallLimit(id 59), CF=kSmartCurrentFreeLimit
+//                     (id 60). REV proto marks these 'uint', NOT float -- sent via
+//                     setParamU32() (raw uint32 LE), NOT the float32 setParam()
+//                     path the K-commands use. Interactive only, same philosophy
+//                     as K<PIDF>: nothing is pushed automatically at boot, existing
+//                     PID tuning path is untouched. BURN persists these too.
 //   A1 / A0           IGVC §I.2 safety light: A1 = autonomous (flash @ 2 Hz),
 //                     A0 = manual/idle (solid). Sent ~50 Hz by actuator_node as
 //                     the light heartbeat; firmware reverts to SOLID if it stops
@@ -105,6 +112,14 @@ static constexpr uint8_t  PID_KI      = 14;
 static constexpr uint8_t  PID_KD      = 15;
 static constexpr uint8_t  PID_KFF     = 16;
 static constexpr uint8_t  PID_KIZONE  = 17;
+
+// [ADDED 2026-08-05] Smart Current Limit param IDs -- verified against REV's
+// authoritative SPARK-MAX-Types.proto (REVrobotics/SPARK-MAX-Server), NOT
+// guessed. Both are 'uint' type (amps), unlike the float-typed PID params
+// above -- see setParamU32(). Neither has a default push anywhere in this
+// file; they only get set if/when a CS/CF command is actually sent.
+static constexpr uint8_t  CURRENT_STALL_LIMIT = 59;  // kSmartCurrentStallLimit (REV default 80A)
+static constexpr uint8_t  CURRENT_FREE_LIMIT  = 60;  // kSmartCurrentFreeLimit  (REV default 20A)
 
 // ---------- State ------------------------------------------------------------
 FlexCAN_T4<CAN1, RX_SIZE_256, TX_SIZE_16> can;
@@ -209,6 +224,23 @@ static void burnFlash(uint8_t dev) {
 static void tuneBoth(uint8_t param, float v) {
     setParam(LEFT_ID,  param, v); delay(5);
     setParam(RIGHT_ID, param, v);
+}
+
+// [ADDED 2026-08-05] uint32 variant of setParam()/tuneBoth() -- for
+// uint-typed CAN params (current limits) where sending the raw integer's
+// bit pattern is required, NOT an IEEE-754 float32 encoding of the same
+// number. Does not touch/replace the float path above, which is correct
+// as-is for the float-typed PID params.
+static void setParamU32(uint8_t dev, uint8_t param_id, uint32_t value) {
+    uint8_t d[5] = {0};
+    d[0] = param_id;
+    memcpy(d + 1, &value, sizeof(uint32_t));
+    canSend(sparkId(CLS_PARAM, IDX_PARAM_SET, dev), d, 5);
+}
+
+static void tuneBothU32(uint8_t param, uint32_t v) {
+    setParamU32(LEFT_ID,  param, v); delay(5);
+    setParamU32(RIGHT_ID, param, v);
 }
 
 // ---------- CAN RX -- decode STATUS_2 ---------------------------------------
@@ -359,6 +391,24 @@ static void handleLine(char *line) {
             }
             tuneBoth(p, val);
             Serial.printf("OK K%c=%.8f\n", which, val);
+            return;
+        }
+
+        case 'C': {
+            // [ADDED 2026-08-05] Current-limit command: "CS40" (stall) / "CF40" (free).
+            // Same interactive-only, no-auto-push philosophy as the K-commands.
+            if (!line[1]) { Serial.println("ERR C?"); return; }
+            char which = toupper((unsigned char)line[1]);
+            long val = atol(line + 2);
+            if (val < 0) val = 0;
+            uint8_t p;
+            switch (which) {
+                case 'S': p = CURRENT_STALL_LIMIT; break;
+                case 'F': p = CURRENT_FREE_LIMIT;  break;
+                default:  Serial.println("ERR C?"); return;
+            }
+            tuneBothU32(p, (uint32_t)val);
+            Serial.printf("OK C%c=%lu\n", which, (unsigned long)val);
             return;
         }
 
