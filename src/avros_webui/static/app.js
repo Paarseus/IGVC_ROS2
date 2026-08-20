@@ -112,6 +112,14 @@ function createJoystick() {
     ].join(';');
     joystickZone.appendChild(handle);
 
+    // 2026-08-19: touch-action is NOT an inherited CSS property. index.html
+    // sets it on <body>, which does NOT cover this element -- so mobile
+    // browsers were free to claim a drag here as a pan/scroll gesture. That
+    // gesture claim is what spontaneously revoked pointer capture mid-drag
+    // (see the lostpointercapture note below). Set it explicitly on the zone.
+    joystickZone.style.touchAction = 'none';
+    joystickZone.style.overscrollBehavior = 'none';
+
     let activePointerId = null;
     let originX = 0; // px, zone-relative — set to wherever the drag started
     let originY = 0;
@@ -140,7 +148,26 @@ function createJoystick() {
         updateHandle();
     });
 
-    joystickZone.addEventListener('pointermove', (event) => {
+    // 2026-08-19: listeners moved from joystickZone to window.
+    //
+    // Bug this fixes (measured: stick registered ~150 ms of a 30 s hold, then
+    // read 0.0 for the rest while the finger was still down):
+    //   - 'lostpointercapture' was wired to release(). Mobile browsers revoke
+    //     pointer capture spontaneously mid-drag; that is NOT the finger
+    //     lifting, but release() zeroed the stick anyway and never recovered,
+    //     because subsequent pointermove events were filtered out by the
+    //     activePointerId check that release() had just nulled. Handler
+    //     deleted outright -- losing capture is not an end-of-touch signal.
+    //   - Tracking on the zone alone also dropped input if the finger left the
+    //     zone's bounds once capture was gone. window-level listeners keep
+    //     tracking regardless of capture state or finger position.
+    //
+    // SAFETY: this makes stop-on-release MORE reliable, not less. pointerup
+    // and pointercancel anywhere on the page now zero the stick, including
+    // releases outside the zone that the old zone-scoped listener could miss.
+    // Real end-of-touch is still exactly pointerup/pointercancel, and the
+    // actuator's own command-freshness watchdog remains the backstop.
+    window.addEventListener('pointermove', (event) => {
         if (event.pointerId !== activePointerId) return;
         const rect = joystickZone.getBoundingClientRect();
         const dx = (event.clientX - rect.left) - originX;
@@ -150,15 +177,16 @@ function createJoystick() {
         updateHandle();
     });
 
-    function release() {
+    function release(event) {
+        // Ignore stray releases from a different finger than the active drag.
+        if (event && activePointerId !== null && event.pointerId !== activePointerId) return;
         activePointerId = null;
         resetJoystick();
         recenterHandle();
     }
 
-    joystickZone.addEventListener('pointerup', release);
-    joystickZone.addEventListener('pointercancel', release);
-    joystickZone.addEventListener('lostpointercapture', release);
+    window.addEventListener('pointerup', release);
+    window.addEventListener('pointercancel', release);
 
     recenterHandle();
 }
