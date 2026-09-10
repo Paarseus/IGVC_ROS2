@@ -37,7 +37,7 @@ from rclpy.qos import (
 
 from sensor_msgs.msg import NavSatFix, PointCloud2
 
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 
 from visualization_msgs.msg import Marker
 
@@ -80,6 +80,13 @@ class CampusNavigator(Node):
         self.declare_parameter('blocked_goal_cost', 97)
         self.declare_parameter('goal_check_radius_m', 0.3)
         self.declare_parameter('blocked_final_wait_s', 8.0)
+        # Arm-then-confirm gate. Default TRUE: a destination click plans the
+        # route and draws it, then STOPS and waits for an explicit confirm
+        # before any goal reaches Nav2. Nothing moves on a click alone, which
+        # makes "click around and check the plan" a safe thing to do with the
+        # vehicle on the ground. Set false to restore click-and-go.
+        self.declare_parameter('require_confirmation', True)
+        self.declare_parameter('confirm_timeout_s', 120.0)
 
         self._spacing = float(self.get_parameter('route_spacing_m').value)
         self._straight_handoff = float(
@@ -99,6 +106,10 @@ class CampusNavigator(Node):
             self.get_parameter('goal_check_radius_m').value)
         self._blocked_final_wait = float(
             self.get_parameter('blocked_final_wait_s').value)
+        self._require_confirmation = bool(
+            self.get_parameter('require_confirmation').value)
+        self._confirm_timeout = float(
+            self.get_parameter('confirm_timeout_s').value)
 
         self._pose = None
         self._pose_t = 0.0
@@ -111,6 +122,7 @@ class CampusNavigator(Node):
         self._actuator_t = 0.0
 
         self._lock = threading.Lock()
+        self._confirm_event = threading.Event()
         self._selection_event = threading.Event()
         self._selection_seq = 0
         self._selected_goal: Optional[Point2D] = None
@@ -128,6 +140,13 @@ class CampusNavigator(Node):
                                  self._on_actuator, 10)
         self.create_subscription(
             PointStamped, '/clicked_point', self._on_click, 10)
+        # Operator gate. /auto_drive/confirm with data:true releases an armed
+        # route; anything on /auto_drive/cancel disarms it (and cancels a run
+        # already in progress, same path as a safety stop).
+        self.create_subscription(
+            Bool, '/auto_drive/confirm', self._on_confirm, 10)
+        self.create_subscription(
+            Bool, '/auto_drive/cancel', self._on_cancel, 10)
 
         latched = QoSProfile(
             depth=1,
@@ -185,7 +204,10 @@ class CampusNavigator(Node):
 
         self._worker = threading.Thread(target=self._worker_loop, daemon=True)
         self._worker.start()
-        self._publish_status('READY: select a campus destination in RViz')
+        self._publish_status(
+            'READY: select a campus destination in RViz'
+            + (' (route is armed, not driven, until you confirm)'
+               if self._require_confirmation else ''))
 
     def _on_odom(self, msg: Odometry) -> None:
         self._pose = msg.pose.pose
@@ -222,6 +244,70 @@ class CampusNavigator(Node):
             active.cancel_goal_async()
         self._selection_event.set()
         self._publish_status(f'SELECTED: ({goal[0]:.1f}, {goal[1]:.1f})')
+
+    def _on_confirm(self, msg: Bool) -> None:
+        """Release an armed route. Ignored unless something is armed."""
+        if not msg.data:
+            return
+        self._confirm_event.set()
+
+    def _on_cancel(self, msg: Bool) -> None:
+        """Disarm, and cancel a run already under way.
+
+        Bumping the selection sequence is what makes every in-flight stage
+        (`_is_current`) bail out, so this works whether the route is merely
+        armed or actively driving.
+        """
+        if not msg.data:
+            return
+        with self._lock:
+            self._selection_seq += 1
+            self._selected_goal = None
+            active = self._active_goal_handle
+            self._active_goal_handle = None
+        self._confirm_event.clear()
+        if active is not None:
+            active.cancel_goal_async()
+        self._clear_preview()
+        self._publish_status('CANCELLED by operator', warn=True)
+
+    def _await_confirmation(self, seq: int, distance_m: float,
+                            legs: int) -> bool:
+        """Hold an armed route until the operator confirms it.
+
+        Returns True to drive, False to abandon. Safety gates keep being
+        enforced while armed -- an e-stop or stale sensor disarms rather than
+        leaving a route primed to launch the moment it clears.
+        """
+        if not self._require_confirmation:
+            return True
+
+        self._confirm_event.clear()
+        self._publish_status(
+            f'ARMED: {distance_m:.0f} m, {legs} legs. Check the red route. '
+            'GO:  ros2 topic pub --once /auto_drive/confirm '
+            'std_msgs/msg/Bool "{data: true}"',
+            warn=True)
+
+        deadline = time.monotonic() + self._confirm_timeout
+        while time.monotonic() < deadline:
+            if self._shutdown or not self._is_current(seq):
+                return False
+            reason = self._runtime_safety_reason()
+            if reason is not None:
+                self._clear_preview()
+                self._publish_status(f'DISARMED: {reason}', warn=True)
+                return False
+            if self._confirm_event.wait(timeout=0.2):
+                self._publish_status('CONFIRMED: driving')
+                return True
+
+        self._clear_preview()
+        self._publish_status(
+            'DISARMED: no confirmation within '
+            f'{self._confirm_timeout:.0f} s; click a destination again',
+            warn=True)
+        return False
 
     def _safety_tick(self) -> None:
         reason = self._runtime_safety_reason()
@@ -275,7 +361,13 @@ class CampusNavigator(Node):
                 self._publish_status('ARRIVED: already at destination')
                 return
 
+            # Draw the route BEFORE asking to drive it: the point of the gate
+            # is that the operator gets to look at the red line first.
             self._preview_pub.publish(route)
+            if not self._await_confirmation(
+                    seq, polyline_length(points), len(waypoints) - 1):
+                return
+
             self._publish_status(
                 f'DRIVING: {polyline_length(points):.0f} m, '
                 f'{len(waypoints) - 1} continuous segments')
