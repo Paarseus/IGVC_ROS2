@@ -22,8 +22,8 @@ actuator_node:
   ros__parameters:
     # ---- Teensy serial [INIT-ONLY] ----
     # 2026-05-29: stable by-id path instead of /dev/ttyACM0 (which renumbers to
-    # ttyACM1 on reconnect). Tied to this Teensy's serial 18639150.
-    serial_port: "/dev/serial/by-id/usb-Teensyduino_USB_Serial_18639150-if00"
+    # ttyACM1 on reconnect). Tied to this Teensy's serial 19915540.
+    serial_port: "/dev/serial/by-id/usb-Teensyduino_USB_Serial_19915540-if00"
     serial_baud: 115200
 
     # ---- Vehicle geometry [INIT-ONLY] ----
@@ -106,9 +106,21 @@ actuator_node:
     # to -0.085 deg, steady-state delivery 93-96% (still good for Nav2's
     # outer loop). Validated through bags pid_iter1..7_*. BURNed to flash
     # via REV Hardware Client (Velocity PID slot 0) on both SparkMAXes.
+    # 2026-08-05: swapped to the AVL-IGVC2026/teensy_sparkmax_fw26_synced
+    # tuning-guide values per user request, in response to a motor burnout
+    # traced to uncapped current draw. NOTE: this alone does not cap current --
+    # see kSmartCurrentFreeLimit (SparkMAX param, default 20A, never explicitly
+    # set by firmware) flagged as the likely real root cause in
+    # firmware/teensy_diff_drive/FINDINGS.md. Not yet pushed live -- file only.
+    # 2026-08-10: the 0.0007/2.5e-7 values above moved the car but reintroduced
+    # a shake that FINDINGS.md documents as already solved -- Phase 6b/6c
+    # bench-tuned and BURNED these exact gains with real acceptance metrics
+    # (10.7% step overshoot settling in 338ms, 0.24-0.25% repeatability,
+    # 99-100% tracking 500-3000 RPM). Using the team's own validated values
+    # instead of re-guessing between shaky and dead.
     kFF: 0.000197
-    kP:  0.0007
-    kI:  0.00000025
+    kP:  0.0004
+    kI:  0.0000009
     kD:  0.0
     kIZone: 600.0
 

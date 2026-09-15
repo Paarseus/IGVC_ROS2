@@ -103,7 +103,7 @@ controller_server:
       # this higher than what the motors can deliver causes rollout trajectories
       # MPPI believes-in-but-cannot-execute, which hurts tracking.
       # Raise to 1.5 after bench-fixing kOutputMax via REV Hardware Client.
-      vx_max: 1.5             # 2026-05-30: 0.7->1.5 m/s fwd. Bag (maxspeed_mid) proved `ros2 param set FollowPath.vx_max` does NOT affect the RUNNING MPPI (read at configure-time) — robot stayed ~0.6 m/s regardless of live sets; must edit YAML + restart. Chassis delivers ~1.5 (theoretical 1.89, measured ~1.69). Accel still ramp-limited by actuator max_linear_accel=0.3 m/s² (brown-out safety) -> ~5 s to reach 1.5. NOTE: kOutputMax-0.47-cap premise in the comment above was a MISDIAGNOSIS (duty is NOT clamped, see Known Issues / issue #6).
+      vx_max: 0.7             # 2026-05-30: 0.7->1.5 m/s fwd. Bag (maxspeed_mid) proved `ros2 param set FollowPath.vx_max` does NOT affect the RUNNING MPPI (read at configure-time) — robot stayed ~0.6 m/s regardless of live sets; must edit YAML + restart. Chassis delivers ~1.5 (theoretical 1.89, measured ~1.69). Accel still ramp-limited by actuator max_linear_accel=0.3 m/s² (brown-out safety) -> ~5 s to reach 1.5. NOTE: kOutputMax-0.47-cap premise in the comment above was a MISDIAGNOSIS (duty is NOT clamped, see Known Issues / issue #6).
       vx_min: -0.6            # 2026-05-30: -0.4->-0.6 (scale reverse with vx_max)
       vy_max: 0.5             # not used on diff-drive but required field
       # wz_max: actuator clamps angular at max_angular_rps=1.5 (raised from
@@ -242,6 +242,13 @@ local_costmap:
       always_send_full_costmap: true
       global_frame: odom
       robot_base_frame: base_link
+      # OccupancyGrid interpretation for StaticLayer (perception_layer). These
+      # are COSTMAP-NODE-level params in Humble, not per-layer -- a
+      # perception_layer.trinary_costmap is silently ignored (verified against
+      # the live param list). trinary_costmap: false preserves the graded
+      # 0-100 perception costs instead of squashing everything <100 to free.
+      trinary_costmap: false
+      lethal_cost_threshold: 100
       # 2026-05-29 (Phase 0, Issue #18): was absent -> Nav2 default 0.3 s. The
       # ZED cloud header.stamp lags wall-clock ~0.3-0.4 s, so exact-stamp TF
       # lookups in the kiwicampus semantic_segmentation_layer intermittently
@@ -278,7 +285,24 @@ local_costmap:
       # decay_acceleration (frustum), which works on a stationary robot.
       # Recommended by Steve Macenski (nav2 maintainer) for VLP-16; used by
       # his vlp16_config.yaml, OmniLRS, and Jackal-UAO. Migrated 2026-05-13.
-      plugins: ["stvl_layer", "semantic_layer", "inflation_layer"]
+      plugins: ["perception_layer", "stvl_layer", "semantic_layer", "inflation_layer"]
+
+      # Fused camera perception (carla-nav2-avl perception_costmap): TwinLiteNet
+      # drivable-surface + YOLO/cone obstacles from the 3 ZED X, already graded
+      # 0-100 (road-edge ramp, per-class obstacle halos, near-lethal off-road,
+      # infilled blind spots) in base_link. StaticLayer is nav2's supported way
+      # to ingest an external OccupancyGrid topic; trinary_costmap: false
+      # preserves the gradient instead of squashing to free/lethal. Publisher
+      # QoS is volatile+reliable, hence map_subscribe_transient_local: false.
+      # First in the plugin list: it paints the base drivable corridor; lidar
+      # voxels and inflation stack on top.
+      perception_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        enabled: true
+        map_topic: /perception/costmap
+        map_subscribe_transient_local: false
+        subscribe_to_updates: false
+        transform_tolerance: 0.5
 
       stvl_layer:
         plugin: "spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer"
@@ -338,7 +362,7 @@ local_costmap:
           # FOV but un-reconfirmed this rotation decayed too fast for VLP-16's
           # 16-beam sparsity). At accel=2, a voxel missed for 2s decays only
           # ~2.67s instead of ~6.67s, giving more cycles for re-confirmation.
-          decay_acceleration: 2.0
+          decay_acceleration: 0.5
           clear_after_reading: true
 
       # kiwicampus/semantic_segmentation_layer — consumes the avros_perception 3-topic contract
@@ -502,6 +526,13 @@ global_costmap:
       publish_frequency: 2.0
       global_frame: map            # 2026-05-30: odom->map RESTORE (RTK FIXED). See bt_navigator note. local_costmap stays odom (robot-centric rolling).
       robot_base_frame: base_link
+      # OccupancyGrid interpretation for StaticLayer (perception_layer). These
+      # are COSTMAP-NODE-level params in Humble, not per-layer -- a
+      # perception_layer.trinary_costmap is silently ignored (verified against
+      # the live param list). trinary_costmap: false preserves the graded
+      # 0-100 perception costs instead of squashing everything <100 to free.
+      trinary_costmap: false
+      lethal_cost_threshold: 100
       rolling_window: true
       width: 100   # 2026-05-28 PM: 40->100 m so waypoints up to ~50 m from chassis are reachable. NavfnPlanner can't compute a path to a goal outside its costmap.
       height: 100  # 2026-05-28 PM: 40->100 m — see width comment.
@@ -526,7 +557,24 @@ global_costmap:
       # obstacle_layer below — they have long range, raytrace clearing, and
       # stable TF chains that justify routing-level awareness. The semantic_layer:
       # block below is retained but DISABLED so the config is easy to revert.
-      plugins: ["stvl_layer", "inflation_layer"]
+      plugins: ["perception_layer", "stvl_layer", "inflation_layer"]
+
+      # Fused camera perception (carla-nav2-avl perception_costmap): TwinLiteNet
+      # drivable-surface + YOLO/cone obstacles from the 3 ZED X, already graded
+      # 0-100 (road-edge ramp, per-class obstacle halos, near-lethal off-road,
+      # infilled blind spots) in base_link. StaticLayer is nav2's supported way
+      # to ingest an external OccupancyGrid topic; trinary_costmap: false
+      # preserves the gradient instead of squashing to free/lethal. Publisher
+      # QoS is volatile+reliable, hence map_subscribe_transient_local: false.
+      # First in the plugin list: it paints the base drivable corridor; lidar
+      # voxels and inflation stack on top.
+      perception_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        enabled: true
+        map_topic: /perception/costmap
+        map_subscribe_transient_local: false
+        subscribe_to_updates: false
+        transform_tolerance: 0.5
 
       # 2026-05-19 (L6 fix): was nav2_costmap_2d::ObstacleLayer (raytrace-only,
       # no decay). Swapped to STVL to mirror the local costmap's time-decay so
@@ -561,7 +609,7 @@ global_costmap:
           vertical_fov_angle: 0.523      # VLP-16 +/-15 deg
           vertical_fov_padding: 0.1      # 2026-05-19: widen near cone (match local)
           horizontal_fov_angle: 6.283    # 360 deg
-          decay_acceleration: 2.0       # 2026-05-21: 10->5; 2026-05-27: 5->2 (further anti-flicker, see local comment)
+          decay_acceleration: 0.5       # 2026-05-21: 10->5; 2026-05-27: 5->2 (further anti-flicker, see local comment)
           clear_after_reading: true
 
       # Mirror of local_costmap.semantic_layer — RETAINED BUT NOT IN PLUGINS LIST

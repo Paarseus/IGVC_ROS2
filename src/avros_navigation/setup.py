@@ -26,6 +26,8 @@ setup(
         'console_scripts': [
             'mission_manager = avros_navigation.mission_manager:main',
             'autonomy_monitor = avros_navigation.autonomy_monitor:main',
+            'auto_drive = avros_navigation.auto_drive:main',
+            'route_graph_viz = avros_navigation.route_graph_viz:main',
         ],
     },
 )

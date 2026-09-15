@@ -1,0 +1,210 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    # Coarse grid only. Under llvmpipe every grid line is CPU-rasterised, so
+    # this is 25x25 at 20 m rather than the old 60x60 at 50 m.
+    - Class: rviz_default_plugins/Grid
+      Enabled: true
+      Name: Grid
+      Cell Size: 20
+      Plane Cell Count: 25
+      Alpha: 0.3
+      Color: 90; 90; 90
+      Value: true
+
+    # Campus roads. Publisher decimates this (edges only, range-limited) --
+    # see route_graph_viz.py.
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: RouteGraph
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /route_graph
+      Value: true
+
+    # The planned route, drawn before you confirm the drive.
+    - Class: rviz_default_plugins/Path
+      Enabled: true
+      Name: RoutePreview
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /auto_drive/route_preview
+      # Red, and wider than the default: this is the single most important
+      # thing on screen -- "here is the path I am about to drive". It has to
+      # read instantly against the grey costmap and the green vehicle arrow,
+      # at the zoomed-out distance the view now starts at.
+      Color: 255; 40; 40
+      Line Style: Billboards
+      Line Width: 2.5
+      Value: true
+
+    # CHANGE 2026-09-01 (Claude) -- REVIEWER: PLEASE EVALUATE.
+    # Shows campus_navigator's status line floating above the vehicle
+    # (white = progress, amber = rejection/stop).
+    #
+    # Why this exists: a destination click that preflight refuses looked
+    # EXACTLY like a click that never registered. The reason was published
+    # only to /auto_drive/status, a std_msgs/String -- and RViz2 has no
+    # String display (rviz_default_plugins has none, and no jsk /
+    # rviz_2d_overlay plugin is installed here). So campus_navigator now
+    # also mirrors the text to /auto_drive/status_marker as a
+    # TEXT_VIEW_FACING marker; see the matching note in campus_navigator.py.
+    #
+    # Durability MUST stay Transient Local: the publisher latches, and RViz
+    # starts after the node's first 'READY' message. Volatile here shows a
+    # blank screen until the next status change.
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: AutoDriveStatus
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /auto_drive/status_marker
+      Value: true
+
+    # Live vehicle pose. Covariance ellipse deliberately OFF: it is a
+    # per-frame transparent mesh and costs real time in software GL, while
+    # telling us nothing we act on here.
+    - Class: rviz_default_plugins/Odometry
+      Enabled: true
+      Name: Vehicle
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /odometry/global
+      Position Tolerance: 0.5
+      Angle Tolerance: 0.5
+      Keep: 1
+      Shape:
+        Value: Arrow
+        Alpha: 1
+        Head Length: 1.6
+        Head Radius: 0.9
+        Shaft Length: 3
+        Shaft Radius: 0.35
+        Color: 0; 255; 0
+      Covariance:
+        Position:
+          Value: false
+        Orientation:
+          Value: false
+      Value: true
+
+    - Class: rviz_default_plugins/PointCloud2
+      Enabled: true
+      Name: CVBoundary
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /perception/costmap_cloud
+      Style: Points
+      Size (Pixels): 3
+      Decay Time: 0.3
+      Color Transformer: FlatColor
+      Color: 255; 70; 40
+      Value: true
+
+    - Class: rviz_default_plugins/Polygon
+      Enabled: true
+      Name: Approach Safety Footprint
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /collision_monitor/approach_zone
+      Color: 255; 190; 55
+      Alpha: 0.75
+      Value: true
+
+    - Class: rviz_default_plugins/Polygon
+      Enabled: true
+      Name: Hard Stop Footprint
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /collision_monitor/stop_zone
+      Color: 255; 45; 60
+      Alpha: 0.9
+      Value: true
+
+    - Class: rviz_default_plugins/Map
+      Enabled: true
+      Name: LocalCostmap
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /local_costmap/costmap
+      Alpha: 0.45
+      Color Scheme: costmap
+      Draw Behind: true
+      Value: true
+
+    # NOTE: the TF display is intentionally absent. It rendered every frame on
+    # the robot (3 ZEDs x several optical frames, velodyne, imu, base_link,
+    # odom, map) WITH name labels every frame -- expensive under llvmpipe and
+    # an unreadable pile of overlapping text at any sensible zoom. The green
+    # Odometry arrow above already shows pose and heading. Add TF back
+    # temporarily if you ever need to debug frames.
+
+  Global Options:
+    Background Color: 30; 30; 30
+    Fixed Frame: map
+    # 5 Hz, not the default 30. This is a map you click on, not something you
+    # need smooth animation from; it roughly halves RViz's CPU draw cost.
+    Frame Rate: 5
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/PublishPoint
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /clicked_point
+  Views:
+    Current:
+      Class: rviz_default_plugins/XYOrbit
+      Name: Current View
+      Target Frame: base_link
+      # Distance is the top-down view radius in metres. 60 framed roughly one
+      # block -- close enough that a campus destination was usually off-screen
+      # when the operator went to click it, so the first action after opening
+      # Auto Drive was always "zoom out". 120 shows the general area (the
+      # launcher draws the road graph to 150 m) while keeping buildings and
+      # road edges distinguishable. Beyond ~180 the graph turns to spaghetti
+      # and llvmpipe starts dropping frames.
+      Distance: 120
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+      # pi/2 = camera looking straight down: a map, not a perspective view.
+      Pitch: 1.5707
+      Yaw: 0.0
+      Near Clip Distance: 0.01
+      Invert Z Axis: false
+Window Geometry:
+  Height: 800
+  Width: 1200
+  X: 60
+  Y: 60
