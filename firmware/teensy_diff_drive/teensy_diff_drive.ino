@@ -19,6 +19,13 @@
 //   KP/KI/KD/KF<val>  tune SparkMAX PID slot 0 — verified working on FW 26.1.4
 //                     via PARAMETER_WRITE (cls=14 idx=0). Echoes OK K<x>=<val>.
 //   KZ<val>           tune SparkMAX kIZone (integrator zone) — param ID 17
+//   M<val>            set velocity setpoint slew rate, RPM per 20ms tick
+//                     (default 100). The commanded RPM is ramped toward the
+//                     host setpoint at this rate before being sent to the
+//                     SparkMAX PID, so the loop never sees an instant step —
+//                     this is what actually fixes overshoot/anti-windup, not
+//                     chasing PID gains against raw steps. S and the 300ms
+//                     host watchdog bypass the ramp (immediate stop).
 //   BURN              persist current PID gains to SparkMAX flash (cls=63 idx=15)
 //   A1 / A0           IGVC §I.2 safety light: A1 = autonomous (flash @ 2 Hz),
 //                     A0 = manual/idle (solid). Sent ~50 Hz by actuator_node as
@@ -93,6 +100,13 @@ static constexpr uint8_t  CLS_PARAM      = 14;  // PARAMETER_WRITE
 static constexpr uint8_t  IDX_PARAM_SET  = 0;
 static constexpr uint8_t  CLS_BURN       = 63;  // PERSIST_PARAMETERS
 static constexpr uint8_t  IDX_BURN       = 15;
+// PERSIST_PARAMETERS response, per REV's official CANSparkFrames.h (REVLib-
+// driver 2027.0.0-alpha-7): SPARK_PERSIST_PARAMETERS_RESPONSE_FRAME_ID
+// decodes to cls=1/idx=4, DLC=1, payload = result_code (0 = success). Sent
+// up to ~1s after the burn command -- previously never listened for, so
+// every burn attempt was blind (send + power-cycle-to-check, no ack).
+static constexpr uint8_t  CLS_BURN_RESP  = 1;
+static constexpr uint8_t  IDX_BURN_RESP  = 4;
 static constexpr uint32_t UNIVERSAL_HB   = 0x01011840;  // roboRIO heartbeat
 
 // SparkMAX PID slot-0 parameter IDs — canonical values from REV's
@@ -110,7 +124,8 @@ static constexpr uint8_t  PID_KIZONE  = 17;
 FlexCAN_T4<CAN1, RX_SIZE_256, TX_SIZE_16> can;
 
 struct Wheel {
-    float          cmd_rpm  = 0.0f;
+    float          cmd_rpm  = 0.0f;   // raw host-requested setpoint
+    float          ramp_rpm = 0.0f;   // slew-limited setpoint actually sent to the SparkMAX
     float          cmd_duty = 0.0f;
     volatile float meas_rpm = 0.0f;
     volatile float meas_pos = 0.0f;
@@ -121,10 +136,19 @@ static Wheel left, right;
 enum ControlMode { MODE_VELOCITY, MODE_DUTY };
 static ControlMode ctrl_mode = MODE_VELOCITY;
 
+// Slew-rate limit on the velocity setpoint, RPM per CTRL_DT_MS (20ms) tick.
+// The SparkMAX velocity PID is tuned against ramped setpoints, not raw host
+// steps -- feeding it an instantaneous multi-thousand-RPM jump is what drove
+// the overshoot/anti-windup fights during bench tuning. Runtime-adjustable
+// via 'M<val>' so it can be tuned without reflashing, same as the K gains.
+static float max_rpm_step = 100.0f;
+
 static uint32_t t_ctrl = 0, t_fb = 0, t_enc_cfg = 0, t_last_host = 0;
 static uint32_t tx_count = 0, rx_count = 0;
 static bool     wdt_tripped = false;
 static volatile float bus_voltage = 0.0f;  // decoded from STATUS_0 (both devs report the same bus)
+static volatile int16_t burn_result_left  = -1;  // -1 = no response seen yet, else result_code (0=success)
+static volatile int16_t burn_result_right = -1;
 
 // ---------- Safety light state ----------------------------------------------
 Adafruit_NeoPixel light(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
@@ -199,11 +223,13 @@ static void setParam(uint8_t dev, uint8_t param_id, float value) {
 }
 
 // PERSIST_PARAMETERS magic: 15011 = 0x3AA3 as uint16 LE at bytes[0:1].
+// DLC=2 per REV's official CANSparkFrames.h (SPARK_PERSIST_PARAMETERS_LENGTH
+// = 2) -- previously sent as DLC=8 with 6 zero-padding bytes, which is
+// almost certainly why burns were silently ignored (address/magic were
+// already correct; the frame's length just didn't match spec).
 static void burnFlash(uint8_t dev) {
-    uint8_t d[8] = {0};
-    d[0] = 0xA3;
-    d[1] = 0x3A;
-    canSend(sparkId(CLS_BURN, IDX_BURN, dev), d, 8);
+    uint8_t d[2] = { 0xA3, 0x3A };
+    canSend(sparkId(CLS_BURN, IDX_BURN, dev), d, 2);
 }
 
 static void tuneBoth(uint8_t param, float v) {
@@ -211,9 +237,20 @@ static void tuneBoth(uint8_t param, float v) {
     setParam(RIGHT_ID, param, v);
 }
 
+// Move `current` toward `target` by at most `step` (per control tick).
+static inline void slewToward(float &current, float target, float step) {
+    float delta = target - current;
+    if (delta >  step) delta =  step;
+    if (delta < -step) delta = -step;
+    current += delta;
+}
+
 // ---------- CAN RX -- decode STATUS_2 ---------------------------------------
 static void onCanRx(const CAN_message_t &msg) {
-    if (!msg.flags.extended || msg.len < 8) return;
+    // NOTE: was `msg.len < 8`, which silently dropped every short frame --
+    // including the 1-byte PERSIST_PARAMETERS response below. Only the
+    // STATUS_2 decode actually needs 8 bytes; checked there instead.
+    if (!msg.flags.extended) return;
     rx_count++;
 
     uint8_t dev = msg.id & 0x3F;
@@ -228,7 +265,14 @@ static void onCanRx(const CAN_message_t &msg) {
         return;
     }
 
-    if (cls != CLS_STATUS || idx != IDX_STATUS_2) return;
+    // PERSIST_PARAMETERS response (cls=1 idx=4, DLC=1): result_code, 0=success.
+    if (cls == CLS_BURN_RESP && idx == IDX_BURN_RESP && msg.len >= 1) {
+        if (dev == LEFT_ID)  burn_result_left  = msg.buf[0];
+        if (dev == RIGHT_ID) burn_result_right = msg.buf[0];
+        return;
+    }
+
+    if (cls != CLS_STATUS || idx != IDX_STATUS_2 || msg.len < 8) return;
 
     float vel = toFloat(msg.buf);
     float pos = toFloat(msg.buf + 4);
@@ -280,26 +324,28 @@ static void handleLine(char *line) {
 
     switch (cmd) {
         case 'S':
-            // Stay in duty mode with 0% duty so the SparkMAX sees "idle"
-            // and its Brake idle-mode setting engages. Sending velocity=0
-            // via MODE_VELOCITY keeps the velocity PID running, which
-            // prevents the controller from entering idle state.
+            // Stop both wheels and reset to velocity mode (0 RPM setpoint),
+            // per the documented protocol contract. Bypasses the slew-rate
+            // limiter -- a commanded/watchdog stop must be immediate, never
+            // ramped down.
             left.cmd_rpm  = right.cmd_rpm  = 0.0f;
+            left.ramp_rpm = right.ramp_rpm = 0.0f;
             left.cmd_duty = right.cmd_duty = 0.0f;
-            ctrl_mode = MODE_DUTY;
+            ctrl_mode = MODE_VELOCITY;
             t_last_host = now;
             wdt_tripped = false;
             Serial.println("OK S");
             return;
 
         case 'D':
-            Serial.printf("DIAG tx=%lu rx=%lu wdt=%d mode=%s L=%.0f/%.0f R=%.0f/%.0f duty L=%.3f R=%.3f V=%.2f\n",
+            Serial.printf("DIAG tx=%lu rx=%lu wdt=%d mode=%s L=%.0f/%.0f/%.0f R=%.0f/%.0f/%.0f duty L=%.3f R=%.3f V=%.2f M=%.2f burn=%d/%d\n",
                           tx_count, rx_count, wdt_tripped ? 1 : 0,
                           ctrl_mode == MODE_DUTY ? "DUTY" : "VEL",
-                          left.meas_rpm, left.cmd_rpm,
-                          right.meas_rpm, right.cmd_rpm,
+                          left.meas_rpm, left.ramp_rpm, left.cmd_rpm,
+                          right.meas_rpm, right.ramp_rpm, right.cmd_rpm,
                           left.cmd_duty, right.cmd_duty,
-                          bus_voltage);
+                          bus_voltage, max_rpm_step,
+                          burn_result_left, burn_result_right);
             return;
 
         case 'U': {
@@ -321,11 +367,23 @@ static void handleLine(char *line) {
             return;
         }
 
-        case 'B':
+        case 'B': {
+            // Response frame (cls=1 idx=4) can take up to ~1s per REV's spec.
+            // Known limitation: persist currently returns result_code=255
+            // (rejected), not 0 -- root cause not found (see FINDINGS.md).
+            // Gains still work live via K-writes; actuator_node re-pushes
+            // them on every startup regardless of whether BURN succeeds.
+            burn_result_left = burn_result_right = -1;
             burnFlash(LEFT_ID);  delay(50);
             burnFlash(RIGHT_ID);
-            Serial.println("OK BURN");
+            uint32_t t0 = millis();
+            while (millis() - t0 < 1200
+                   && (burn_result_left < 0 || burn_result_right < 0)) {
+                delay(20);
+            }
+            Serial.printf("OK BURN result L=%d R=%d\n", burn_result_left, burn_result_right);
             return;
+        }
 
         case 'A':
             // IGVC §I.2 safety-light mode. A1 = autonomous (flash), A0 = manual
@@ -342,6 +400,15 @@ static void handleLine(char *line) {
             } else {
                 Serial.println("ERR A?");
             }
+            return;
+
+        case 'M':
+            // Runtime-adjustable slew rate: max RPM change per 20ms control
+            // tick. Lets the ramp be tuned live, same as the K PID gains.
+            if (!line[1]) { Serial.println("ERR M?"); return; }
+            max_rpm_step = atof(line + 1);
+            if (max_rpm_step < 0.0f) max_rpm_step = 0.0f;
+            Serial.printf("OK M=%.2f\n", max_rpm_step);
             return;
 
         case 'K': {
@@ -401,7 +468,7 @@ void setup() {
     Serial.begin(115200);
     while (!Serial && millis() < 3000) {}
     Serial.println("# avros diff-drive bridge ready");
-    Serial.println("# proto: L<rpm> R<rpm> | UL<d> UR<d> | S | D | K[PIDF]<v> | BURN | A0/A1");
+    Serial.println("# proto: L<rpm> R<rpm> | UL<d> UR<d> | S | D | K[PIDF]<v> | M<v> | BURN | A0/A1");
 
     // IGVC §I.2 safety light: SOLID amber the instant the Teensy boots, before
     // CAN bring-up, so it is on whenever the vehicle has power (rule fail-safe).
@@ -450,6 +517,7 @@ void loop() {
                 wdt_tripped = true;
             }
             left.cmd_rpm  = right.cmd_rpm  = 0.0f;
+            left.ramp_rpm = right.ramp_rpm = 0.0f;   // immediate, unramped stop
             left.cmd_duty = right.cmd_duty = 0.0f;
         }
 
@@ -458,8 +526,10 @@ void loop() {
             setDuty(LEFT_ID,  left.cmd_duty);
             setDuty(RIGHT_ID, right.cmd_duty);
         } else {
-            setVelocity(LEFT_ID,  left.cmd_rpm);
-            setVelocity(RIGHT_ID, right.cmd_rpm);
+            slewToward(left.ramp_rpm,  left.cmd_rpm,  max_rpm_step);
+            slewToward(right.ramp_rpm, right.cmd_rpm, max_rpm_step);
+            setVelocity(LEFT_ID,  left.ramp_rpm);
+            setVelocity(RIGHT_ID, right.ramp_rpm);
         }
     }
 
@@ -485,3 +555,4 @@ void loop() {
     // IGVC §I.2 safety light — solid (manual) / 2 Hz flash (autonomous)
     serviceLight(now);
 }
+
