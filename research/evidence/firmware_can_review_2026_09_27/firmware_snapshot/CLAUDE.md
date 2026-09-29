@@ -1,5 +1,3 @@
-> **LEGACY (v1). Not the live firmware since 2026-09-28.** The robot runs `firmware/teensy_diff_drive_v2/` (v2d) on SPARK MAX firmware 26.1.5. Current protocol: `../teensy_diff_drive_v2/PROTOCOL.md`; current gains and evidence: `docs/drive_tuning_2026_09_28/README.md`. The gains below are for SPARK FW 25 and are wrong on FW 26 (kV is in volts per RPM there). Kept for rollback and history.
-
 # Teensy Diff-Drive Firmware
 
 Thin USB-Serial ↔ CAN bridge for the IGVC differential drive. The Jetson's ROS2 `actuator_node` owns the diff-drive kinematics and streams per-wheel RPM setpoints; this firmware forwards them to each SparkMAX's built-in velocity PID and echoes wheel feedback.

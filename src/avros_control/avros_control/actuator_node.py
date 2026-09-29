@@ -30,7 +30,7 @@ Subscribes:
 
 Publishes:
   /avros/actuator_state     avros_msgs/ActuatorState @ 20 Hz
-  /wheel_odom               nav_msgs/Odometry @ 50 Hz (for EKF fusion)
+  /wheel_odom               nav_msgs/Odometry @ state_pub_rate_hz (20 Hz; twist from the SPARK-reported speed)
 """
 
 import math
@@ -95,6 +95,8 @@ _DYNAMIC_PARAMS = {
     'kI':                          '_k_i',
     'kD':                          '_k_d',
     'kIZone':                      '_k_izone',
+    'kS_left':                     '_k_s_l',
+    'kS_right':                    '_k_s_r',
 }
 
 # Which dynamic params need to be pushed to the Teensy on change. Keys here
@@ -106,6 +108,11 @@ _PID_SERIAL_PREFIX = {
     'kI':     'KI',
     'kD':     'KD',
     'kIZone': 'KZ',
+    # Static-friction feedforward per track, volts. Teensy v2c+ sends it in every velocity
+    # setpoint's ARBITRARY_FEEDFORWARD field as kS*sign(setpoint), 0 at a zero setpoint.
+    # (SPARK param 204 is NOT used: on FW 26 it applies +kS even at setpoint 0.)
+    'kS_left':  'KSL',
+    'kS_right': 'KSR',
 }
 
 
@@ -158,6 +165,8 @@ class ActuatorNode(Node):
         self.declare_parameter('kI', 0.0)
         self.declare_parameter('kD', 0.0)
         self.declare_parameter('kIZone', 200.0)
+        self.declare_parameter('kS_left', 0.0)    # volts, static-friction FF (Teensy arbFF)
+        self.declare_parameter('kS_right', 0.0)
         # Odom frame names
         self.declare_parameter('odom_frame', 'odom')
         self.declare_parameter('base_frame', 'base_link')
@@ -181,6 +190,8 @@ class ActuatorNode(Node):
         self._k_i = p('kI').value
         self._k_d = p('kD').value
         self._k_izone = p('kIZone').value
+        self._k_s_l = p('kS_left').value
+        self._k_s_r = p('kS_right').value
         self._odom_frame = p('odom_frame').value
         self._base_frame = p('base_frame').value
 
@@ -199,12 +210,14 @@ class ActuatorNode(Node):
         # see _on_param_change.
         for name, val in [('KF', self._k_ff), ('KP', self._k_p),
                           ('KI', self._k_i), ('KD', self._k_d),
-                          ('KZ', self._k_izone)]:
+                          ('KZ', self._k_izone),
+                          ('KSL', self._k_s_l), ('KSR', self._k_s_r)]:
             self._serial_write(f'{name}{val}')
             time.sleep(0.2)
         self.get_logger().info(
             f'SparkMAX gains set: kFF={self._k_ff} kP={self._k_p} '
-            f'kI={self._k_i} kD={self._k_d} kIZone={self._k_izone}'
+            f'kI={self._k_i} kD={self._k_d} kIZone={self._k_izone} '
+            f'kS L/R={self._k_s_l}/{self._k_s_r} V'
         )
 
         # ---- state ----
@@ -606,7 +619,7 @@ class ActuatorNode(Node):
         """
         import re
         E_RE = re.compile(r"E L(-?\d+) (-?[\d.]+) R(-?\d+) (-?[\d.]+)")
-        OK_RE = re.compile(r"OK (K[PIDF Z]|A[01]|S|UL=|BURN|L=).*")
+        OK_RE = re.compile(r"OK (K[PIDFS Z]|A[01]|S|UL=|BURN|L=).*")
         ERR_RE = re.compile(r"ERR .*")
         buf = ''
         while self._running:
