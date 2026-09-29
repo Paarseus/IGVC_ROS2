@@ -27,3 +27,5 @@ src/semantic_segmentation_layer/
 /scale-page.png
 /sheet-*.png
 /solidremote.png
+
+.vscode/
