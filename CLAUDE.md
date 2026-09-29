@@ -216,23 +216,29 @@ Sensor mount positions in URDF (`avros.urdf.xacro`) are approximate — measure 
                              │           ├─ Universal Heartbeat 0x01011840 @ 50 Hz
                              │           ├─ VELOCITY_SETPOINT cls=0 idx=0 → SparkMAX velocity PID
                              │           └─ STATUS_0/STATUS_2 decode → E line
-                             │               └─ SparkMAX FW 26.1.4 → NEO brushless → 12.75:1 ToughBox Mini
+                             │               └─ SparkMAX FW 26.1.5 → NEO brushless → 12.75:1 ToughBox Mini
                              │                   → 22T:22T #35 chain → 20T × 0.5" pulley → timing belt track
-                             └─ back: /wheel_odom (integrated from E-line positions) → EKF
+                             └─ back: /wheel_odom @ 20 Hz (from the SPARK-reported speed, about 50 ms lag with the final filter) → EKF
 ```
 
 ### Serial Protocol (115200 baud, line-oriented)
 
-Documented in `firmware/teensy_diff_drive/CLAUDE.md`. Summary:
+**Live firmware: `firmware/teensy_diff_drive_v2/` (v2d, 2026-09-28).** Full protocol in its `PROTOCOL.md`; `firmware/teensy_diff_drive/` is the legacy v1. Summary:
 
 | Host → Teensy | Effect |
 |---|---|
-| `L<rpm> R<rpm>` | velocity mode setpoint per wheel — SparkMAX onboard PID handles loop |
-| `UL<d> UR<d>` | duty-cycle mode setpoint (-0.3..0.3 clamped) |
-| `S` | stop — switches to MODE_DUTY=0 so SparkMAX Brake idle engages |
-| `D` | DIAG line with tx/rx counts, watchdog state, mode, L/R meas/cmd, bus voltage |
-| `K[PIDF]<val>` | write PID slot-0 gain to both SparkMAXes via PARAMETER_WRITE (cls=14 idx=0) |
-| `BURN` | PERSIST_PARAMETERS (cls=63 idx=15) — write RAM gains to SparkMAX flash |
+| `L<rpm> R<rpm>` | velocity setpoint per track (SPARK onboard PID), slewed by `M` (RPM per 20 ms) |
+| `UL<d> UR<d>` / `UVL<V> UVR<V>` | duty / voltage setpoint (bench tests; clamped by `MD`) |
+| `S` | stop to idle: duty 0 → SPARK idle mode (**Brake**). The 300 ms watchdog does the same |
+| `D` | DIAG line (counters, mode, speeds, bus V, faults, config-check state) |
+| `K[P\|I\|D\|F\|Z]<val>` | gain to both SPARKs (`KF` = param 16 = **kV in V/RPM on FW 26**); every write is confirmed by a `PWR … res=0` reply |
+| `KSL<V>` / `KSR<V>` | per-track static-friction feedforward, sent in each velocity setpoint's arbitrary-feedforward field (0 at a 0 setpoint) |
+| `PW` / `PR` | typed parameter write (protected IDs need `FORCE`) / read-back |
+| `CHK` | configuration check (also at boot): motor type, idle mode L = R, kV range, kS param = 0, filter, conversion factors → `CHK OK` / `CHK FAIL …` |
+| `BURN` | safe persist: disables the SPARKs first, then PERSIST_PARAMETERS; reports `OK BURN result L=0 R=0` |
+| `HB0` / `HB1` | bench test of the disabled heartbeat |
+
+**Motor-type interlock:** if either SPARK reports motor type ≠ 1 (brushless), v2d blocks motion on both tracks.
 
 ### Control priority (actuator_node)
 
@@ -252,13 +258,14 @@ Unified (v, ω) target computed from whichever input is freshest:
 - **Ground per motor revolution:** 0.01994 m (π × 80.85 mm drive-pulley pitch dia / 12.75:1 gearbox)
 - **Theoretical top speed:** 1.89 m/s at NEO free speed (5676 RPM)
 - **Measured Phase 4 max RPM extrapolated:** L = 5532 (97.5% free), R = 5072 (89.4% free) — right track has 8% higher friction
-- **SparkMAX PID gains (re-tuned 2026-05-18 after battery relocation):** kFF=0.000197, kP=0.0007, kI=2.5e-7, kD=0, kIZone=600 — BURNed to SparkMAX flash (both ID 1 + ID 2) via REV Hardware Client. Previous gains (kP=0.0008, kI=5e-7 from issue #6) caused 14-16% RPM overshoot at v=1.0 m/s and 23-27% on 0.5 rad/s rotations under the new COM — the kI integrator wound up during the 2 s slew at max_linear_accel=0.5 m/s² and dumped accumulated duty when the slew ended. Halving kI slowed buildup, lowering kP slightly tamed the proportional kick. After tune: 0-9% linear overshoot, 8-14% rotation overshoot, 93-96% steady-state delivery, **cumulative drift across a 0.3→1.0 m/s fwd/rev/rot sweep dropped from +31.6° to -0.085°** (the prior "drift" was largely asymmetric overshoot dumps at each velocity transition).
-- **Tuning via /cmd_vel:** the five SparkMAX gains are now `[DYNAMIC]` in `actuator_node._DYNAMIC_PARAMS` — `ros2 param set /actuator_node kP 0.0007` (etc.) sends the K-line over the live Teensy serial connection. Teensy responds with `OK K<P|I|D|F|Z>=<value>` which actuator_node parses and logs at INFO for end-to-end confirmation. RAM only; persistence still requires `BURN` over the Teensy or REV Hardware Client.
-- **Actuator-node slew caps (2026-05-19, asymmetric — gentle start, crisp stops):** max_linear_accel = 0.3 m/s², max_linear_decel = 1.3 m/s², max_angular_accel = 1.2 rad/s². At max_linear_mps=1.5 these give 5 s ramp-up, 1.15 s stop (0.86 m stopping distance), 1.25 s angular slew. Decel >> accel for safety. Note: `max_angular_accel_rps2` is currently used for BOTH angular accel AND decel — a future separate `max_angular_decel_rps2` would let turn-in stay soft while keeping rotation stops crisp. All `[DYNAMIC]`. **MPPI accel-limit params (`ax_max`/`ax_min`/`az_max` in nav2_params_humble.yaml) are matched to these values** so MPPI samples trajectories the chassis can deliver — keep in sync if these change.
+- **Motor controller configuration (2026-09-28, SPARK MAX FW 26.1.5, BURNed, verified after a power cycle):** motor type brushless, idle Brake, **kV 0.0023 V/RPM** (FW 26 units; `kFF` in actuator_params.yaml), **kP 0.0002, kI 0, kD 0, kIZone 0**, hall velocity filter depth 2 / period 0.016 s (odometry lag 50 ms), 50 A current limit, native kS/kA params 0 (kS is sent per track from the yaml via the Teensy: `kS_left`/`kS_right` = 0.18 V interim, bench-proven for 0.05 m/s). Bench acceptance 16/16; ground acceptance pending. Index: `docs/drive_tuning_2026_09_28/README.md`. **After any SPARK firmware update run `CHK`:** the 25→26 update reset motor type to brushed (stalled motors at about 30 A).
+- *History (superseded):* 2026-05-18 gains kFF=0.000197 (duty/RPM on FW 25), kP=0.0007, kI=2.5e-7, kIZone=600 — BURNed to SparkMAX flash (both ID 1 + ID 2) via REV Hardware Client. Previous gains (kP=0.0008, kI=5e-7 from issue #6) caused 14-16% RPM overshoot at v=1.0 m/s and 23-27% on 0.5 rad/s rotations under the new COM — the kI integrator wound up during the 2 s slew at max_linear_accel=0.5 m/s² and dumped accumulated duty when the slew ended. Halving kI slowed buildup, lowering kP slightly tamed the proportional kick. After tune: 0-9% linear overshoot, 8-14% rotation overshoot, 93-96% steady-state delivery, **cumulative drift across a 0.3→1.0 m/s fwd/rev/rot sweep dropped from +31.6° to -0.085°** (the prior "drift" was largely asymmetric overshoot dumps at each velocity transition).
+- **Tuning via /cmd_vel:** the SparkMAX gains and `kS_left`/`kS_right` are `[DYNAMIC]` in `actuator_node._DYNAMIC_PARAMS` — `ros2 param set /actuator_node kP 0.0002` (etc.) sends the K-line over the live Teensy serial connection. (`ros2 param set` can hang on the Jetson under load; alternative: restart actuator_node with `-p kP:=…`.) Teensy responds with `OK K<P|I|D|F|Z>=<value>` which actuator_node parses and logs at INFO for end-to-end confirmation. RAM only; persistence still requires `BURN` over the Teensy or REV Hardware Client.
+- **Actuator-node slew caps (2026-05-19, asymmetric — gentle start, crisp stops):** max_linear_accel = 0.3 m/s², max_linear_decel = 1.3 m/s², max_angular_accel = 1.2 rad/s². At max_linear_mps=1.5 these give 5 s ramp-up, 1.15 s stop (0.86 m stopping distance), 1.25 s angular slew. Decel >> accel for safety. Note: `max_angular_accel_rps2` is currently used for BOTH angular accel AND decel — a future separate `max_angular_decel_rps2` would let turn-in stay soft while keeping rotation stops crisp. All `[DYNAMIC]`. **Note: Humble MPPI does not read `ax_max`/`ax_min`/`az_max`**, so these actuator slews are the only acceleration limits and MPPI's model does not see them (open MPPI-readiness item, see `docs/drive_tuning_2026_09_28/MPPI_READINESS_TEST_PLAN.md`).
 - **Speed caps:** max_linear_mps = 1.5, max_angular_rps = 1.0
 - **WebUI max_throttle:** 1.0 (full cmd_vel range; clamped by max_linear_mps)
 - **Robot radius:** 0.8 m, inflation: **1.0 m local / 0.65 m global** (local raised 0.65→1.0 on 2026-05-21 so inflation ≥ robot radius → real early-avoidance gradient; global kept at 0.65 — map frame is GPS-smear-prone and wide inflation there boxed the robot historically)
-- **Idle mode:** **Brake** (set via REV Hardware Client on both SparkMAXes — required for quick stops)
+- **Idle mode:** **Brake** on both SparkMAXes (set and BURNed over CAN 2026-09-28; `CHK` fails if L ≠ R). Braked stop from 3500 RPM: about 0.3 s, no faults
 - **Motor inversion:** one SparkMAX has `Motor Inverted = true` so `L+ R+` produces forward ground motion on both tracks
 
 ---
@@ -392,7 +399,7 @@ CycloneDDS (`cyclonedds.xml`):
 
 ## Known Issues & Fixes
 
-SparkMAX FW 26.1.4 CAN protocol gotchas (cls=14 PARAMETER_WRITE, cls=0 VELOCITY_SETPOINT, STATUS_2 enable): see `firmware/teensy_diff_drive/CLAUDE.md`.
+SparkMAX FW 26.1.5 CAN protocol: see `firmware/teensy_diff_drive_v2/PROTOCOL.md` and `REVIEW.md`; bench evidence in `docs/drive_tuning_2026_09_28/`.
 
 | Issue | Fix |
 |-------|-----|
