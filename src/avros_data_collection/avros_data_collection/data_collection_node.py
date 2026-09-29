@@ -1,22 +1,22 @@
 """Capture synchronized camera frames and the latest vehicle state to disk."""
 
 import csv
-import os
-import signal
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
-from typing import Optional
 
 import cv2
-from cv_bridge import CvBridge, CvBridgeError
-from message_filters import ApproximateTimeSynchronizer, Subscriber
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import Image, Imu, NavSatFix
+from sensor_msgs.msg import Imu, NavSatFix
 from nav_msgs.msg import Odometry
+
+
+RGB_CAMERA_INDEX = 0 # Camera device index for the RGB camera.
+THERMAL_CAMERA_INDEX = 1 # Camera device index for the thermal camera.
+CAPTURE_RATE_HZ = 10.0 # Number of image pairs to capture per second.
 
 
 CSV_COLUMNS = [
@@ -38,13 +38,12 @@ class DataCollectionNode(Node):
         super().__init__('avros_dataCollection')
 
         self.declare_parameter('output_directory', 'data_collection')
-        self.declare_parameter('rgb_topic', '/zed_front/zed_node/rgb/image_rect_color')
-        self.declare_parameter('thermal_topic', '/thermal/image_raw')
+        self.declare_parameter('rgb_camera_index', RGB_CAMERA_INDEX)
+        self.declare_parameter('thermal_camera_index', THERMAL_CAMERA_INDEX)
         self.declare_parameter('imu_topic', '/imu/data')
         self.declare_parameter('gps_topic', '/gnss')
         self.declare_parameter('odometry_topic', '/wheel_odom')
-        self.declare_parameter('capture_rate_hz', 10.0)
-        self.declare_parameter('sync_slop_seconds', 0.05)
+        self.declare_parameter('capture_rate_hz', CAPTURE_RATE_HZ)
         self.declare_parameter('state_max_age_seconds', 0.5)
         self.declare_parameter('jpeg_quality', 95)
 
@@ -60,11 +59,16 @@ class DataCollectionNode(Node):
         if self._rate_hz <= 0.0:
             raise ValueError('capture_rate_hz must be greater than zero')
         self._period_ns = int(1e9 / self._rate_hz)
-        self._slop = float(self.get_parameter('sync_slop_seconds').value)
         self._max_state_age_ns = int(float(
             self.get_parameter('state_max_age_seconds').value) * 1e9)
         self._jpeg_quality = int(self.get_parameter('jpeg_quality').value)
-        self._bridge = CvBridge()
+        self._rgb_camera = cv2.VideoCapture(int(self.get_parameter('rgb_camera_index').value))
+        self._thermal_camera = cv2.VideoCapture(int(self.get_parameter('thermal_camera_index').value))
+        if not self._rgb_camera.isOpened():
+            raise RuntimeError('Could not open the RGB camera')
+        if not self._thermal_camera.isOpened():
+            self._rgb_camera.release()
+            raise RuntimeError('Could not open the thermal camera')
         self._lock = Lock()
         self._last_capture_stamp_ns = None
         self._image_count = 0
@@ -87,19 +91,12 @@ class DataCollectionNode(Node):
             Odometry, str(self.get_parameter('odometry_topic').value), self._on_odom,
             qos_profile_sensor_data)
 
-        self._rgb_sub = Subscriber(
-            self, Image, str(self.get_parameter('rgb_topic').value),
-            qos_profile=qos_profile_sensor_data)
-        self._thermal_sub = Subscriber(
-            self, Image, str(self.get_parameter('thermal_topic').value),
-            qos_profile=qos_profile_sensor_data)
-        self._sync = ApproximateTimeSynchronizer(
-            [self._rgb_sub, self._thermal_sub], queue_size=30, slop=self._slop)
-        self._sync.registerCallback(self._on_image_pair)
+        self._capture_timer = self.create_timer(1.0 / self._rate_hz, self._capture_pair)
 
         self.get_logger().info(
             f'Collecting at {self._rate_hz:g} Hz into {self._output}; '
-            f'RGB={self._rgb_sub.topic}, thermal={self._thermal_sub.topic}')
+            f'RGB camera index={self.get_parameter("rgb_camera_index").value}, '
+            f'thermal camera index={self.get_parameter("thermal_camera_index").value}')
 
     @staticmethod
     def _stamp_ns(msg) -> int:
@@ -124,10 +121,16 @@ class DataCollectionNode(Node):
         candidate = min(history, key=lambda item: abs(item[0] - stamp_ns))
         return candidate[1] if abs(candidate[0] - stamp_ns) <= max_age_ns else None
 
-    def _on_image_pair(self, rgb_msg: Image, thermal_msg: Image) -> None:
-        rgb_stamp = self._stamp_ns(rgb_msg)
-        thermal_stamp = self._stamp_ns(thermal_msg)
-        pair_stamp = max(rgb_stamp, thermal_stamp)
+    def _capture_pair(self) -> None:
+        # The reads occur in the same callback. Hardware triggering is needed
+        # for truly simultaneous exposure; this gives ordinary USB cameras a
+        # consistent software capture cadence.
+        rgb_ok, rgb = self._rgb_camera.read()
+        thermal_ok, thermal = self._thermal_camera.read()
+        if not rgb_ok or not thermal_ok:
+            self.get_logger().warning('Could not read both external cameras')
+            return
+        pair_stamp = self.get_clock().now().nanoseconds
         with self._lock:
             if (self._last_capture_stamp_ns is not None and
                     pair_stamp - self._last_capture_stamp_ns < self._period_ns):
@@ -137,12 +140,7 @@ class DataCollectionNode(Node):
             gps = self._nearest(self._gps_history, pair_stamp, self._max_state_age_ns)
             odom = self._nearest(self._odom_history, pair_stamp, self._max_state_age_ns)
 
-        try:
-            rgb = self._bridge.imgmsg_to_cv2(rgb_msg, desired_encoding='bgr8')
-            thermal = self._thermal_to_bgr(thermal_msg)
-        except CvBridgeError as exc:
-            self.get_logger().error(f'Could not convert image pair: {exc}')
-            return
+        thermal = self._thermal_to_bgr(thermal)
 
         count = self._image_count
         stamp_date = datetime.fromtimestamp(pair_stamp / 1e9, timezone.utc).strftime(
@@ -161,10 +159,10 @@ class DataCollectionNode(Node):
             count, pair_stamp, stamp_date, rgb_name, thermal_name, imu, gps, odom))
         self._image_count += 1
 
-    def _thermal_to_bgr(self, msg: Image):
-        image = self._bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
+    @staticmethod
+    def _thermal_to_bgr(image):
         if image is None:
-            raise CvBridgeError('thermal image is empty')
+            raise ValueError('thermal image is empty')
         if image.dtype != 'uint8':
             image = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX).astype('uint8')
         if len(image.shape) == 2:
@@ -218,6 +216,8 @@ class DataCollectionNode(Node):
 
     def destroy_node(self):
         self.write_csv()
+        self._rgb_camera.release()
+        self._thermal_camera.release()
         return super().destroy_node()
 
 
