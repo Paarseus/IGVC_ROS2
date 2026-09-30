@@ -81,7 +81,7 @@ At the configured capture rate, the node performs the following actions:
 4. Finds the nearest available IMU, GPS, and odometry messages.
 5. Finds the nearest actuator command and actual actuator state.
 6. Saves both images using the same image counter.
-7. Adds one row to the CSV data file.
+7. Appends the row to `data.csv` and flushes it immediately.
 
 The two camera reads happen in the same timer callback. This provides consistent software timing, but ordinary USB cameras are not guaranteed to expose their images at exactly the same instant. Exact exposure synchronization requires cameras with hardware triggering or another shared timing mechanism.
 
@@ -126,7 +126,7 @@ can differ from the command because of limits, delays, or a watchdog.
 
 ## Ending a Run
 
-Press `Ctrl-C` to stop the node. The node releases both cameras and writes all collected rows to `data.csv`. The CSV should be closed normally so that the final data is preserved.
+The CSV header is written when the node starts. Each captured sample is appended and flushed immediately while the node is running, so the file can be inspected during the run and recent data is less likely to be lost. Press `Ctrl-C` to stop the node; it flushes and closes the CSV, then releases both cameras.
 
 ## Troubleshooting
 

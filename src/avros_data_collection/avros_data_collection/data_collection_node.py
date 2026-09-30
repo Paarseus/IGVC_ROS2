@@ -62,6 +62,10 @@ class DataCollectionNode(Node):
         self._rgb_dir.mkdir(parents=True, exist_ok=True)
         self._thermal_dir.mkdir(parents=True, exist_ok=True)
         self._csv_path = self._output / 'data.csv'
+        self._csv_file = self._csv_path.open('w', newline='', encoding='utf-8')
+        self._csv_writer = csv.DictWriter(self._csv_file, fieldnames=CSV_COLUMNS)
+        self._csv_writer.writeheader()
+        self._csv_file.flush()
 
         self._rate_hz = float(self.get_parameter('capture_rate_hz').value)
         if self._rate_hz <= 0.0:
@@ -80,7 +84,6 @@ class DataCollectionNode(Node):
         self._lock = Lock()
         self._last_capture_stamp_ns = None
         self._image_count = 0
-        self._rows = []
         self._closed = False
 
         # Keep short histories so the state associated with an image is chosen
@@ -183,9 +186,11 @@ class DataCollectionNode(Node):
             self.get_logger().error(f'Failed to write {thermal_name}')
             return
 
-        self._rows.append(self._make_row(
+        row = self._make_row(
             count, pair_stamp, stamp_date, rgb_name, thermal_name, imu, gps, odom,
-            command, actuator_state))
+            command, actuator_state)
+        self._csv_writer.writerow(row)
+        self._csv_file.flush()
         self._image_count += 1
 
     @staticmethod
@@ -259,11 +264,10 @@ class DataCollectionNode(Node):
         if self._closed:
             return
         self._closed = True
-        with self._csv_path.open('w', newline='', encoding='utf-8') as file:
-            writer = csv.DictWriter(file, fieldnames=CSV_COLUMNS)
-            writer.writeheader()
-            writer.writerows(self._rows)
-        self.get_logger().info(f'Wrote {len(self._rows)} rows to {self._csv_path}')
+        self._csv_file.flush()
+        self._csv_file.close()
+        self.get_logger().info(
+            f'Wrote {self._image_count} rows to {self._csv_path}')
 
     def destroy_node(self):
         self.write_csv()
