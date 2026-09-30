@@ -12,6 +12,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Imu, NavSatFix
 from nav_msgs.msg import Odometry
+from avros_msgs.msg import ActuatorCommand, ActuatorState
 
 
 RGB_CAMERA_INDEX = 0 # Camera device index for the RGB camera.
@@ -22,10 +23,15 @@ CAPTURE_RATE_HZ = 10.0 # Number of image pairs to capture per second.
 CSV_COLUMNS = [
     'image_count', 'capture_time_utc', 'image_stamp_ns',
     'rgb_image', 'thermal_image',
+    'command_throttle', 'command_steering', 'command_brake',
+    'command_mode', 'command_estop',
+    'actual_throttle', 'actual_steering', 'actual_brake',
+    'actual_mode', 'actual_estop', 'watchdog_active',
     'imu_orientation_x', 'imu_orientation_y', 'imu_orientation_z', 'imu_orientation_w',
     'imu_angular_velocity_x', 'imu_angular_velocity_y', 'imu_angular_velocity_z',
     'imu_linear_acceleration_x', 'imu_linear_acceleration_y', 'imu_linear_acceleration_z',
-    'gps_latitude', 'gps_longitude', 'gps_altitude', 'gps_status',
+    'gps_valid', 'gps_latitude', 'gps_longitude', 'gps_altitude',
+    'gps_status', 'gps_covariance_xx',
     'linear_velocity_x', 'linear_velocity_y', 'linear_velocity_z',
     'angular_velocity_x', 'angular_velocity_y', 'angular_velocity_z',
 ]
@@ -41,6 +47,8 @@ class DataCollectionNode(Node):
         self.declare_parameter('rgb_camera_index', RGB_CAMERA_INDEX)
         self.declare_parameter('thermal_camera_index', THERMAL_CAMERA_INDEX)
         self.declare_parameter('imu_topic', '/imu/data')
+        self.declare_parameter('command_topic', '/avros/actuator_command')
+        self.declare_parameter('actuator_state_topic', '/avros/actuator_state')
         self.declare_parameter('gps_topic', '/gnss')
         self.declare_parameter('odometry_topic', '/wheel_odom')
         self.declare_parameter('capture_rate_hz', CAPTURE_RATE_HZ)
@@ -80,6 +88,8 @@ class DataCollectionNode(Node):
         self._imu_history = deque(maxlen=200)
         self._gps_history = deque(maxlen=50)
         self._odom_history = deque(maxlen=200)
+        self._command_history = deque(maxlen=200)
+        self._actuator_state_history = deque(maxlen=200)
 
         self._imu_sub = self.create_subscription(
             Imu, str(self.get_parameter('imu_topic').value), self._on_imu,
@@ -90,6 +100,12 @@ class DataCollectionNode(Node):
         self._odom_sub = self.create_subscription(
             Odometry, str(self.get_parameter('odometry_topic').value), self._on_odom,
             qos_profile_sensor_data)
+        self._command_sub = self.create_subscription(
+            ActuatorCommand, str(self.get_parameter('command_topic').value),
+            self._on_command, qos_profile_sensor_data)
+        self._actuator_state_sub = self.create_subscription(
+            ActuatorState, str(self.get_parameter('actuator_state_topic').value),
+            self._on_actuator_state, qos_profile_sensor_data)
 
         self._capture_timer = self.create_timer(1.0 / self._rate_hz, self._capture_pair)
 
@@ -113,6 +129,14 @@ class DataCollectionNode(Node):
     def _on_odom(self, msg: Odometry) -> None:
         with self._lock:
             self._odom_history.append((self._stamp_ns(msg), msg))
+
+    def _on_command(self, msg: ActuatorCommand) -> None:
+        with self._lock:
+            self._command_history.append((self._stamp_ns(msg), msg))
+
+    def _on_actuator_state(self, msg: ActuatorState) -> None:
+        with self._lock:
+            self._actuator_state_history.append((self._stamp_ns(msg), msg))
 
     @staticmethod
     def _nearest(history, stamp_ns: int, max_age_ns: int):
@@ -139,6 +163,9 @@ class DataCollectionNode(Node):
             imu = self._nearest(self._imu_history, pair_stamp, self._max_state_age_ns)
             gps = self._nearest(self._gps_history, pair_stamp, self._max_state_age_ns)
             odom = self._nearest(self._odom_history, pair_stamp, self._max_state_age_ns)
+            command = self._nearest(self._command_history, pair_stamp, self._max_state_age_ns)
+            actuator_state = self._nearest(
+                self._actuator_state_history, pair_stamp, self._max_state_age_ns)
 
         thermal = self._thermal_to_bgr(thermal)
 
@@ -157,7 +184,8 @@ class DataCollectionNode(Node):
             return
 
         self._rows.append(self._make_row(
-            count, pair_stamp, stamp_date, rgb_name, thermal_name, imu, gps, odom))
+            count, pair_stamp, stamp_date, rgb_name, thermal_name, imu, gps, odom,
+            command, actuator_state))
         self._image_count += 1
 
     @staticmethod
@@ -173,18 +201,36 @@ class DataCollectionNode(Node):
         return image
 
     @staticmethod
-    def _make_row(count, stamp_ns, date, rgb_name, thermal_name, imu, gps, odom):
+    def _make_row(count, stamp_ns, date, rgb_name, thermal_name, imu, gps, odom,
+                  command, actuator_state):
         def value(obj, path: str, default=''):
             for part in path.split('.'):
                 if obj is None:
                     return default
-                obj = getattr(obj, part, None)
+                if part.isdigit():
+                    try:
+                        obj = obj[int(part)]
+                    except (IndexError, TypeError):
+                        return default
+                else:
+                    obj = getattr(obj, part, None)
             return default if obj is None else obj
 
         return {
             'image_count': count, 'capture_time_utc': date,
             'image_stamp_ns': stamp_ns, 'rgb_image': f'imgs/rgb/{rgb_name}',
             'thermal_image': f'imgs/thermal/{thermal_name}',
+            'command_throttle': value(command, 'throttle'),
+            'command_steering': value(command, 'steer'),
+            'command_brake': value(command, 'brake'),
+            'command_mode': value(command, 'mode'),
+            'command_estop': value(command, 'estop'),
+            'actual_throttle': value(actuator_state, 'throttle'),
+            'actual_steering': value(actuator_state, 'steer'),
+            'actual_brake': value(actuator_state, 'brake'),
+            'actual_mode': value(actuator_state, 'mode'),
+            'actual_estop': value(actuator_state, 'estop'),
+            'watchdog_active': value(actuator_state, 'watchdog_active'),
             'imu_orientation_x': value(imu, 'orientation.x'),
             'imu_orientation_y': value(imu, 'orientation.y'),
             'imu_orientation_z': value(imu, 'orientation.z'),
@@ -195,8 +241,12 @@ class DataCollectionNode(Node):
             'imu_linear_acceleration_x': value(imu, 'linear_acceleration.x'),
             'imu_linear_acceleration_y': value(imu, 'linear_acceleration.y'),
             'imu_linear_acceleration_z': value(imu, 'linear_acceleration.z'),
-            'gps_latitude': value(gps, 'latitude'), 'gps_longitude': value(gps, 'longitude'),
-            'gps_altitude': value(gps, 'altitude'), 'gps_status': value(gps, 'status.status'),
+            'gps_valid': (value(gps, 'status.status', -1) >= 0),
+            'gps_latitude': value(gps, 'latitude'),
+            'gps_longitude': value(gps, 'longitude'),
+            'gps_altitude': value(gps, 'altitude'),
+            'gps_status': value(gps, 'status.status'),
+            'gps_covariance_xx': value(gps, 'position_covariance.0'),
             'linear_velocity_x': value(odom, 'twist.twist.linear.x'),
             'linear_velocity_y': value(odom, 'twist.twist.linear.y'),
             'linear_velocity_z': value(odom, 'twist.twist.linear.z'),

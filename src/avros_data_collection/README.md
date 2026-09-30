@@ -79,8 +79,9 @@ At the configured capture rate, the node performs the following actions:
 2. Reads one frame from the thermal camera using OpenCV.
 3. Records the current ROS timestamp.
 4. Finds the nearest available IMU, GPS, and odometry messages.
-5. Saves both images using the same image counter.
-6. Adds one row to the CSV data file.
+5. Finds the nearest actuator command and actual actuator state.
+6. Saves both images using the same image counter.
+7. Adds one row to the CSV data file.
 
 The two camera reads happen in the same timer callback. This provides consistent software timing, but ordinary USB cameras are not guaranteed to expose their images at exactly the same instant. Exact exposure synchronization requires cameras with hardware triggering or another shared timing mechanism.
 
@@ -111,14 +112,17 @@ The matching image counter indicates that the RGB and thermal files belong to th
 
 The CSV contains:
 
-- Image count and timestamp
-- Relative paths to the RGB and thermal images
-- IMU orientation
-- IMU angular velocity
-- IMU linear acceleration
-- GPS latitude, longitude, altitude, and status
+- Image count, capture timestamp, and relative image paths
+- Commanded throttle, steering, brake, mode, and emergency-stop state
+- Actual throttle, steering, brake, mode, emergency-stop state, and watchdog state
+- IMU orientation, angular velocity, and linear acceleration
+- GPS validity, latitude, longitude, altitude, status, and horizontal covariance
 - Linear velocity from odometry
 - Angular velocity, including the turning rate around the vertical axis
+
+The commanded control values are the primary imitation-learning labels. The
+actual actuator values are included to show what the vehicle executed, which
+can differ from the command because of limits, delays, or a watchdog.
 
 ## Ending a Run
 
