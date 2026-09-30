@@ -145,8 +145,9 @@ class DataCollectionNode(Node):
         count = self._image_count
         stamp_date = datetime.fromtimestamp(pair_stamp / 1e9, timezone.utc).strftime(
             '%Y%m%dT%H%M%S.%fZ')
-        rgb_name = f'rgb_{count}_{stamp_date}.jpg'
-        thermal_name = f'thermal_{count}_{stamp_date}.jpg'
+        padded_count = f'{count:0{IMAGE_COUNT_WIDTH}d}'
+        rgb_name = f'rgb_{padded_count}_{stamp_date}.jpg'
+        thermal_name = f'thermal_{padded_count}_{stamp_date}.jpg'
         flags = [cv2.IMWRITE_JPEG_QUALITY, self._jpeg_quality]
         if not cv2.imwrite(str(self._rgb_dir / rgb_name), rgb, flags):
             self.get_logger().error(f'Failed to write {rgb_name}')
