@@ -34,13 +34,12 @@ All three CSV files are created when the node starts and are appended and flushe
 
 One row is written for each saved RGB/thermal image pair. It contains:
 
-- Image counter, episode ID, and capture timestamp
+- Image counter, episode ID, capture timestamp, and elapsed `time_seconds`
 - Relative paths to the RGB and thermal images
-- Commanded throttle, steering, brake, mode, and emergency-stop state
-- Actual throttle, steering, brake, mode, emergency-stop state, and watchdog state
-- Linear and angular velocity from odometry
+- Throttle, steering, brake, mode, and emergency-stop state
+- `speed_mps` and `yaw_rate_rps` from odometry
 
-The commanded controls are the primary imitation-learning labels. Actual actuator values show what the vehicle executed and may differ because of limits, delays, or a watchdog.
+The throttle, steering, and brake values are the commanded controls used as the primary imitation-learning labels.
 
 ### `imu_log.csv`
 
@@ -96,7 +95,6 @@ The default ROS topics are:
 | GNSS | `/gnss` | `sensor_msgs/NavSatFix` |
 | Odometry | `/wheel_odom` | `nav_msgs/Odometry` |
 | Command | `/avros/actuator_command` | `avros_msgs/ActuatorCommand` |
-| Actuator state | `/avros/actuator_state` | `avros_msgs/ActuatorState` |
 
 Override topic names when necessary:
 
@@ -105,8 +103,7 @@ ros2 run avros_data_logger avros_dataLogger --ros-args \
   -p imu_topic:=/imu/data \
   -p gps_topic:=/gnss \
   -p odometry_topic:=/wheel_odom \
-  -p command_topic:=/avros/actuator_command \
-  -p actuator_state_topic:=/avros/actuator_state
+  -p command_topic:=/avros/actuator_command
 ```
 
 ## Building and Running
@@ -145,7 +142,7 @@ logger does not currently detect driving start/stop events automatically.
 
 The RGB and thermal cameras are read in the same timer callback. Their files receive the same image counter and capture timestamp, but ordinary USB cameras are not guaranteed to expose their images at exactly the same instant. Exact exposure synchronization requires hardware triggering or a shared timing source.
 
-The camera log uses the nearest recent command, actuator state, and odometry message. The IMU and GNSS logs do not downsample or wait for camera frames; every received message is written with its own ROS timestamp. This is important for later visual-inertial and GNSS processing.
+The camera log uses the nearest recent command and odometry message. The IMU and GNSS logs do not downsample or wait for camera frames; every received message is written with its own ROS timestamp. This is important for later visual-inertial and GNSS processing.
 
 ## Testing
 

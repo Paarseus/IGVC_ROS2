@@ -12,7 +12,7 @@ from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Imu, NavSatFix
-from avros_msgs.msg import ActuatorCommand, ActuatorState
+from avros_msgs.msg import ActuatorCommand
 
 
 # Camera device index for the RGB camera.
@@ -27,13 +27,10 @@ IMAGE_COUNT_WIDTH = 6
 
 CAMERA_COLUMNS = [
     'image_count', 'episode_id', 'capture_time_utc', 'image_stamp_ns',
+    'time_seconds',
     'rgb_image', 'thermal_image',
-    'command_throttle', 'command_steering', 'command_brake',
-    'command_mode', 'command_estop',
-    'actual_throttle', 'actual_steering', 'actual_brake',
-    'actual_mode', 'actual_estop', 'watchdog_active',
-    'linear_velocity_x', 'linear_velocity_y', 'linear_velocity_z',
-    'angular_velocity_x', 'angular_velocity_y', 'angular_velocity_z',
+    'throttle', 'steering', 'brake', 'mode', 'estop',
+    'speed_mps', 'yaw_rate_rps',
 ]
 
 IMU_COLUMNS = [
@@ -98,7 +95,6 @@ class DataLoggerNode(Node):
         self.declare_parameter('thermal_camera_index', THERMAL_CAMERA_INDEX)
         self.declare_parameter('imu_topic', '/imu/data')
         self.declare_parameter('command_topic', '/avros/actuator_command')
-        self.declare_parameter('actuator_state_topic', '/avros/actuator_state')
         self.declare_parameter('gps_topic', '/gnss')
         self.declare_parameter('odometry_topic', '/wheel_odom')
         self.declare_parameter('capture_rate_hz', CAPTURE_RATE_HZ)
@@ -107,8 +103,8 @@ class DataLoggerNode(Node):
 
         output = Path(str(self.get_parameter('output_directory').value)).expanduser()
         self._output = output if output.is_absolute() else Path.cwd() / output
-        self._rgb_dir = self._output / 'images' / 'rgb_image'
-        self._thermal_dir = self._output / 'images' / 'thermal_image'
+        self._rgb_dir = self._output / 'images' / 'rgb'
+        self._thermal_dir = self._output / 'images' / 'thermal'
         self._rgb_dir.mkdir(parents=True, exist_ok=True)
         self._thermal_dir.mkdir(parents=True, exist_ok=True)
 
@@ -120,6 +116,7 @@ class DataLoggerNode(Node):
             self._output / 'gnss_log.csv', GNSS_COLUMNS)
 
         self._episode_id = int(self.get_parameter('episode_id').value)
+        self._run_start_ns = self.get_clock().now().nanoseconds
         self._rate_hz = float(self.get_parameter('capture_rate_hz').value)
         if self._rate_hz <= 0.0:
             raise ValueError('capture_rate_hz must be greater than zero')
@@ -144,7 +141,6 @@ class DataLoggerNode(Node):
         self._id = 0
         self._closed = False
         self._command_history = deque(maxlen=200)
-        self._actuator_state_history = deque(maxlen=200)
         self._odom_history = deque(maxlen=200)
 
         self.create_subscription(
@@ -159,10 +155,6 @@ class DataLoggerNode(Node):
         self.create_subscription(
             ActuatorCommand, str(self.get_parameter('command_topic').value),
             self._on_command, qos_profile_sensor_data)
-        self.create_subscription(
-            ActuatorState, str(self.get_parameter('actuator_state_topic').value),
-            self._on_actuator_state, qos_profile_sensor_data)
-
         self._capture_timer = self.create_timer(
             1.0 / self._rate_hz, self._capture_pair)
         self.get_logger().info(
@@ -241,10 +233,6 @@ class DataLoggerNode(Node):
         with self._lock:
             self._command_history.append((self._stamp_ns(msg), msg))
 
-    def _on_actuator_state(self, msg: ActuatorState) -> None:
-        with self._lock:
-            self._actuator_state_history.append((self._stamp_ns(msg), msg))
-
     def _on_odom(self, msg: Odometry) -> None:
         with self._lock:
             self._odom_history.append((self._stamp_ns(msg), msg))
@@ -271,8 +259,6 @@ class DataLoggerNode(Node):
             self._last_capture_stamp_ns = pair_stamp
             command = self._nearest(
                 self._command_history, pair_stamp, self._max_state_age_ns)
-            actuator_state = self._nearest(
-                self._actuator_state_history, pair_stamp, self._max_state_age_ns)
             odom = self._nearest(
                 self._odom_history, pair_stamp, self._max_state_age_ns)
 
@@ -289,9 +275,10 @@ class DataLoggerNode(Node):
             self.get_logger().error(f'Failed to write {thermal_name}')
             return
 
+        time_seconds = (pair_stamp - self._run_start_ns) / 1e9
         row = self._make_camera_row(
-            count, self._episode_id, pair_stamp, stamp_date,
-            rgb_name, thermal_name, command, actuator_state, odom)
+            count, self._episode_id, pair_stamp, stamp_date, time_seconds,
+            rgb_name, thermal_name, command, odom)
         with self._lock:
             self._camera_writer.writerow(row)
             self._camera_file.flush()
@@ -310,8 +297,8 @@ class DataLoggerNode(Node):
         return image
 
     @staticmethod
-    def _make_camera_row(count, episode_id, stamp_ns, date,
-                         rgb_name, thermal_name, command, actuator_state, odom):
+    def _make_camera_row(count, episode_id, stamp_ns, date, time_seconds,
+                         rgb_name, thermal_name, command, odom):
         def value(obj, path: str, default=''):
             for part in path.split('.'):
                 if obj is None:
@@ -324,25 +311,16 @@ class DataLoggerNode(Node):
             'episode_id': episode_id,
             'capture_time_utc': date,
             'image_stamp_ns': stamp_ns,
+            'time_seconds': time_seconds,
             'rgb_image': f'images/rgb/{rgb_name}',
             'thermal_image': f'images/thermal/{thermal_name}',
-            'command_throttle': value(command, 'throttle'),
-            'command_steering': value(command, 'steer'),
-            'command_brake': value(command, 'brake'),
-            'command_mode': value(command, 'mode'),
-            'command_estop': value(command, 'estop'),
-            'actual_throttle': value(actuator_state, 'throttle'),
-            'actual_steering': value(actuator_state, 'steer'),
-            'actual_brake': value(actuator_state, 'brake'),
-            'actual_mode': value(actuator_state, 'mode'),
-            'actual_estop': value(actuator_state, 'estop'),
-            'watchdog_active': value(actuator_state, 'watchdog_active'),
-            'linear_velocity_x': value(odom, 'twist.twist.linear.x'),
-            'linear_velocity_y': value(odom, 'twist.twist.linear.y'),
-            'linear_velocity_z': value(odom, 'twist.twist.linear.z'),
-            'angular_velocity_x': value(odom, 'twist.twist.angular.x'),
-            'angular_velocity_y': value(odom, 'twist.twist.angular.y'),
-            'angular_velocity_z': value(odom, 'twist.twist.angular.z'),
+            'throttle': value(command, 'throttle'),
+            'steering': value(command, 'steer'),
+            'brake': value(command, 'brake'),
+            'mode': value(command, 'mode'),
+            'estop': value(command, 'estop'),
+            'speed_mps': value(odom, 'twist.twist.linear.x'),
+            'yaw_rate_rps': value(odom, 'twist.twist.angular.z'),
         }
 
     def _close_logs(self) -> None:
