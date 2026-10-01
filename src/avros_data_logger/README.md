@@ -132,6 +132,17 @@ The RGB and thermal cameras are read in the same timer callback. Their files rec
 
 The camera log uses the nearest recent command, actuator state, and odometry message. The IMU and GNSS logs do not downsample or wait for camera frames; every received message is written with its own ROS timestamp. This is important for later visual-inertial and GNSS processing.
 
+## Testing
+
+After building the workspace, run the package tests with:
+
+```bash
+colcon test --packages-select avros_data_logger
+colcon test-result --verbose
+```
+
+The tests cover camera-device opening behavior, zero-padded image names, CSV headers, and writing individual IMU and GNSS messages. They do not require physical cameras because camera access is mocked.
+
 ## Ending a Run
 
 Press `Ctrl-C` to stop the node. The node flushes and closes all three CSV files and releases both cameras.

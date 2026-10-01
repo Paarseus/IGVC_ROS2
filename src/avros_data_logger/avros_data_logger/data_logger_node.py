@@ -67,6 +67,24 @@ GNSS_COLUMNS = [
     'position_covariance_type',
 ]
 
+def _open_camera(index: int):
+    """Open an OpenCV camera and fail clearly when it is unavailable."""
+    camera = cv2.VideoCapture(int(index))
+    if not camera.isOpened():
+        camera.release()
+        raise RuntimeError(f'Could not open camera index {index}')
+    return camera
+
+
+def _image_names(count: int, stamp_date: str):
+    """Return matching RGB and thermal filenames for one capture."""
+    padded_count = f'{count:0{IMAGE_COUNT_WIDTH}d}'
+    return (
+        f'rgb_{padded_count}_{stamp_date}.jpg',
+        f'thermal_{padded_count}_{stamp_date}.jpg',
+    )
+
+
 
 class DataLoggerNode(Node):
     """Save camera frames and sensor messages in rate-appropriate logs."""
@@ -108,17 +126,16 @@ class DataLoggerNode(Node):
             self.get_parameter('state_max_age_seconds').value) * 1e9)
         self._jpeg_quality = int(self.get_parameter('jpeg_quality').value)
 
-        self._rgb_camera = cv2.VideoCapture(
-            int(self.get_parameter('rgb_camera_index').value))
-        self._thermal_camera = cv2.VideoCapture(
-            int(self.get_parameter('thermal_camera_index').value))
-        if not self._rgb_camera.isOpened():
+        try:
+            self._rgb_camera = _open_camera(
+                self.get_parameter('rgb_camera_index').value)
+            self._thermal_camera = _open_camera(
+                self.get_parameter('thermal_camera_index').value)
+        except RuntimeError:
+            if hasattr(self, '_rgb_camera'):
+                self._rgb_camera.release()
             self._close_logs()
-            raise RuntimeError('Could not open the RGB camera')
-        if not self._thermal_camera.isOpened():
-            self._rgb_camera.release()
-            self._close_logs()
-            raise RuntimeError('Could not open the thermal camera')
+            raise
 
         self._lock = Lock()
         self._last_capture_stamp_ns = None
@@ -261,9 +278,7 @@ class DataLoggerNode(Node):
         count = self._image_count
         stamp_date = datetime.fromtimestamp(pair_stamp / 1e9, timezone.utc).strftime(
             '%Y%m%dT%H%M%S.%fZ')
-        padded_count = f'{count:0{IMAGE_COUNT_WIDTH}d}'
-        rgb_name = f'rgb_{padded_count}_{stamp_date}.jpg'
-        thermal_name = f'thermal_{padded_count}_{stamp_date}.jpg'
+        rgb_name, thermal_name = _image_names(count, stamp_date)
         flags = [cv2.IMWRITE_JPEG_QUALITY, self._jpeg_quality]
         if not cv2.imwrite(str(self._rgb_dir / rgb_name), rgb, flags):
             self.get_logger().error(f'Failed to write {rgb_name}')
