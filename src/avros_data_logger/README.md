@@ -2,30 +2,71 @@
 
 ## Purpose
 
-`avros_dataLogger` records camera images and vehicle sensor values during a vehicle run. It is a standalone ROS 2 node located in the `avros_data_logger` package.
+`avros_dataLogger` records external RGB and thermal camera images together with vehicle controls and sensor streams. The output is organized for three uses:
 
-The node uses OpenCV for two external USB cameras:
+- Object-detection datasets from the saved images
+- Imitation-learning datasets from images paired with control commands
+- Visual-inertial/GNSS processing from the original-rate IMU and GNSS logs
 
-- One RGB camera
-- One thermal camera
+The cameras are opened directly with OpenCV because they do not have official ROS drivers. IMU, GNSS, odometry, and actuator values are received from ROS 2 topics.
 
-The node uses ROS 2 subscriptions for the IMU, GPS, and vehicle velocity values.
+## Output Structure
 
-## Requirements
+Each run writes to `data_logger` by default:
 
-The cameras must be available to Linux as video devices, such as `/dev/video0` and `/dev/video1`. The cameras do not need official ROS drivers. They must be readable by OpenCV through `cv2.VideoCapture`.
+```text
+data_logger/
+├── images/
+│   ├── rgb/
+│   │   └── rgb_000012_20261001T143015.123456Z.jpg
+│   └── thermal/
+│       └── thermal_000012_20261001T143015.123456Z.jpg
+├── camera_log.csv
+├── imu_log.csv
+└── gnss_log.csv
+```
 
-The required ROS topics are:
+All three CSV files are created when the node starts and are appended and flushed while the node is running. They can be inspected during the run.
 
-| Data | Default topic | Message type |
-| --- | --- | --- |
-| IMU | `/imu/data` | `sensor_msgs/Imu` |
-| GPS | `/gnss` | `sensor_msgs/NavSatFix` |
-| Vehicle velocity | `/wheel_odom` | `nav_msgs/Odometry` |
+## Data Logs
 
-## Camera Configuration
+### `camera_log.csv`
 
-The camera indices and capture rate are defined near the top of `data_logger_node.py`:
+One row is written for each saved RGB/thermal image pair. It contains:
+
+- Image counter and capture timestamp
+- Relative paths to the RGB and thermal images
+- Commanded throttle, steering, brake, mode, and emergency-stop state
+- Actual throttle, steering, brake, mode, emergency-stop state, and watchdog state
+- Linear and angular velocity from odometry
+
+The commanded controls are the primary imitation-learning labels. Actual actuator values show what the vehicle executed and may differ because of limits, delays, or a watchdog.
+
+### `imu_log.csv`
+
+Every received IMU message is written at the original topic rate. It contains:
+
+- The ROS message timestamp and frame ID
+- Orientation quaternion
+- Orientation covariance
+- Angular velocity and covariance
+- Linear acceleration and covariance
+
+This preserves the high-rate IMU stream needed for visual-inertial processing.
+
+### `gnss_log.csv`
+
+Every received GNSS message is written at the original topic rate. It contains:
+
+- The ROS message timestamp and frame ID
+- Fix status and service
+- Latitude, longitude, and altitude
+- All nine position-covariance values
+- Covariance type
+
+## Configuration
+
+The camera indices and image capture rate are defined near the top of `data_logger_node.py`:
 
 ```python
 # Camera device index for the RGB camera.
@@ -38,9 +79,7 @@ CAPTURE_RATE_HZ = 10.0
 IMAGE_COUNT_WIDTH = 6
 ```
 
-Use `v4l2-ctl --list-devices` to identify which index belongs to each camera. For example, if the thermal camera is `/dev/video2`, its index is normally `2`.
-
-The same values can be overridden at runtime without editing the file:
+Use `v4l2-ctl --list-devices` to identify the camera indices. The same values can be overridden at runtime:
 
 ```bash
 ros2 run avros_data_logger avros_dataLogger --ros-args \
@@ -49,104 +88,69 @@ ros2 run avros_data_logger avros_dataLogger --ros-args \
   -p capture_rate_hz:=10.0
 ```
 
+The default ROS topics are:
+
+| Data | Topic | Message type |
+| --- | --- | --- |
+| IMU | `/imu/data` | `sensor_msgs/Imu` |
+| GNSS | `/gnss` | `sensor_msgs/NavSatFix` |
+| Odometry | `/wheel_odom` | `nav_msgs/Odometry` |
+| Command | `/avros/actuator_command` | `avros_msgs/ActuatorCommand` |
+| Actuator state | `/avros/actuator_state` | `avros_msgs/ActuatorState` |
+
+Override topic names when necessary:
+
+```bash
+ros2 run avros_data_logger avros_dataLogger --ros-args \
+  -p imu_topic:=/imu/data \
+  -p gps_topic:=/gnss \
+  -p odometry_topic:=/wheel_odom \
+  -p command_topic:=/avros/actuator_command \
+  -p actuator_state_topic:=/avros/actuator_state
+```
+
 ## Building and Running
 
-Build the package from the workspace root:
+From the workspace root:
 
 ```bash
 colcon build --packages-select avros_data_logger
 source install/setup.bash
-```
-
-Start the data-logger node:
-
-```bash
 ros2 run avros_data_logger avros_dataLogger
 ```
 
-The default output directory is `data_logger` in the directory where the node is started. A different output directory can be selected with:
+Choose another output directory with:
 
 ```bash
 ros2 run avros_data_logger avros_dataLogger --ros-args \
   -p output_directory:=/path/to/run_data
 ```
 
-## How Data Logger Works
+## Timestamp and Synchronization Behavior
 
-At the configured capture rate, the node performs the following actions:
+The RGB and thermal cameras are read in the same timer callback. Their files receive the same image counter and capture timestamp, but ordinary USB cameras are not guaranteed to expose their images at exactly the same instant. Exact exposure synchronization requires hardware triggering or a shared timing source.
 
-1. Reads one frame from the RGB camera using OpenCV.
-2. Reads one frame from the thermal camera using OpenCV.
-3. Records the current ROS timestamp.
-4. Finds the nearest available IMU, GPS, and odometry messages.
-5. Finds the nearest actuator command and actual actuator state.
-6. Saves both images using the same image counter.
-7. Appends the row to `data.csv` and flushes it immediately.
-
-The two camera reads happen in the same timer callback. This provides consistent software timing, but ordinary USB cameras are not guaranteed to expose their images at exactly the same instant. Exact exposure synchronization requires cameras with hardware triggering or another shared timing mechanism.
-
-Sensor values are matched by timestamp. If a sensor value is not available within the configured age limit, its CSV field is left blank.
-
-## Output Format
-
-The default output has this structure:
-
-```text
-data_logger/
-├── data.csv
-└── imgs/
-    ├── rgb/
-    │   └── rgb_<zero_padded_image_count>_<date>.jpg
-    └── thermal/
-        └── thermal_<zero_padded_image_count>_<date>.jpg
-```
-
-For example:
-
-```text
-rgb_000012_20260930T143015.123456Z.jpg
-thermal_000012_20260930T143015.123456Z.jpg
-```
-
-The matching image counter indicates that the RGB and thermal files belong to the same capture cycle.
-
-The CSV contains:
-
-- Image count, capture timestamp, and relative image paths
-- Commanded throttle, steering, brake, mode, and emergency-stop state
-- Actual throttle, steering, brake, mode, emergency-stop state, and watchdog state
-- IMU orientation, angular velocity, and linear acceleration
-- GPS validity, latitude, longitude, altitude, status, and horizontal covariance
-- Linear velocity from odometry
-- Angular velocity, including the turning rate around the vertical axis
-
-The commanded control values are the primary imitation-learning labels. The
-actual actuator values are included to show what the vehicle executed, which
-can differ from the command because of limits, delays, or a watchdog.
+The camera log uses the nearest recent command, actuator state, and odometry message. The IMU and GNSS logs do not downsample or wait for camera frames; every received message is written with its own ROS timestamp. This is important for later visual-inertial and GNSS processing.
 
 ## Ending a Run
 
-The CSV header is written when the node starts. Each captured sample is appended and flushed immediately while the node is running, so the file can be inspected during the run and recent data is less likely to be lost. Press `Ctrl-C` to stop the node; it flushes and closes the CSV, then releases both cameras.
+Press `Ctrl-C` to stop the node. The node flushes and closes all three CSV files and releases both cameras.
 
 ## Troubleshooting
 
 ### A camera cannot be opened
 
-Check the connected devices:
+Check the connected video devices:
 
 ```bash
 v4l2-ctl --list-devices
 ```
 
-Then update `RGB_CAMERA_INDEX` or `THERMAL_CAMERA_INDEX`, or provide different ROS parameter values at runtime.
+Then update `RGB_CAMERA_INDEX` or `THERMAL_CAMERA_INDEX`, or override the corresponding ROS parameters. The thermal camera must appear as a standard Linux video device for OpenCV to read it directly.
 
-### The thermal camera is not detected
+### Sensor data is missing
 
-USB-C describes the connector, not necessarily the camera protocol. The thermal camera must appear as a standard Linux video device for OpenCV to open it directly. A camera requiring a vendor-specific SDK will need an additional capture interface before this node can use it.
-
-### Sensor fields are blank
-
-Confirm that the expected ROS topics are active:
+Check that the topics are publishing:
 
 ```bash
 ros2 topic list
@@ -155,4 +159,4 @@ ros2 topic echo /gnss
 ros2 topic echo /wheel_odom
 ```
 
-If the system uses different topic names, update the parameters `imu_topic`, `gps_topic`, and `odometry_topic`.
+If the topics use different names, pass the appropriate topic parameters when starting the node.
