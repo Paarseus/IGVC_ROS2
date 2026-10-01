@@ -1,8 +1,8 @@
-# AVROS Data Collection
+# AVROS Data Logger
 
 ## Purpose
 
-`avros_dataCollection` records camera images and vehicle sensor values during a vehicle run. It is a standalone ROS 2 node located in the `avros_data_collection` package.
+`avros_dataLogger` records camera images and vehicle sensor values during a vehicle run. It is a standalone ROS 2 node located in the `avros_data_logger` package.
 
 The node uses OpenCV for two external USB cameras:
 
@@ -25,7 +25,7 @@ The required ROS topics are:
 
 ## Camera Configuration
 
-The camera indices and capture rate are defined near the top of `data_collection_node.py`:
+The camera indices and capture rate are defined near the top of `data_logger_node.py`:
 
 ```python
 # Camera device index for the RGB camera.
@@ -43,7 +43,7 @@ Use `v4l2-ctl --list-devices` to identify which index belongs to each camera. Fo
 The same values can be overridden at runtime without editing the file:
 
 ```bash
-ros2 run avros_data_collection avros_dataCollection --ros-args \
+ros2 run avros_data_logger avros_dataLogger --ros-args \
   -p rgb_camera_index:=0 \
   -p thermal_camera_index:=1 \
   -p capture_rate_hz:=10.0
@@ -54,24 +54,24 @@ ros2 run avros_data_collection avros_dataCollection --ros-args \
 Build the package from the workspace root:
 
 ```bash
-colcon build --packages-select avros_data_collection
+colcon build --packages-select avros_data_logger
 source install/setup.bash
 ```
 
-Start the data-collection node:
+Start the data-logger node:
 
 ```bash
-ros2 run avros_data_collection avros_dataCollection
+ros2 run avros_data_logger avros_dataLogger
 ```
 
-The default output directory is `data_collection` in the directory where the node is started. A different output directory can be selected with:
+The default output directory is `data_logger` in the directory where the node is started. A different output directory can be selected with:
 
 ```bash
-ros2 run avros_data_collection avros_dataCollection --ros-args \
+ros2 run avros_data_logger avros_dataLogger --ros-args \
   -p output_directory:=/path/to/run_data
 ```
 
-## How Data Collection Works
+## How Data Logger Works
 
 At the configured capture rate, the node performs the following actions:
 
@@ -92,7 +92,7 @@ Sensor values are matched by timestamp. If a sensor value is not available withi
 The default output has this structure:
 
 ```text
-data_collection/
+data_logger/
 ├── data.csv
 └── imgs/
     ├── rgb/

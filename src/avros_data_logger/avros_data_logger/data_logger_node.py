@@ -37,13 +37,13 @@ CSV_COLUMNS = [
 ]
 
 
-class DataCollectionNode(Node):
+class DataLoggerNode(Node):
     """Save matched RGB/thermal pairs and state snapshots at a fixed rate."""
 
     def __init__(self) -> None:
-        super().__init__('avros_dataCollection')
+        super().__init__('avros_dataLogger')
 
-        self.declare_parameter('output_directory', 'data_collection')
+        self.declare_parameter('output_directory', 'data_logger')
         self.declare_parameter('rgb_camera_index', RGB_CAMERA_INDEX)
         self.declare_parameter('thermal_camera_index', THERMAL_CAMERA_INDEX)
         self.declare_parameter('imu_topic', '/imu/data')
@@ -278,7 +278,7 @@ class DataCollectionNode(Node):
 
 def main(args=None) -> None:
     rclpy.init(args=args)
-    node = DataCollectionNode()
+    node = DataLoggerNode()
     try:
         rclpy.spin(node)
     except (KeyboardInterrupt, SystemExit):

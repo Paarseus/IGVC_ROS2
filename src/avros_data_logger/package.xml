@@ -1,9 +1,9 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>avros_data_collection</name>
+  <name>avros_data_logger</name>
   <version>0.0.0</version>
-  <description>Synchronized RGB, thermal, and vehicle-state data collection.</description>
+  <description>Synchronized RGB, thermal, and vehicle-state data logging.</description>
   <maintainer email="avlab@cpp.edu">AV Lab</maintainer>
   <license>MIT</license>
 
