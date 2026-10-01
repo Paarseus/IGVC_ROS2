@@ -34,7 +34,7 @@ All three CSV files are created when the node starts and are appended and flushe
 
 One row is written for each saved RGB/thermal image pair. It contains:
 
-- Image counter and capture timestamp
+- Image counter, episode ID, and capture timestamp
 - Relative paths to the RGB and thermal images
 - Commanded throttle, steering, brake, mode, and emergency-stop state
 - Actual throttle, steering, brake, mode, emergency-stop state, and watchdog state
@@ -125,6 +125,21 @@ Choose another output directory with:
 ros2 run avros_data_logger avros_dataLogger --ros-args \
   -p output_directory:=/path/to/run_data
 ```
+
+## Episode IDs
+
+Each camera-log row contains an `episode_id`. One logger process represents
+one episode, and the default ID is `1`. Assign another ID when starting a
+separate run:
+
+```bash
+ros2 run avros_data_logger avros_dataLogger --ros-args \
+  -p episode_id:=2 \
+  -p output_directory:=/path/to/episode_2
+```
+
+This allows later dataset tools to group or split samples by episode. The
+logger does not currently detect driving start/stop events automatically.
 
 ## Timestamp and Synchronization Behavior
 

@@ -26,7 +26,7 @@ IMAGE_COUNT_WIDTH = 6
 
 
 CAMERA_COLUMNS = [
-    'image_count', 'capture_time_utc', 'image_stamp_ns',
+    'image_count', 'episode_id', 'capture_time_utc', 'image_stamp_ns',
     'rgb_image', 'thermal_image',
     'command_throttle', 'command_steering', 'command_brake',
     'command_mode', 'command_estop',
@@ -93,6 +93,7 @@ class DataLoggerNode(Node):
         super().__init__('avros_dataLogger')
 
         self.declare_parameter('output_directory', 'data_logger')
+        self.declare_parameter('episode_id', 1)
         self.declare_parameter('rgb_camera_index', RGB_CAMERA_INDEX)
         self.declare_parameter('thermal_camera_index', THERMAL_CAMERA_INDEX)
         self.declare_parameter('imu_topic', '/imu/data')
@@ -106,8 +107,8 @@ class DataLoggerNode(Node):
 
         output = Path(str(self.get_parameter('output_directory').value)).expanduser()
         self._output = output if output.is_absolute() else Path.cwd() / output
-        self._rgb_dir = self._output / 'images' / 'rgb'
-        self._thermal_dir = self._output / 'images' / 'thermal'
+        self._rgb_dir = self._output / 'images' / 'rgb_image'
+        self._thermal_dir = self._output / 'images' / 'thermal_image'
         self._rgb_dir.mkdir(parents=True, exist_ok=True)
         self._thermal_dir.mkdir(parents=True, exist_ok=True)
 
@@ -118,6 +119,7 @@ class DataLoggerNode(Node):
         self._gnss_file, self._gnss_writer = self._open_csv(
             self._output / 'gnss_log.csv', GNSS_COLUMNS)
 
+        self._episode_id = int(self.get_parameter('episode_id').value)
         self._rate_hz = float(self.get_parameter('capture_rate_hz').value)
         if self._rate_hz <= 0.0:
             raise ValueError('capture_rate_hz must be greater than zero')
@@ -139,7 +141,7 @@ class DataLoggerNode(Node):
 
         self._lock = Lock()
         self._last_capture_stamp_ns = None
-        self._image_count = 0
+        self._id = 0
         self._closed = False
         self._command_history = deque(maxlen=200)
         self._actuator_state_history = deque(maxlen=200)
@@ -275,7 +277,7 @@ class DataLoggerNode(Node):
                 self._odom_history, pair_stamp, self._max_state_age_ns)
 
         thermal = self._thermal_to_bgr(thermal)
-        count = self._image_count
+        count = self._id
         stamp_date = datetime.fromtimestamp(pair_stamp / 1e9, timezone.utc).strftime(
             '%Y%m%dT%H%M%S.%fZ')
         rgb_name, thermal_name = _image_names(count, stamp_date)
@@ -288,12 +290,12 @@ class DataLoggerNode(Node):
             return
 
         row = self._make_camera_row(
-            count, pair_stamp, stamp_date, rgb_name, thermal_name,
-            command, actuator_state, odom)
+            count, self._episode_id, pair_stamp, stamp_date,
+            rgb_name, thermal_name, command, actuator_state, odom)
         with self._lock:
             self._camera_writer.writerow(row)
             self._camera_file.flush()
-        self._image_count += 1
+        self._id += 1
 
     @staticmethod
     def _thermal_to_bgr(image):
@@ -308,8 +310,8 @@ class DataLoggerNode(Node):
         return image
 
     @staticmethod
-    def _make_camera_row(count, stamp_ns, date, rgb_name, thermal_name,
-                         command, actuator_state, odom):
+    def _make_camera_row(count, episode_id, stamp_ns, date,
+                         rgb_name, thermal_name, command, actuator_state, odom):
         def value(obj, path: str, default=''):
             for part in path.split('.'):
                 if obj is None:
@@ -319,6 +321,7 @@ class DataLoggerNode(Node):
 
         return {
             'image_count': count,
+            'episode_id': episode_id,
             'capture_time_utc': date,
             'image_stamp_ns': stamp_ns,
             'rgb_image': f'images/rgb/{rgb_name}',
@@ -356,7 +359,7 @@ class DataLoggerNode(Node):
         self._rgb_camera.release()
         self._thermal_camera.release()
         self.get_logger().info(
-            f'Closed logs after saving {self._image_count} image pairs')
+            f'Closed logs after saving {self._id} image pairs')
         return super().destroy_node()
 
 
