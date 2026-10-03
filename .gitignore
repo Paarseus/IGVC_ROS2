@@ -28,4 +28,7 @@ src/semantic_segmentation_layer/
 /sheet-*.png
 /solidremote.png
 
+# Generated AVROS data-logger images and CSV logs
+/data_logger/
+
 .vscode/
