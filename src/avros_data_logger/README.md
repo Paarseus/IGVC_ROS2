@@ -26,7 +26,7 @@ data_logger/
 └── gnss_log.csv
 ```
 
-All three CSV files are created when the node starts and are appended and flushed while the node is running. They can be inspected during the run.
+All three CSV files are created when the node starts and are appended and flushed while the node is running. They can be inspected during the run. When enabled, the logger also serves a browser preview with RGB above thermal and a live image count.
 
 ## Data Logs
 
@@ -76,8 +76,6 @@ THERMAL_CAMERA_INDEX = 1
 CAPTURE_RATE_HZ = 10.0
 # Number of digits used for zero-padding image counters.
 IMAGE_COUNT_WIDTH = 6
-# Show live OpenCV windows when a graphical display is available.
-SHOW_PREVIEW = False
 ```
 
 Use `v4l2-ctl --list-devices` to identify the camera indices. The same values can be overridden at runtime:
@@ -107,6 +105,33 @@ ros2 run avros_data_logger avros_dataLogger --ros-args \
   -p odometry_topic:=/wheel_odom \
   -p command_topic:=/avros/actuator_command
 ```
+
+## Browser Preview
+
+The package includes `data_logger.launch.py`. It enables the browser preview
+and binds it to localhost by default:
+
+```bash
+ros2 launch avros_data_logger data_logger.launch.py \
+  rgb_camera_index:=6 \
+  thermal_camera_index:=7 \
+  episode_id:=2 \
+  output_directory:=data_logger/episode_2
+```
+
+On the Jetson, create an SSH tunnel from your computer:
+
+```bash
+ssh -L 8080:127.0.0.1:8080 dinosaur@JETSON_IP
+```
+
+Then open `http://localhost:8080` in a browser. The page shows RGB in the
+upper panel, thermal in the lower panel, black `Unavailable` panels for missing
+cameras, and the number of captured images.
+
+The preview can be disabled with `web_preview:=false`. The bind address can be
+changed explicitly with `web_bind_address:=0.0.0.0`, but this exposes the live
+camera page to the network and should only be used intentionally.
 
 ## Building and Running
 

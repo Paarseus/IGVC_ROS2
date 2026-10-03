@@ -1,7 +1,9 @@
 """Log external camera data and high-rate vehicle sensor streams."""
 
 import csv
-import os
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,8 +26,6 @@ THERMAL_CAMERA_INDEX = 1
 CAPTURE_RATE_HZ = 10.0
 # Number of digits used for zero-padding image counters.
 IMAGE_COUNT_WIDTH = 6
-# Show live OpenCV windows when a graphical display is available.
-SHOW_PREVIEW = False
 
 
 CAMERA_COLUMNS = [
@@ -86,6 +86,102 @@ def _image_names(count: int, stamp_date: str):
 
 
 
+_PREVIEW_HTML = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AVROS Data Logger</title>
+<style>
+body { margin: 0; background: #181818; color: white; font-family: sans-serif; }
+header { padding: 12px 16px; background: #282828; font-size: 20px; }
+main { display: flex; flex-direction: column; gap: 12px; padding: 12px; }
+.panel { position: relative; height: calc(50vh - 58px); min-height: 180px;
+         background: black; display: flex; align-items: center;
+         justify-content: center; overflow: hidden; }
+.panel img { width: 100%; height: 100%; object-fit: contain; }
+.label { position: absolute; top: 8px; left: 8px; background: #000b;
+         padding: 5px 8px; z-index: 1; }
+.unavailable { color: #aaa; font-size: 22px; }
+</style>
+</head>
+<body>
+<header>AVROS Data Logger — Images captured: <span id="count">0</span></header>
+<main>
+  <section class="panel"><span class="label">RGB</span>
+    <img id="rgb" alt="RGB camera"><span id="rgb-unavailable" class="unavailable">Unavailable</span>
+  </section>
+  <section class="panel"><span class="label">Thermal</span>
+    <img id="thermal" alt="Thermal camera"><span id="thermal-unavailable" class="unavailable">Unavailable</span>
+  </section>
+</main>
+<script>
+function updateFrame(name, available) {
+  const image = document.getElementById(name);
+  const message = document.getElementById(name + '-unavailable');
+  image.style.display = available ? 'block' : 'none';
+  message.style.display = available ? 'none' : 'block';
+  if (available) image.src = '/frame/' + name + '.jpg?t=' + Date.now();
+}
+async function refresh() {
+  try {
+    const response = await fetch('/status?t=' + Date.now());
+    const status = await response.json();
+    document.getElementById('count').textContent = status.image_count;
+    updateFrame('rgb', status.rgb_available);
+    updateFrame('thermal', status.thermal_available);
+  } catch (error) {
+    updateFrame('rgb', false);
+    updateFrame('thermal', false);
+  }
+}
+refresh();
+setInterval(refresh, 250);
+</script>
+</body>
+</html>"""
+
+
+class _PreviewHTTPServer(HTTPServer):
+    allow_reuse_address = True
+
+    def __init__(self, address, handler, logger_node):
+        self.logger_node = logger_node
+        super().__init__(address, handler)
+
+
+class _PreviewHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        path = self.path.split('?', 1)[0]
+        if path == '/':
+            self._send(200, 'text/html; charset=utf-8', _PREVIEW_HTML.encode())
+            return
+        if path == '/status':
+            body = json.dumps(self.server.logger_node._preview_status()).encode()
+            self._send(200, 'application/json', body)
+            return
+        if path in ('/frame/rgb.jpg', '/frame/thermal.jpg'):
+            name = 'rgb' if path.endswith('rgb.jpg') else 'thermal'
+            body = self.server.logger_node._preview_frame(name)
+            if body is None:
+                self._send(404, 'text/plain', b'Unavailable')
+            else:
+                self._send(200, 'image/jpeg', body)
+            return
+        self._send(404, 'text/plain', b'Not found')
+
+    def _send(self, status, content_type, body):
+        self.send_response(status)
+        self.send_header('Content-Type', content_type)
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args):
+        return
+
+
 class DataLoggerNode(Node):
     """Save camera frames and sensor messages in rate-appropriate logs."""
 
@@ -103,7 +199,9 @@ class DataLoggerNode(Node):
         self.declare_parameter('capture_rate_hz', CAPTURE_RATE_HZ)
         self.declare_parameter('state_max_age_seconds', 0.5)
         self.declare_parameter('jpeg_quality', 95)
-        self.declare_parameter('show_preview', SHOW_PREVIEW)
+        self.declare_parameter('web_preview', False)
+        self.declare_parameter('web_port', 8080)
+        self.declare_parameter('web_bind_address', '127.0.0.1')
 
         output = Path(str(self.get_parameter('output_directory').value)).expanduser()
         self._output = output if output.is_absolute() else Path.cwd() / output
@@ -128,12 +226,15 @@ class DataLoggerNode(Node):
         self._max_state_age_ns = int(float(
             self.get_parameter('state_max_age_seconds').value) * 1e9)
         self._jpeg_quality = int(self.get_parameter('jpeg_quality').value)
-        self._show_preview = bool(self.get_parameter('show_preview').value)
-        if self._show_preview and not (
-                os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')):
-            self._show_preview = False
-            self.get_logger().warning(
-                'No graphical display detected; OpenCV preview disabled')
+        self._web_preview = bool(self.get_parameter('web_preview').value)
+        self._web_port = int(self.get_parameter('web_port').value)
+        self._web_bind_address = str(
+            self.get_parameter('web_bind_address').value)
+        self._preview_lock = Lock()
+        self._preview_rgb = None
+        self._preview_thermal = None
+        self._preview_server = None
+        self._preview_thread = None
 
         self._rgb_camera = self._try_open_camera(
             self.get_parameter('rgb_camera_index').value, 'RGB')
@@ -141,13 +242,13 @@ class DataLoggerNode(Node):
             self.get_parameter('thermal_camera_index').value, 'thermal')
         if self._rgb_camera is None and self._thermal_camera is None:
             self.get_logger().warning('No camera opened; image logging is disabled')
-        if self._show_preview:
-            self.get_logger().info('OpenCV preview enabled; press q in a preview window to continue')
 
         self._lock = Lock()
         self._last_capture_stamp_ns = None
         self._id = 0
         self._closed = False
+        if self._web_preview:
+            self._start_web_preview()
         self._command_history = deque(maxlen=200)
         self._odom_history = deque(maxlen=200)
 
@@ -272,9 +373,8 @@ class DataLoggerNode(Node):
 
         if thermal_ok:
             thermal = self._thermal_to_bgr(thermal)
-        if self._show_preview:
-            self._show_preview_frames(rgb if rgb_ok else None,
-                                      thermal if thermal_ok else None)
+        self._update_preview_frames(rgb if rgb_ok else None,
+                                     thermal if thermal_ok else None)
 
         pair_stamp = self.get_clock().now().nanoseconds
         with self._lock:
@@ -311,16 +411,43 @@ class DataLoggerNode(Node):
             self._camera_file.flush()
         self._id += 1
 
-    def _show_preview_frames(self, rgb, thermal) -> None:
+    def _start_web_preview(self) -> None:
         try:
-            if rgb is not None:
-                cv2.imshow('RGB camera', rgb)
-            if thermal is not None:
-                cv2.imshow('Thermal camera', thermal)
-            cv2.waitKey(1)
-        except cv2.error as exc:
-            self._show_preview = False
-            self.get_logger().warning(f'OpenCV preview disabled: {exc}')
+            self._preview_server = _PreviewHTTPServer(
+                (self._web_bind_address, self._web_port), _PreviewHandler, self)
+            self._preview_thread = threading.Thread(
+                target=self._preview_server.serve_forever,
+                name='data_logger_preview', daemon=True)
+            self._preview_thread.start()
+            self.get_logger().info(
+                f'Web preview available at http://{self._web_bind_address}:{self._web_port}')
+        except OSError as exc:
+            self._web_preview = False
+            self.get_logger().error(f'Could not start web preview: {exc}')
+
+    def _update_preview_frames(self, rgb, thermal) -> None:
+        def encode(image):
+            if image is None:
+                return None
+            ok, buffer = cv2.imencode('.jpg', image)
+            return buffer.tobytes() if ok else None
+
+        with self._preview_lock:
+            self._preview_rgb = encode(rgb)
+            self._preview_thermal = encode(thermal)
+
+    def _preview_status(self):
+        with self._preview_lock:
+            return {
+                'image_count': self._id,
+                'rgb_available': self._preview_rgb is not None,
+                'thermal_available': self._preview_thermal is not None,
+            }
+
+    def _preview_frame(self, camera_name):
+        with self._preview_lock:
+            return (self._preview_rgb if camera_name == 'rgb'
+                    else self._preview_thermal)
 
     @staticmethod
     def _thermal_to_bgr(image):
@@ -376,8 +503,9 @@ class DataLoggerNode(Node):
             self._rgb_camera.release()
         if self._thermal_camera is not None:
             self._thermal_camera.release()
-        if self._show_preview:
-            cv2.destroyAllWindows()
+        if self._preview_server is not None:
+            self._preview_server.shutdown()
+            self._preview_server.server_close()
         self.get_logger().info(
             f'Closed logs after saving {self._id} image pairs')
         return super().destroy_node()
