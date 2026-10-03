@@ -109,6 +109,9 @@ class PreviewHandler(BaseHTTPRequestHandler):
 
 
 def open_camera(index, name):
+    if index < 0:
+        print(f'{name} camera disabled because its index is {index}')
+        return None
     camera = cv2.VideoCapture(index)
     if not camera.isOpened():
         camera.release()
@@ -120,8 +123,8 @@ def open_camera(index, name):
 
 def main(args=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--rgb-index', type=int, default=0)
-    parser.add_argument('--thermal-index', type=int, default=1)
+    parser.add_argument('--rgb-index', type=int, default=-1)
+    parser.add_argument('--thermal-index', type=int, default=-1)
     parser.add_argument('--port', type=int, default=8080)
     # ros2 launch appends --ros-args even for non-ROS executables.
     options, _ = parser.parse_known_args(args)

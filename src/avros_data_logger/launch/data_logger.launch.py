@@ -8,8 +8,8 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     return LaunchDescription([
-        DeclareLaunchArgument('rgb_camera_index', default_value='0'),
-        DeclareLaunchArgument('thermal_camera_index', default_value='1'),
+        DeclareLaunchArgument('rgb_camera_index', default_value='-1'),
+        DeclareLaunchArgument('thermal_camera_index', default_value='-1'),
         DeclareLaunchArgument('episode_id', default_value='1'),
         DeclareLaunchArgument('output_directory', default_value='data_logger'),
         DeclareLaunchArgument('capture_rate_hz', default_value='10.0'),

@@ -18,10 +18,10 @@ from sensor_msgs.msg import Imu, NavSatFix
 from avros_msgs.msg import ActuatorCommand
 
 
-# Camera device index for the RGB camera.
-RGB_CAMERA_INDEX = 0
-# Camera device index for the thermal camera.
-THERMAL_CAMERA_INDEX = 1
+# Default RGB index; -1 disables RGB until a ROS parameter is supplied.
+RGB_CAMERA_INDEX = -1
+# Default thermal index; -1 disables thermal until a ROS parameter is supplied.
+THERMAL_CAMERA_INDEX = -1
 # Number of image pairs to capture per second.
 CAPTURE_RATE_HZ = 10.0
 # Number of digits used for zero-padding image counters.
@@ -309,6 +309,10 @@ class DataLoggerNode(Node):
         return file, writer
 
     def _try_open_camera(self, index: int, name: str):
+        if int(index) < 0:
+            self.get_logger().info(
+                f'{name} camera disabled because its index parameter is {index}')
+            return None
         try:
             return _open_camera(index)
         except RuntimeError as exc:

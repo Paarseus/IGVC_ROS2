@@ -8,7 +8,7 @@
 - Imitation-learning datasets from images paired with control commands
 - Visual-inertial/GNSS processing from the original-rate IMU and GNSS logs
 
-The cameras are opened directly with OpenCV because they do not have official ROS drivers. If one camera is unavailable, the logger skips that image and continues logging any available camera. IMU, GNSS, odometry, and actuator values are received from ROS 2 topics.
+The cameras are opened directly with OpenCV because they do not have official ROS drivers. A camera is enabled only when its ROS camera-index parameter is set to a non-negative value. If one camera is unavailable, the logger skips that image and continues logging any available camera. IMU, GNSS, odometry, and actuator values are received from ROS 2 topics.
 
 ## Output Structure
 
@@ -68,17 +68,17 @@ Every received GNSS message is written at the original topic rate. It contains:
 The camera indices and image capture rate are defined near the top of `data_logger_node.py`:
 
 ```python
-# Camera device index for the RGB camera.
-RGB_CAMERA_INDEX = 0
-# Camera device index for the thermal camera.
-THERMAL_CAMERA_INDEX = 1
+# Default RGB index; -1 disables RGB until a ROS parameter is supplied.
+RGB_CAMERA_INDEX = -1
+# Default thermal index; -1 disables thermal until a ROS parameter is supplied.
+THERMAL_CAMERA_INDEX = -1
 # Number of image pairs to capture per second.
 CAPTURE_RATE_HZ = 10.0
 # Number of digits used for zero-padding image counters.
 IMAGE_COUNT_WIDTH = 6
 ```
 
-Use `v4l2-ctl --list-devices` to identify the camera indices. The same values can be overridden at runtime:
+Use `v4l2-ctl --list-devices` to identify the camera indices. A value of `-1` disables that camera. Set each camera explicitly at runtime:
 
 ```bash
 ros2 run avros_data_logger avros_dataLogger --ros-args \
@@ -197,7 +197,7 @@ Check the connected video devices:
 v4l2-ctl --list-devices
 ```
 
-Then update `RGB_CAMERA_INDEX` or `THERMAL_CAMERA_INDEX`, or override the corresponding ROS parameters. The thermal camera must appear as a standard Linux video device for OpenCV to read it directly.
+Then set the corresponding ROS camera parameter. The thermal camera must appear as a standard Linux video device for OpenCV to read it directly. A camera index of `-1` disables that camera.
 
 ### Sensor data is missing
 
