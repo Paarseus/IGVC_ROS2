@@ -26,6 +26,7 @@ setup(
     entry_points={
         'console_scripts': [
             'avros_dataLogger = avros_data_logger.data_logger_node:main',
+            'avros_cameraTest = avros_data_logger.camera_test_node:main',
         ],
     },
 )

@@ -106,6 +106,22 @@ ros2 run avros_data_logger avros_dataLogger --ros-args \
   -p command_topic:=/avros/actuator_command
 ```
 
+## Camera Test Without Logging
+
+To test the cameras without creating images or CSV files, run:
+
+```bash
+ros2 launch avros_data_logger camera_test.launch.py \
+  rgb_camera_index:=6 \
+  thermal_camera_index:=7 \
+  web_port:=8081
+```
+
+The test page is available at `http://127.0.0.1:8081`. It uses the same
+upper RGB and lower thermal layout and is titled `AV ROS Imitation Learning
+Data Logger (Camera Test)`. Missing cameras show a black `Unavailable` panel.
+The camera test never writes images or CSV data.
+
 ## Browser Preview
 
 The package includes `data_logger.launch.py`. It enables the browser preview

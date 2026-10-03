@@ -91,7 +91,7 @@ _PREVIEW_HTML = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AVROS Data Logger</title>
+<title>AV ROS Imitation Learning Data Logger</title>
 <style>
 body { margin: 0; background: #181818; color: white; font-family: sans-serif; }
 header { padding: 12px 16px; background: #282828; font-size: 20px; }
@@ -106,7 +106,7 @@ main { display: flex; flex-direction: column; gap: 12px; padding: 12px; }
 </style>
 </head>
 <body>
-<header>AVROS Data Logger — Images captured: <span id="count">0</span></header>
+<header>AV ROS Imitation Learning Data Logger — Images captured: <span id="count">0</span></header>
 <main>
   <section class="panel"><span class="label">RGB</span>
     <img id="rgb" alt="RGB camera"><span id="rgb-unavailable" class="unavailable">Unavailable</span>
