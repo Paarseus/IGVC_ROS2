@@ -1,6 +1,7 @@
 """Log external camera data and high-rate vehicle sensor streams."""
 
 import csv
+import os
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
@@ -128,6 +129,11 @@ class DataLoggerNode(Node):
             self.get_parameter('state_max_age_seconds').value) * 1e9)
         self._jpeg_quality = int(self.get_parameter('jpeg_quality').value)
         self._show_preview = bool(self.get_parameter('show_preview').value)
+        if self._show_preview and not (
+                os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')):
+            self._show_preview = False
+            self.get_logger().warning(
+                'No graphical display detected; OpenCV preview disabled')
 
         self._rgb_camera = self._try_open_camera(
             self.get_parameter('rgb_camera_index').value, 'RGB')
