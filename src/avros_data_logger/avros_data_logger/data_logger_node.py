@@ -23,6 +23,8 @@ THERMAL_CAMERA_INDEX = 1
 CAPTURE_RATE_HZ = 10.0
 # Number of digits used for zero-padding image counters.
 IMAGE_COUNT_WIDTH = 6
+# Show live OpenCV windows when a graphical display is available.
+SHOW_PREVIEW = False
 
 
 CAMERA_COLUMNS = [
@@ -100,6 +102,7 @@ class DataLoggerNode(Node):
         self.declare_parameter('capture_rate_hz', CAPTURE_RATE_HZ)
         self.declare_parameter('state_max_age_seconds', 0.5)
         self.declare_parameter('jpeg_quality', 95)
+        self.declare_parameter('show_preview', SHOW_PREVIEW)
 
         output = Path(str(self.get_parameter('output_directory').value)).expanduser()
         self._output = output if output.is_absolute() else Path.cwd() / output
@@ -124,17 +127,16 @@ class DataLoggerNode(Node):
         self._max_state_age_ns = int(float(
             self.get_parameter('state_max_age_seconds').value) * 1e9)
         self._jpeg_quality = int(self.get_parameter('jpeg_quality').value)
+        self._show_preview = bool(self.get_parameter('show_preview').value)
 
-        try:
-            self._rgb_camera = _open_camera(
-                self.get_parameter('rgb_camera_index').value)
-            self._thermal_camera = _open_camera(
-                self.get_parameter('thermal_camera_index').value)
-        except RuntimeError:
-            if hasattr(self, '_rgb_camera'):
-                self._rgb_camera.release()
-            self._close_logs()
-            raise
+        self._rgb_camera = self._try_open_camera(
+            self.get_parameter('rgb_camera_index').value, 'RGB')
+        self._thermal_camera = self._try_open_camera(
+            self.get_parameter('thermal_camera_index').value, 'thermal')
+        if self._rgb_camera is None and self._thermal_camera is None:
+            self.get_logger().warning('No camera opened; image logging is disabled')
+        if self._show_preview:
+            self.get_logger().info('OpenCV preview enabled; press q in a preview window to continue')
 
         self._lock = Lock()
         self._last_capture_stamp_ns = None
@@ -169,6 +171,13 @@ class DataLoggerNode(Node):
         writer.writeheader()
         file.flush()
         return file, writer
+
+    def _try_open_camera(self, index: int, name: str):
+        try:
+            return _open_camera(index)
+        except RuntimeError as exc:
+            self.get_logger().warning(f'{name} camera unavailable: {exc}')
+            return None
 
     @staticmethod
     def _stamp_ns(msg) -> int:
@@ -245,11 +254,21 @@ class DataLoggerNode(Node):
         return candidate[1] if abs(candidate[0] - stamp_ns) <= max_age_ns else None
 
     def _capture_pair(self) -> None:
-        rgb_ok, rgb = self._rgb_camera.read()
-        thermal_ok, thermal = self._thermal_camera.read()
-        if not rgb_ok or not thermal_ok:
-            self.get_logger().warning('Could not read both external cameras')
+        rgb_ok, rgb = (False, None)
+        thermal_ok, thermal = (False, None)
+        if self._rgb_camera is not None:
+            rgb_ok, rgb = self._rgb_camera.read()
+        if self._thermal_camera is not None:
+            thermal_ok, thermal = self._thermal_camera.read()
+        if not rgb_ok and not thermal_ok:
+            self.get_logger().warning('No camera frame available')
             return
+
+        if thermal_ok:
+            thermal = self._thermal_to_bgr(thermal)
+        if self._show_preview:
+            self._show_preview_frames(rgb if rgb_ok else None,
+                                      thermal if thermal_ok else None)
 
         pair_stamp = self.get_clock().now().nanoseconds
         with self._lock:
@@ -262,17 +281,19 @@ class DataLoggerNode(Node):
             odom = self._nearest(
                 self._odom_history, pair_stamp, self._max_state_age_ns)
 
-        thermal = self._thermal_to_bgr(thermal)
         count = self._id
         stamp_date = datetime.fromtimestamp(pair_stamp / 1e9, timezone.utc).strftime(
             '%Y%m%dT%H%M%S.%fZ')
         rgb_name, thermal_name = _image_names(count, stamp_date)
         flags = [cv2.IMWRITE_JPEG_QUALITY, self._jpeg_quality]
-        if not cv2.imwrite(str(self._rgb_dir / rgb_name), rgb, flags):
+        if rgb_ok and not cv2.imwrite(str(self._rgb_dir / rgb_name), rgb, flags):
             self.get_logger().error(f'Failed to write {rgb_name}')
-            return
-        if not cv2.imwrite(str(self._thermal_dir / thermal_name), thermal, flags):
+            rgb_name = ''
+        if thermal_ok and not cv2.imwrite(
+                str(self._thermal_dir / thermal_name), thermal, flags):
             self.get_logger().error(f'Failed to write {thermal_name}')
+            thermal_name = ''
+        if not rgb_name and not thermal_name:
             return
 
         time_seconds = (pair_stamp - self._run_start_ns) / 1e9
@@ -283,6 +304,17 @@ class DataLoggerNode(Node):
             self._camera_writer.writerow(row)
             self._camera_file.flush()
         self._id += 1
+
+    def _show_preview_frames(self, rgb, thermal) -> None:
+        try:
+            if rgb is not None:
+                cv2.imshow('RGB camera', rgb)
+            if thermal is not None:
+                cv2.imshow('Thermal camera', thermal)
+            cv2.waitKey(1)
+        except cv2.error as exc:
+            self._show_preview = False
+            self.get_logger().warning(f'OpenCV preview disabled: {exc}')
 
     @staticmethod
     def _thermal_to_bgr(image):
@@ -312,8 +344,8 @@ class DataLoggerNode(Node):
             'capture_time_utc': date,
             'image_stamp_ns': stamp_ns,
             'time_seconds': time_seconds,
-            'rgb_image': f'images/rgb/{rgb_name}',
-            'thermal_image': f'images/thermal/{thermal_name}',
+            'rgb_image': f'images/rgb/{rgb_name}' if rgb_name else '',
+            'thermal_image': f'images/thermal/{thermal_name}' if thermal_name else '',
             'throttle': value(command, 'throttle'),
             'steering': value(command, 'steer'),
             'brake': value(command, 'brake'),
@@ -334,8 +366,12 @@ class DataLoggerNode(Node):
             return super().destroy_node()
         self._closed = True
         self._close_logs()
-        self._rgb_camera.release()
-        self._thermal_camera.release()
+        if self._rgb_camera is not None:
+            self._rgb_camera.release()
+        if self._thermal_camera is not None:
+            self._thermal_camera.release()
+        if self._show_preview:
+            cv2.destroyAllWindows()
         self.get_logger().info(
             f'Closed logs after saving {self._id} image pairs')
         return super().destroy_node()

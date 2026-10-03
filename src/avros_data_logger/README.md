@@ -8,7 +8,7 @@
 - Imitation-learning datasets from images paired with control commands
 - Visual-inertial/GNSS processing from the original-rate IMU and GNSS logs
 
-The cameras are opened directly with OpenCV because they do not have official ROS drivers. IMU, GNSS, odometry, and actuator values are received from ROS 2 topics.
+The cameras are opened directly with OpenCV because they do not have official ROS drivers. If one camera is unavailable, the logger skips that image and continues logging any available camera. IMU, GNSS, odometry, and actuator values are received from ROS 2 topics.
 
 ## Output Structure
 
@@ -76,6 +76,8 @@ THERMAL_CAMERA_INDEX = 1
 CAPTURE_RATE_HZ = 10.0
 # Number of digits used for zero-padding image counters.
 IMAGE_COUNT_WIDTH = 6
+# Show live OpenCV windows when a graphical display is available.
+SHOW_PREVIEW = False
 ```
 
 Use `v4l2-ctl --list-devices` to identify the camera indices. The same values can be overridden at runtime:
