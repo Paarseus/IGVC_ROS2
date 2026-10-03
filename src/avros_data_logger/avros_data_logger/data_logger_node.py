@@ -95,6 +95,9 @@ _PREVIEW_HTML = """<!doctype html>
 <style>
 body { margin: 0; background: #181818; color: white; font-family: sans-serif; }
 header { padding: 12px 16px; background: #282828; font-size: 20px; }
+controls { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: #222; }
+button { padding: 8px 16px; font-size: 16px; cursor: pointer; }
+#recording { color: #ffcc66; }
 main { display: flex; flex-direction: column; gap: 12px; padding: 12px; }
 .panel { position: relative; height: calc(50vh - 58px); min-height: 180px;
          background: black; display: flex; align-items: center;
@@ -107,6 +110,11 @@ main { display: flex; flex-direction: column; gap: 12px; padding: 12px; }
 </head>
 <body>
 <header>AV ROS Imitation Learning Data Logger — Images captured: <span id="count">0</span></header>
+<controls>
+  <button id="start" onclick="setRecording(true)">Start Recording</button>
+  <button id="stop" onclick="setRecording(false)" disabled>Stop Recording</button>
+  <span id="recording">Preview only — recording has not started</span>
+</controls>
 <main>
   <section class="panel"><span class="label">RGB</span>
     <img id="rgb" alt="RGB camera"><span id="rgb-unavailable" class="unavailable">Unavailable</span>
@@ -123,11 +131,19 @@ function updateFrame(name, available) {
   message.style.display = available ? 'none' : 'block';
   if (available) image.src = '/frame/' + name + '.jpg?t=' + Date.now();
 }
+async function setRecording(enabled) {
+  await fetch(enabled ? '/record/start' : '/record/stop', {method: 'POST'});
+  await refresh();
+}
 async function refresh() {
   try {
     const response = await fetch('/status?t=' + Date.now());
     const status = await response.json();
     document.getElementById('count').textContent = status.image_count;
+    document.getElementById('start').disabled = status.recording;
+    document.getElementById('stop').disabled = !status.recording;
+    document.getElementById('recording').textContent = status.recording
+      ? 'Recording active' : 'Preview only — recording has stopped';
     updateFrame('rgb', status.rgb_available);
     updateFrame('thermal', status.thermal_available);
   } catch (error) {
@@ -170,6 +186,18 @@ class _PreviewHandler(BaseHTTPRequestHandler):
             return
         self._send(404, 'text/plain', b'Not found')
 
+    def do_POST(self):
+        path = self.path.split('?', 1)[0]
+        if path == '/record/start':
+            self.server.logger_node.start_recording()
+            self._send(200, 'text/plain', b'Recording started')
+            return
+        if path == '/record/stop':
+            self.server.logger_node.stop_recording()
+            self._send(200, 'text/plain', b'Recording stopped')
+            return
+        self._send(404, 'text/plain', b'Not found')
+
     def _send(self, status, content_type, body):
         self.send_response(status)
         self.send_header('Content-Type', content_type)
@@ -199,7 +227,7 @@ class DataLoggerNode(Node):
         self.declare_parameter('capture_rate_hz', CAPTURE_RATE_HZ)
         self.declare_parameter('state_max_age_seconds', 0.5)
         self.declare_parameter('jpeg_quality', 95)
-        self.declare_parameter('web_preview', False)
+        self.declare_parameter('web_preview', True)
         self.declare_parameter('web_port', 8080)
         self.declare_parameter('web_bind_address', '127.0.0.1')
 
@@ -247,6 +275,7 @@ class DataLoggerNode(Node):
         self._last_capture_stamp_ns = None
         self._id = 0
         self._closed = False
+        self._recording = False
         if self._web_preview:
             self._start_web_preview()
         self._command_history = deque(maxlen=200)
@@ -296,6 +325,8 @@ class DataLoggerNode(Node):
             '%Y-%m-%dT%H:%M:%S.%fZ')
 
     def _on_imu(self, msg: Imu) -> None:
+        if not getattr(self, '_recording', True):
+            return
         stamp_ns = self._stamp_ns(msg)
         row = {
             'timestamp_ns': stamp_ns,
@@ -323,6 +354,8 @@ class DataLoggerNode(Node):
             self._imu_file.flush()
 
     def _on_gnss(self, msg: NavSatFix) -> None:
+        if not getattr(self, '_recording', True):
+            return
         stamp_ns = self._stamp_ns(msg)
         row = {
             'timestamp_ns': stamp_ns,
@@ -367,14 +400,16 @@ class DataLoggerNode(Node):
             rgb_ok, rgb = self._rgb_camera.read()
         if self._thermal_camera is not None:
             thermal_ok, thermal = self._thermal_camera.read()
-        if not rgb_ok and not thermal_ok:
-            self.get_logger().warning('No camera frame available')
-            return
-
         if thermal_ok:
             thermal = self._thermal_to_bgr(thermal)
         self._update_preview_frames(rgb if rgb_ok else None,
                                      thermal if thermal_ok else None)
+
+        if not rgb_ok and not thermal_ok:
+            return
+
+        if not self._recording:
+            return
 
         pair_stamp = self.get_clock().now().nanoseconds
         with self._lock:
@@ -440,6 +475,7 @@ class DataLoggerNode(Node):
         with self._preview_lock:
             return {
                 'image_count': self._id,
+                'recording': self._recording,
                 'rgb_available': self._preview_rgb is not None,
                 'thermal_available': self._preview_thermal is not None,
             }
@@ -448,6 +484,24 @@ class DataLoggerNode(Node):
         with self._preview_lock:
             return (self._preview_rgb if camera_name == 'rgb'
                     else self._preview_thermal)
+
+    def start_recording(self):
+        """Start writing data after browser confirmation."""
+        with self._lock:
+            if not self._recording:
+                self._run_start_ns = self.get_clock().now().nanoseconds
+                self._last_capture_stamp_ns = None
+                self._recording = True
+                self.get_logger().info('Recording started from web interface')
+
+    def stop_recording(self):
+        """Stop writing data while keeping the camera preview available."""
+        with self._lock:
+            if self._recording:
+                self._recording = False
+                for file in (self._camera_file, self._imu_file, self._gnss_file):
+                    file.flush()
+                self.get_logger().info('Recording stopped from web interface')
 
     @staticmethod
     def _thermal_to_bgr(image):

@@ -106,26 +106,12 @@ ros2 run avros_data_logger avros_dataLogger --ros-args \
   -p command_topic:=/avros/actuator_command
 ```
 
-## Camera Test Without Logging
-
-To test the cameras without creating images or CSV files, run:
-
-```bash
-ros2 launch avros_data_logger camera_test.launch.py \
-  rgb_camera_index:=6 \
-  thermal_camera_index:=7 \
-  web_port:=8081
-```
-
-The test page is available at `http://127.0.0.1:8081`. It uses the same
-upper RGB and lower thermal layout and is titled `AV ROS Imitation Learning
-Data Logger (Camera Test)`. Missing cameras show a black `Unavailable` panel.
-The camera test never writes images or CSV data.
-
 ## Browser Preview
 
-The package includes `data_logger.launch.py`. It enables the browser preview
-and binds it to localhost by default:
+The package includes `data_logger.launch.py`. It opens the cameras and starts
+the browser preview on port `8080`, but it does not write data immediately.
+Use **Start Recording** after checking the camera panels. Use **Stop
+Recording** to stop writing while leaving the preview active.
 
 ```bash
 ros2 launch avros_data_logger data_logger.launch.py \
@@ -143,7 +129,7 @@ ssh -L 8080:127.0.0.1:8080 dinosaur@JETSON_IP
 
 Then open `http://localhost:8080` in a browser. The page shows RGB in the
 upper panel, thermal in the lower panel, black `Unavailable` panels for missing
-cameras, and the number of captured images.
+cameras, recording controls, and the number of captured images.
 
 The preview can be disabled with `web_preview:=false`. The bind address can be
 changed explicitly with `web_bind_address:=0.0.0.0`, but this exposes the live
@@ -168,9 +154,8 @@ ros2 run avros_data_logger avros_dataLogger --ros-args \
 
 ## Episode IDs
 
-Each camera-log row contains an `episode_id`. One logger process represents
-one episode, and the default ID is `1`. Assign another ID when starting a
-separate run:
+Each camera-log row contains an `episode_id`. The value is supplied when
+starting the logger, and the default ID is `1`:
 
 ```bash
 ros2 run avros_data_logger avros_dataLogger --ros-args \

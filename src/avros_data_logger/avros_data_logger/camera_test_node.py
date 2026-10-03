@@ -122,8 +122,9 @@ def main(args=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--rgb-index', type=int, default=0)
     parser.add_argument('--thermal-index', type=int, default=1)
-    parser.add_argument('--port', type=int, default=8081)
-    options = parser.parse_args(args)
+    parser.add_argument('--port', type=int, default=8080)
+    # ros2 launch appends --ros-args even for non-ROS executables.
+    options, _ = parser.parse_known_args(args)
 
     state = {'rgb': None, 'thermal': None, 'lock': threading.Lock()}
     rgb_camera = open_camera(options.rgb_index, 'RGB')

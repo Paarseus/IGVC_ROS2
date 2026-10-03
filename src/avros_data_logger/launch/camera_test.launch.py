@@ -10,7 +10,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('rgb_camera_index', default_value='0'),
         DeclareLaunchArgument('thermal_camera_index', default_value='1'),
-        DeclareLaunchArgument('web_port', default_value='8081'),
+        DeclareLaunchArgument('web_port', default_value='8080'),
         Node(
             package='avros_data_logger',
             executable='avros_cameraTest',
