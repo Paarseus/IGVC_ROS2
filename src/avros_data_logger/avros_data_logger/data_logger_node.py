@@ -39,6 +39,7 @@ CAMERA_COLUMNS = [
     'time_seconds',
     'rgb_image', 'thermal_image',
     'throttle', 'steering', 'brake', 'mode', 'estop',
+    'vehicle_stopped',
     'speed_mps', 'yaw_rate_rps',
 ]
 
@@ -579,6 +580,11 @@ class DataLoggerNode(Node):
             'brake': value(command, 'brake'),
             'mode': value(command, 'mode'),
             'estop': value(command, 'estop'),
+            'vehicle_stopped': (
+                command is None
+                or bool(value(command, 'estop', False))
+                or (float(value(command, 'throttle', 0.0)) == 0.0
+                    and float(value(command, 'brake', 0.0)) == 0.0)),
             'speed_mps': value(odom, 'twist.twist.linear.x'),
             'yaw_rate_rps': value(odom, 'twist.twist.angular.z'),
         }

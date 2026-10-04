@@ -43,6 +43,8 @@ One row is written for each saved RGB/thermal image pair. It contains:
 - Image counter, episode ID, capture timestamp, and elapsed `time_seconds`
 - Relative paths to the RGB and thermal images
 - Throttle, steering, brake, mode, and emergency-stop state
+- `vehicle_stopped`, which is true when no fresh actuator command exists,
+  emergency stop is active, or throttle and brake are both zero
 - `speed_mps` and `yaw_rate_rps` from odometry
 
 The throttle, steering, and brake values are the commanded controls used as the primary imitation-learning labels.
