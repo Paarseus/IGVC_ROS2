@@ -10,6 +10,12 @@
 
 The cameras are opened directly with OpenCV because they do not have official ROS drivers. A camera is enabled only when its ROS camera-index parameter is set to a non-negative value. If one camera is unavailable, the logger skips that image and continues logging any available camera. IMU, GNSS, odometry, and actuator values are received from ROS 2 topics.
 
+Camera frames use OpenCV CLAHE auto-contrast by default. RGB contrast is
+adjusted through the luminance channel, and thermal contrast is adjusted after
+conversion to an 8-bit displayable image. This improves local contrast in
+uneven lighting, but it cannot recover details that are completely saturated
+by direct sunlight.
+
 ## Output Structure
 
 Each run writes to `data_logger` by default:
@@ -104,6 +110,13 @@ ros2 run avros_data_logger avros_dataLogger --ros-args \
   -p gps_topic:=/gnss \
   -p odometry_topic:=/wheel_odom \
   -p command_topic:=/avros/actuator_command
+```
+
+Auto-contrast can be disabled if the original camera appearance is required:
+
+```bash
+ros2 launch avros_data_logger data_logger.launch.py \
+  auto_contrast:=false
 ```
 
 ## Browser Preview

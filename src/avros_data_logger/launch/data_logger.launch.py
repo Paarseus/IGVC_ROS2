@@ -13,6 +13,7 @@ def generate_launch_description():
         DeclareLaunchArgument('episode_id', default_value='1'),
         DeclareLaunchArgument('output_directory', default_value='data_logger'),
         DeclareLaunchArgument('capture_rate_hz', default_value='10.0'),
+        DeclareLaunchArgument('auto_contrast', default_value='true'),
         DeclareLaunchArgument('web_preview', default_value='true'),
         DeclareLaunchArgument('web_port', default_value='8080'),
         DeclareLaunchArgument(
@@ -28,6 +29,7 @@ def generate_launch_description():
                 'episode_id': LaunchConfiguration('episode_id'),
                 'output_directory': LaunchConfiguration('output_directory'),
                 'capture_rate_hz': LaunchConfiguration('capture_rate_hz'),
+                'auto_contrast': LaunchConfiguration('auto_contrast'),
                 'web_preview': LaunchConfiguration('web_preview'),
                 'web_port': LaunchConfiguration('web_port'),
                 'web_bind_address': LaunchConfiguration('web_bind_address'),

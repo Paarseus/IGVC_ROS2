@@ -26,6 +26,12 @@ THERMAL_CAMERA_INDEX = -1
 CAPTURE_RATE_HZ = 10.0
 # Number of digits used for zero-padding image counters.
 IMAGE_COUNT_WIDTH = 6
+# Enable local contrast enhancement for camera frames by default.
+AUTO_CONTRAST_ENABLED = True
+# CLAHE contrast limit used for local camera contrast enhancement.
+AUTO_CONTRAST_CLIP_LIMIT = 2.0
+# CLAHE tile size used for local camera contrast enhancement.
+AUTO_CONTRAST_TILE_GRID_SIZE = (8, 8)
 
 
 CAMERA_COLUMNS = [
@@ -227,6 +233,9 @@ class DataLoggerNode(Node):
         self.declare_parameter('capture_rate_hz', CAPTURE_RATE_HZ)
         self.declare_parameter('state_max_age_seconds', 0.5)
         self.declare_parameter('jpeg_quality', 95)
+        self.declare_parameter('auto_contrast', AUTO_CONTRAST_ENABLED)
+        self.declare_parameter(
+            'auto_contrast_clip_limit', AUTO_CONTRAST_CLIP_LIMIT)
         self.declare_parameter('web_preview', True)
         self.declare_parameter('web_port', 8080)
         self.declare_parameter('web_bind_address', '127.0.0.1')
@@ -254,6 +263,15 @@ class DataLoggerNode(Node):
         self._max_state_age_ns = int(float(
             self.get_parameter('state_max_age_seconds').value) * 1e9)
         self._jpeg_quality = int(self.get_parameter('jpeg_quality').value)
+        self._auto_contrast_enabled = bool(
+            self.get_parameter('auto_contrast').value)
+        self._auto_contrast_clip_limit = float(
+            self.get_parameter('auto_contrast_clip_limit').value)
+        if self._auto_contrast_clip_limit <= 0.0:
+            raise ValueError('auto_contrast_clip_limit must be greater than zero')
+        self._clahe = cv2.createCLAHE(
+            clipLimit=self._auto_contrast_clip_limit,
+            tileGridSize=AUTO_CONTRAST_TILE_GRID_SIZE)
         self._web_preview = bool(self.get_parameter('web_preview').value)
         self._web_port = int(self.get_parameter('web_port').value)
         self._web_bind_address = str(
@@ -406,6 +424,11 @@ class DataLoggerNode(Node):
             thermal_ok, thermal = self._thermal_camera.read()
         if thermal_ok:
             thermal = self._thermal_to_bgr(thermal)
+        if self._auto_contrast_enabled:
+            if rgb_ok:
+                rgb = self._auto_contrast(rgb)
+            if thermal_ok:
+                thermal = self._auto_contrast(thermal)
         self._update_preview_frames(rgb if rgb_ok else None,
                                      thermal if thermal_ok else None)
 
@@ -474,6 +497,20 @@ class DataLoggerNode(Node):
         with self._preview_lock:
             self._preview_rgb = encode(rgb)
             self._preview_thermal = encode(thermal)
+
+    def _auto_contrast(self, image):
+        """Enhance local luminance contrast without changing image size."""
+        if image is None:
+            return None
+        if len(image.shape) == 2:
+            return self._clahe.apply(image)
+        if image.shape[2] == 4:
+            image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+        lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+        lightness, channel_a, channel_b = cv2.split(lab)
+        lightness = self._clahe.apply(lightness)
+        return cv2.cvtColor(
+            cv2.merge((lightness, channel_a, channel_b)), cv2.COLOR_LAB2BGR)
 
     def _preview_status(self):
         with self._preview_lock:
