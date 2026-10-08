@@ -1,0 +1,11 @@
+webrtc_node:
+  ros__parameters:
+    # Raw image only - never the /compressed or /theora sub-topics (CPU encode
+    # inside the ZED process).
+    image_topic: /zed_front/zed_node/rgb/color/rect/image
+    # Path name = MediaMTX stream name -> http://<jetson>:8889/zed_front
+    rtsp_url: rtsp://127.0.0.1:8554/zed_front
+    frame_rate: 8.0          # keep equal to zed_front.yaml general.pub_frame_rate
+    bitrate_bps: 1500000     # CBR; ~480x300 published image needs far less than 1080p
+    idr_interval: 8          # frames -> 1 s at 8 Hz
+    restart_backoff_s: 2.0
