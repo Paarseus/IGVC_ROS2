@@ -93,24 +93,26 @@ actuator_node:
     # PARAMETER_WRITE and acks with `OK K<P|I|D|F|Z>=<value>` in the
     # actuator_node log so end-to-end push can be verified.
     #
-    # Re-tuned 2026-05-18 after battery relocation (COM shifted). With the
-    # previous gains (kP=0.0008, kI=5e-7) the motors overshot commanded RPM
-    # by 14-16% at v=1.0 m/s and 23-27% at rot=0.5 rad/s -- visible as a
-    # "snap" at the end of every slew ramp. Root cause: kI integrator
-    # winding up during the long slew (max_linear_accel=0.5 m/s/s takes
-    # 2 s at v=1.0), then dumping the accumulated duty when the slew ends
-    # and lag closes. Halving kI (5e-7 -> 2.5e-7) slowed buildup; lowering
-    # kP slightly (0.0008 -> 0.0007) reduced the proportional kick. Result:
-    # linear overshoot down to 0-9%, rotation overshoot down to 8-14%,
-    # cumulative drift across a full fwd/rev/rot sweep down from +31.6 deg
-    # to -0.085 deg, steady-state delivery 93-96% (still good for Nav2's
-    # outer loop). Validated through bags pid_iter1..7_*. BURNed to flash
-    # via REV Hardware Client (Velocity PID slot 0) on both SparkMAXes.
-    kFF: 0.000197
-    kP:  0.0007
-    kI:  0.00000025
+    # 2026-09-28 (SPARK MAX firmware 26.1.5). kFF = SPARK param 16 = kV in VOLTS per RPM
+    # on firmware 26 (was duty/RPM on 25). Ground-fitted and verified 2026-10-08 after
+    # the v2d firmware reflash (docs/drive_tuning_2026_09_28/ROOT_CAUSE_ANALYSIS_2026_10_08.md
+    # §7): kV 0.00211, confirmed by `PR B 16` readback matching on both tracks across
+    # multiple full ground runs through actuator_node's verified gain-push
+    # (actuator_node.py:_write_gain_verified).
+    # kP 0.0004, kI 0, kIZone 0: feedforward does the work, P trims below the
+    # oscillation onset. Higher P oscillated; any I caused low-speed windup.
+    kFF: 0.00211
+    kP:  0.0004
+    kI:  0.0
     kD:  0.0
-    kIZone: 600.0
+    kIZone: 0.0
+    # Static-friction feedforward per track, volts. The Teensy adds kS x sign(target) to
+    # each speed command (0 when the target is 0), sent via KSL/KSR. [DYNAMIC]
+    # Ground-fitted 2026-10-08: kS 0 failed low speed (31% error, sticking at
+    # 0.05 m/s / 0.1 rad/s); kS_left 0.40 V / kS_right 0.39 V passed, confirmed by
+    # PWR readback.
+    kS_left: 0.40
+    kS_right: 0.39
 
     # ---- Odometry frames [INIT-ONLY] ----
     odom_frame: "odom"
