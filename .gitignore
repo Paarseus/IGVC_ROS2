@@ -17,6 +17,18 @@ src/semantic_segmentation_layer/
 # Claude Code working dirs
 .claude/
 .playwright-mcp/
+.playwright-cli/
+
+# Bulk test/recording data — never commit (rosbags, sensor-logger episodes,
+# experiment frame dumps). Lives on whichever machine recorded it; not synced
+# through git. See docs/2026-10/repo_sync_audit_and_cleanup_plan_2026_10_09.md.
+bags/
+data_logger/
+exp_frames/
+
+# Reference clone of another team's codebase (competitor research, has its
+# own nested .git) — kept out of this repo's history entirely.
+robojackets/
 
 # Stray screenshots at repo root (Claude/playwright artefacts that
 # get dropped here from unrelated sessions). Legitimate images live
