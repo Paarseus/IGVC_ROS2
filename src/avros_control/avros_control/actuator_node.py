@@ -30,7 +30,7 @@ Subscribes:
 
 Publishes:
   /avros/actuator_state     avros_msgs/ActuatorState @ 20 Hz
-  /wheel_odom               nav_msgs/Odometry @ 50 Hz (for EKF fusion)
+  /wheel_odom               nav_msgs/Odometry @ state_pub_rate_hz (20 Hz; twist from the SPARK-reported speed)
 """
 
 import math
@@ -95,6 +95,8 @@ _DYNAMIC_PARAMS = {
     'kI':                          '_k_i',
     'kD':                          '_k_d',
     'kIZone':                      '_k_izone',
+    'kS_left':                     '_k_s_l',
+    'kS_right':                    '_k_s_r',
 }
 
 # Which dynamic params need to be pushed to the Teensy on change. Keys here
@@ -106,7 +108,18 @@ _PID_SERIAL_PREFIX = {
     'kI':     'KI',
     'kD':     'KD',
     'kIZone': 'KZ',
+    # Static-friction feedforward per track, volts. Teensy v2c+ sends it in every velocity
+    # setpoint's ARBITRARY_FEEDFORWARD field as kS*sign(setpoint), 0 at a zero setpoint.
+    # (SPARK param 204 is NOT used: on FW 26 it applies +kS even at setpoint 0.)
+    'kS_left':  'KSL',
+    'kS_right': 'KSR',
 }
+
+# SparkMAX parameter IDs for the gains that go through a real CAN
+# PARAMETER_WRITE round trip (see PROTOCOL.md section 1.4). KSL/KSR are
+# NOT here — they set a Teensy-local variable (no SPARK round trip, see
+# `_write_gain_verified`), so the Teensy's own line ack is all there is.
+_PARAM_ID = {'KF': 16, 'KP': 13, 'KI': 14, 'KD': 15, 'KZ': 17}
 
 
 def yaw_from_quaternion(q) -> float:
@@ -158,6 +171,8 @@ class ActuatorNode(Node):
         self.declare_parameter('kI', 0.0)
         self.declare_parameter('kD', 0.0)
         self.declare_parameter('kIZone', 200.0)
+        self.declare_parameter('kS_left', 0.0)    # volts, static-friction FF (Teensy arbFF)
+        self.declare_parameter('kS_right', 0.0)
         # Odom frame names
         self.declare_parameter('odom_frame', 'odom')
         self.declare_parameter('base_frame', 'base_link')
@@ -181,6 +196,8 @@ class ActuatorNode(Node):
         self._k_i = p('kI').value
         self._k_d = p('kD').value
         self._k_izone = p('kIZone').value
+        self._k_s_l = p('kS_left').value
+        self._k_s_r = p('kS_right').value
         self._odom_frame = p('odom_frame').value
         self._base_frame = p('base_frame').value
 
@@ -194,18 +211,15 @@ class ActuatorNode(Node):
         self._serial_lock = threading.Lock()
         self.get_logger().info(f'Serial open: {self._port} @ {self._baud}')
 
-        # Push PID gains to the Teensy (which forwards to both SparkMAXes via
-        # PARAMETER_WRITE cls=14). Also re-pushed on dynamic-param change —
-        # see _on_param_change.
-        for name, val in [('KF', self._k_ff), ('KP', self._k_p),
-                          ('KI', self._k_i), ('KD', self._k_d),
-                          ('KZ', self._k_izone)]:
-            self._serial_write(f'{name}{val}')
-            time.sleep(0.2)
-        self.get_logger().info(
-            f'SparkMAX gains set: kFF={self._k_ff} kP={self._k_p} '
-            f'kI={self._k_i} kD={self._k_d} kIZone={self._k_izone}'
-        )
+        # Confirmation state for _write_gain_verified: the SPARK's own PWR
+        # reply (not just the Teensy's immediate line ack) to each
+        # PARAMETER_WRITE, keyed by param id -> {'L': (val, res), 'R': (...)}.
+        # Must exist before the reader thread starts (see below) and before
+        # the startup gain push, which now happens AFTER the reader thread
+        # is running so replies are actually read instead of sitting unread
+        # in the serial buffer while the 50 Hz E-line stream keeps flowing.
+        self._param_confirm = {}
+        self._param_confirm_lock = threading.Lock()
 
         # ---- state ----
         # Command targets (set by callbacks; read by control loop)
@@ -308,6 +322,34 @@ class ActuatorNode(Node):
             target=self._serial_reader, daemon=True
         )
         self._reader_thread.start()
+        time.sleep(0.05)   # let the reader thread reach its read() loop
+
+        # Push SparkMAX gains now that something is actually listening for
+        # the confirmation (see _write_gain_verified — this used to run
+        # immediately after opening the serial port, before the reader
+        # thread existed, so the Teensy's/SPARK's replies were never read
+        # and a dropped PARAMETER_WRITE under the concurrent 50 Hz E-line
+        # load went silently unnoticed; the log line claimed success either
+        # way). Also re-pushed on dynamic-param change — see _on_param_change.
+        failed = []
+        for name, val in [('KF', self._k_ff), ('KP', self._k_p),
+                          ('KI', self._k_i), ('KD', self._k_d),
+                          ('KZ', self._k_izone),
+                          ('KSL', self._k_s_l), ('KSR', self._k_s_r)]:
+            if not self._write_gain_verified(name, val):
+                failed.append(f'{name}={val}')
+        if failed:
+            self.get_logger().error(
+                f'SparkMAX gain(s) NOT confirmed by the controllers after '
+                f'retries: {", ".join(failed)} — read back with `PR B <id>` '
+                f'over the Teensy serial before trusting this run'
+            )
+        self.get_logger().info(
+            f'SparkMAX gains set: kFF={self._k_ff} kP={self._k_p} '
+            f'kI={self._k_i} kD={self._k_d} kIZone={self._k_izone} '
+            f'kS L/R={self._k_s_l}/{self._k_s_r} V'
+            + (' (see error above — not all confirmed)' if failed else ' — confirmed by PWR replies')
+        )
 
         self._ctrl_dt = 1.0 / control_rate
         self.create_timer(self._ctrl_dt, self._control_loop)
@@ -380,11 +422,18 @@ class ActuatorNode(Node):
             if p.name in _PID_SERIAL_PREFIX:
                 # Push to Teensy → SparkMAX RAM. Persistence (BURN to flash)
                 # is a separate step the operator runs after a tuning session.
-                line = f'{_PID_SERIAL_PREFIX[p.name]}{float(p.value)}'
-                self._serial_write(line)
+                prefix = _PID_SERIAL_PREFIX[p.name]
+                ok = self._write_gain_verified(prefix, float(p.value))
                 self.get_logger().info(
-                    f'  -> Teensy serial write: {line!r} (pushes to BOTH SparkMAXes)'
+                    f'  -> Teensy serial write: {prefix}{float(p.value)!r} '
+                    f'(pushes to BOTH SparkMAXes)'
+                    + ('' if ok else ' — NOT CONFIRMED, see PR B readback')
                 )
+                if not ok:
+                    self.get_logger().error(
+                        f'{p.name}={p.value} not confirmed by the controllers '
+                        f'after retries — verify with `PR B <id>` before trusting it'
+                    )
             self.get_logger().info(
                 f'param updated: {p.name} = {p.value} (live)'
             )
@@ -594,6 +643,45 @@ class ActuatorNode(Node):
         except Exception as e:
             self.get_logger().error(f'serial write failed: {e}')
 
+    def _write_gain_verified(self, prefix: str, val, retries: int = 2,
+                              timeout: float = 0.8) -> bool:
+        """Send `K<prefix><val>` and verify it actually took.
+
+        The Teensy's immediate `OK KF=...` ack only means the Teensy parsed
+        the line — it does NOT mean the SPARK applied it. The SPARK's real
+        confirmation is a separate, unsolicited `PWR <L|R> id=.. res=0 ..`
+        line over CAN, which can be dropped under the concurrent 50 Hz
+        E-line load (see PROTOCOL.md's `sdrop` counter) with the earlier
+        fire-and-forget code giving no sign that happened. This waits for
+        that PWR confirmation on BOTH sides and retries on timeout/mismatch.
+
+        KSL/KSR have no SPARK param id (Teensy-local, no CAN round trip —
+        see `_PARAM_ID`) so they're sent once with no wait; the Teensy's own
+        line ack is the only confirmation that exists for them.
+        """
+        param_id = _PARAM_ID.get(prefix)
+        if param_id is None:
+            self._serial_write(f'{prefix}{val}')
+            return True
+        for _ in range(retries + 1):
+            with self._param_confirm_lock:
+                self._param_confirm.pop(param_id, None)
+            self._serial_write(f'{prefix}{val}')
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                with self._param_confirm_lock:
+                    got = dict(self._param_confirm.get(param_id, {}))
+                if 'L' in got and 'R' in got:
+                    ok = all(
+                        res == 0 and math.isclose(v, float(val), rel_tol=1e-3, abs_tol=1e-5)
+                        for v, res in got.values()
+                    )
+                    if ok:
+                        return True
+                    break   # disagreement — stop waiting, retry the write
+                time.sleep(0.02)
+        return False
+
     def _serial_reader(self):
         """Background thread: read E lines + Teensy OK/ERR acks.
 
@@ -606,8 +694,10 @@ class ActuatorNode(Node):
         """
         import re
         E_RE = re.compile(r"E L(-?\d+) (-?[\d.]+) R(-?\d+) (-?[\d.]+)")
-        OK_RE = re.compile(r"OK (K[PIDF Z]|A[01]|S|UL=|BURN|L=).*")
+        OK_RE = re.compile(r"OK (K[PIDFS Z]|A[01]|S|UL=|BURN|L=).*")
         ERR_RE = re.compile(r"ERR .*")
+        # SPARK's own confirmation of a PARAMETER_WRITE (see _write_gain_verified).
+        PWR_RE = re.compile(r"PWR (L|R) id=(\d+) type=\d+ val=([^\s]+) res=(\d+)")
         buf = ''
         while self._running:
             try:
@@ -625,6 +715,18 @@ class ActuatorNode(Node):
                             self._l_meas_pos = float(m.group(2))
                             self._r_meas_rpm = float(m.group(3))
                             self._r_meas_pos = float(m.group(4))
+                        continue
+                    m = PWR_RE.match(s)
+                    if m:
+                        side, pid, val_s, res_s = m.groups()
+                        try:
+                            val, res, pid = float(val_s), int(res_s), int(pid)
+                        except ValueError:
+                            pass
+                        else:
+                            with self._param_confirm_lock:
+                                self._param_confirm.setdefault(pid, {})[side] = (val, res)
+                        self.get_logger().info(f'  <- Teensy ack: {s}')
                         continue
                     if OK_RE.match(s):
                         self.get_logger().info(f'  <- Teensy ack: {s}')
