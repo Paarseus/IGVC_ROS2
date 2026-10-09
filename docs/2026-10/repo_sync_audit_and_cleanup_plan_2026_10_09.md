@@ -157,9 +157,24 @@ This phase is pure `git mv` + one index file — zero code risk — but touches 
 
 ---
 
-## 7. What I need from you before executing
+## 7. Final decisions (2026-10-09)
 
-- Phase 0 step 2 (reconciling laptop vs. Jetson edits to `navsat.yaml`/`ntrip_params.yaml`/`perception_node.py`) needs you to say which machine's edit is the one to keep, or I diff them and report back for a call.
-- Phase 1.3 (PR #22, `imitation_learning_data_collection`) — teammate work, needs your read before I touch it.
-- Phase 2's exact folder scheme (month-folders vs. flat vs. something else) — happy to proceed with the layout above unless you want it different.
-- Everything else (closing PR #24/#1 after a quick confirm, deleting merged local branches, cleaning worktrees, fixing the dead remote, committing the load-bearing scripts) is low-risk and I can just do it.
+Everything in this plan has now been either executed or explicitly decided. Status:
+
+**Executed:**
+- PR #26 — SparkMAX FW26 gains (`kFF`/`kP`/`kS_left`/`kS_right`) committed.
+- PR #27 — this doc + full `docs/` reorganization into `docs/YYYY-MM/` + `docs/reference/` (this PR).
+- PR #28 — `research/` methodology, `CLAUDE.md`-documented scripts, `canny.py`, `.gitignore` additions (`bags/`, `data_logger/`, `exp_frames/`, `.playwright-cli/`, `robojackets/`).
+- PR #29 — laptop-side config/doc drift reconciled (`navsat.yaml`, `perception_node.py`, `pipelines/__init__.py`, `perception.yaml`, both `CLAUDE.md` files, stale doc-path fixes), plus `ntrip_params.yaml` (real credentials, committed with explicit owner sign-off).
+- PR #24 and PR #1 closed (superseded/stale).
+- 6 stale local branches + all 10 `.claude/worktrees/*` deleted on the laptop (all confirmed fully merged first; two had real content — a `research/` sub-dir and an orphaned doc — rescued before deletion).
+- The two credential-bearing `deployed_snapshot/.../ntrip_params.yaml` files (inside the rescued research dirs) deleted outright.
+- Repo-root scratch debris (loose PNGs/videos/one-off scripts) deleted; superseded `research_notes/`/`reports/` drafts deleted (confirmed duplicate of the properly-sourced `research/topics/D2_wheeled_skid_steer` and `C1_motor_velocity_control`); `igvc_winners_research/` merged into `docs/reference/winners_research/`.
+- The `jetson` git remote fixed — now points at `jetson:/home/dinosaur/IGVC_ROS2` (was the pre-rename `/home/dinosaur/IGVC`). Run by the user directly, per the "never touch git config" rule.
+
+**Explicitly decided to leave alone (not a gap — a deliberate call):**
+- `lidar_testing` branch, `stash@{0}`, `stash@{1}` on the Jetson — active WIP (Changwe was confirmed logged into the Jetson live while this audit ran). **Leave alone.**
+- `data_logger/` (5.7GB on the Jetson) — real recorded data tied to `imitation_learning_data_collection`. Already `.gitignore`d (the actual problem — git choking on 5.7GB — is fixed); the data itself stays in place. **Leave alone.**
+- PR #22 (`arassal:feature/perception-submodule`) and the `imitation_learning_data_collection` branch — teammate-owned work. **Leave alone.**
+
+Nothing here is unresolved; every item has an owner's decision behind it now.
