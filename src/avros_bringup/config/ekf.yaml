@@ -12,10 +12,10 @@
 #   /imu/data            — Xsens MTi-680G @ 100 Hz, orientation + angular vel
 #   /wheel_odom          — actuator_node @ 50 Hz, vx + vyaw (inverse uses
 #                          physical track_w by design — see
-#                          docs/skid_steer_kinematics_findings_2026_05_18.md
+#                          docs/2026-05/skid_steer_kinematics_findings_2026_05_18.md
 #                          for the empirical decomposition)
 #   /zed_front/.../odom  — ZED VIO yaw rate ONLY (lever-arm safe; see
-#                          docs/zed_vio_frame_analysis.md)
+#                          docs/reference/zed_vio_frame_analysis.md)
 #   /odometry/gps        — non-RTK SBAS, differential fusion + rejection gate
 
 # --- Local EKF: odom -> base_link ---
@@ -43,7 +43,7 @@ ekf_filter_node_odom:
     imu0_remove_gravitational_acceleration: true
     imu0_queue_size: 10
     # 2026-05-26: Mahalanobis outlier gates added after the Xsens stuck-bias
-    # incident documented in docs/skid_steer_kinematics_findings_2026_05_18.md §6
+    # incident documented in docs/2026-05/skid_steer_kinematics_findings_2026_05_18.md §6
     # (gyro bias jumped to ~-2.86°/s = 70× normal; ROS-level restart did not
     # recover, required USB power-cycle). Without these gates, the bad gyro
     # data flows into both EKFs unfiltered until someone notices the chassis
@@ -76,7 +76,7 @@ ekf_filter_node_odom:
     #   lateral velocity of omega * 0.68 m on every turn (~0.34 m/s lateral
     #   bias at 0.5 rad/s — matches the T3 field-test observation that the
     #   ZED VIO trajectory direction was rotated relative to base_link).
-    #   See docs/zed_vio_frame_analysis.md for the full derivation, source
+    #   See docs/reference/zed_vio_frame_analysis.md for the full derivation, source
     #   refs, and 20s live capture proving child_frame_id and covariance.
     #
     # Yaw rate is invariant under rigid translation (omega is the same at
