@@ -219,6 +219,114 @@
                                # white paint is low-S, colored clutter is high-S.
                                # 255 disables.
 
+    # -------- Canny pipeline (pipeline:='canny') --------
+    # Color-gated auto-Canny + IPM-geometry lane pipeline (2026-06-01). Reuses
+    # the adaptive HLS-L exposure-invariant white-paint core as the candidate
+    # generator, AND's it (NEVER OR) with median-derived auto-Canny so asphalt
+    # texture cannot flood in (the rejected naive Canny-OR tripled px 280->923
+    # and blew CV 0.031->0.273 — see adaptive.py "Deliberately NOT included"),
+    # runs a resolution-relative connected-component elongation/fill SHAPE filter
+    # (the always-on white-obstacle + crack-speck rejector), then an OPTIONAL
+    # cached-homography IPM bird's-eye warp + per-side sliding-window 2nd-order
+    # polyfit so only long smooth near-vertical ground lines survive. ZED depth
+    # is a GUARDED ground-plane refinement that no-ops until the node feeds it.
+    # Sky ROI zeroed LAST; single class_id_lane kept LETHAL. See pipelines/canny.py.
+    #
+    # SHIPPED DEFAULTS (2026-06-01 field re-tune — validate_canny.py + adversarial
+    # probes on the real 480x300 ZED frames):
+    #   canny_edge_and: FALSE  -> candidate = white core (the proven exposure-
+    #       invariant adaptive base). The hard white-AND-dilate(Canny) was MEASURED
+    #       to be the worst operator on this camera: gamma-sweep CV 0.78 with TOTAL
+    #       DROPOUT to 0 px at the dark end of the AE limit cycle (vs CV 0.20 / no
+    #       dropout with it OFF), and it ate faint worn paint 364->0 px. The S6
+    #       shape gate (below) does the crack/asphalt rejection instead.
+    #   canny_use_ipm: FALSE   -> S6 shape-filter is the detection mask. The IPM is
+    #       UNCALIBRATED and on these frames NEVER fires on a real line but DOES
+    #       fire on white-obstacle edges, extrapolating them into frame-spanning
+    #       PHANTOM lanes (barrel face leaked 1532 px with IPM on, 0 with it off).
+    #
+    # The robustness now rests on the S6 SHAPE gate: elong>=2.5 AND fill<=0.10
+    # rejects every tested white obstacle (barrel face / cone / bucket / pole ->
+    # 0 leak) while keeping all real tape (elong 2.93..3.33, fill 0.035..0.056).
+    #
+    # All pixel-literals are resolution-relative (sc=h/300.0) — runs at the
+    # PUBLISHED processed res (process_at_full_res:true above), node max-pools
+    # the binary mask to cloud HxW itself.
+    #
+    # WARNING: canny_ipm_src is an UNCALIBRATED eyeballed normalized quad (no
+    # intrinsics). Before re-enabling canny_use_ipm:true, RE-PICK it per camera
+    # mount on a real straight-lane ZED frame and verify IPM-on != IPM-off. Depth
+    # (S9) is DEAD until run() is fed depth (node calls run(bgr) today) —
+    # white-obstacle rejection rests on the S6 SHAPE gate + Velodyne/STVL until a
+    # node-level PointCloud2 height test lands.
+    canny_block_size: 21       # adaptiveThreshold blockSize (odd, coerced)
+    canny_C: -8.0              # negative => only brighter-than-neighborhood fires
+                               # (white paint). Do NOT raise (erodes faint line).
+    canny_blur: 9              # Gaussian pre-blur on L (odd, coerced); low-passes
+                               # 1-3px asphalt-aggregate spikes. Matches adaptive_blur.
+    canny_max_sat: 70          # HLS-S ceiling; drop sat>this (orange/brown/green
+                               # clutter). 255 disables. Matches adaptive_max_sat.
+    canny_sigma: 0.33         # auto-Canny median scale (lo=0.67v / hi=1.33v) —
+                               # the exposure-invariance knob. NEVER fixed 50/150.
+    canny_aperture: 3          # cv2.Canny apertureSize — MUST be 3/5/7.
+    canny_edge_and: false      # SHIPPED FALSE. true: candidate = white AND
+                               # dilate(edges); MEASURED to wreck exposure CV
+                               # (0.20->0.78, dropout to 0 px at the dark AE end)
+                               # and eat faint paint (364->0). false: candidate =
+                               # white core (exposure-invariant adaptive base).
+    canny_use_clahe: false     # CLAHE-on-L shadow normalizer (A/B only; clip>3
+                               # washes faint paint). OFF by default.
+    canny_clahe_clip: 2.0     # createCLAHE clipLimit when canny_use_clahe; <=3.0.
+    canny_min_area: 80         # connectedComponents area floor (speckle). Matches
+                               # adaptive_min_area. Do NOT raise to reject potholes
+                               # (a disk is LARGE-area; SHAPE separates it).
+    canny_elong_min: 2.5      # min elongation max(w,h)/min(w,h). REQUIRED (AND).
+                               # Real tape 2.93..3.33; barrel face/cone/bucket
+                               # 1.10..1.38 => REJECTED. 2.5 = margin below the
+                               # 2.93 real-line floor.
+    canny_fill_max: 0.10      # max bbox fill area/(w*h). REQUIRED (AND). Real tape
+                               # 0.035..0.056; a thin white POLE is 0.13..0.14
+                               # (elongated but DENSE) => REJECTED on fill.
+    canny_longaxis_min: 0      # NO-OP (retained for param parity). The longaxis
+                               # OR-escape was REMOVED — it auto-admitted compact
+                               # white-obstacle blobs by bbox size (the leak).
+    canny_longaxis_min_base: 45  # NO-OP (retained for param parity). Acceptance is
+                               # now strictly elong>=elong_min AND fill<=fill_max.
+    canny_use_ipm: false       # SHIPPED FALSE. The IPM warp + line-fit (S7/S8) is
+                               # UNCALIBRATED — never fires on a real line here but
+                               # extrapolates white-obstacle edges into PHANTOM
+                               # lanes (barrel face 0->1532 px leak). Re-pick
+                               # canny_ipm_src + verify IPM-on!=off before enabling.
+    canny_ipm_src: [0.42, 0.42,  0.58, 0.42,  1.0, 1.0,  0.0, 1.0]
+                               # NORMALIZED trapezoid (TL,TR,BR,BL), scaled to
+                               # (w,h). Default = horizon just below the 40% sky
+                               # ROI. UNCALIBRATED — re-pick per camera mount.
+    canny_bev_w: 300           # bird's-eye width px (downscaled; protects MPPI).
+    canny_bev_h: 400           # bird's-eye height px (taller-than-wide).
+    canny_fit_mode: 'window'   # 'window' (default, curve-native sliding-window
+                               # 2nd-order polyfit, per-side) | 'hough' (guarded
+                               # straight-segment alt). Both run ONLY in BEV.
+    canny_close_v: 15          # vertical-only MORPH_CLOSE SE height in BEV to
+                               # bridge dashed/worn gaps ALONG the line. 1 disables.
+    canny_nwindows: 10         # sliding-window count bottom->top (Udacity-lineage).
+    canny_col_k: 3.0          # column-histogram keep: colsum>=k*median (line ~6x).
+    canny_col_floor: 8         # absolute min column sum so a tiny median doesn't
+                               # admit noise. keep=colsum>=max(col_k*median,floor).
+    canny_min_inliers: 150     # min inlier px/side to accept a polyfit (prevents
+                               # hallucinating across a barrel-occluded gap).
+    canny_line_draw_w: 7       # rasterized lane stroke width at REFERENCE res;
+                               # scaled by sc=h/300 (clamped >=3).
+    canny_hough_rho: 2         # HoughLinesP rho px (fit_mode='hough'); coarse.
+    canny_hough_thresh: 40     # HoughLinesP vote threshold (alt). minLineLength /
+                               # maxLineGap are derived from sc at runtime.
+    canny_angle_band: 35       # keep BEV segments within +-this deg of vertical.
+    canny_use_depth: true      # gate the S9 ground-plane height refinement IF a
+                               # valid depth reaches run(). DEAD today (node calls
+                               # run(bgr) with no depth) — silent no-op, never blocks.
+    canny_height_tol: 0.15    # drop a lane px >this (m) above expected ground
+                               # (raised obstacle face). WIDE for the 15% ramp.
+                               # NaN-depth pixels KEPT. DEAD until run() fed depth.
+
     # -------- YOLOPv2 (learned ONNX) pipeline (pipeline:='yolopv2') --------
     # YOLOPv2 lane-line segmentation head (CAIC-AD/YOLOPv2, MIT), exported to
     # ONNX (images 1x3x384x640 -> lane 1x1x384x640 sigmoid). See

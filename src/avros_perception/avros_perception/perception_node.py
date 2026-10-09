@@ -69,6 +69,18 @@ _PIPELINE_PARAM_NAMES = (
     'adaptive_block_size', 'adaptive_C', 'adaptive_channel',
     'adaptive_min_area', 'adaptive_use_open',
     'adaptive_max_sat', 'adaptive_blur',
+    # canny pipeline params (color-gated auto-Canny + IPM geometry). Prefixed
+    # canny_* to avoid colliding with adaptive_* in the shared params dict.
+    'canny_block_size', 'canny_C', 'canny_blur', 'canny_max_sat',
+    'canny_sigma', 'canny_aperture', 'canny_edge_and',
+    'canny_use_clahe', 'canny_clahe_clip',
+    'canny_min_area', 'canny_elong_min', 'canny_fill_max',
+    'canny_longaxis_min', 'canny_longaxis_min_base',
+    'canny_use_ipm', 'canny_ipm_src', 'canny_bev_w', 'canny_bev_h',
+    'canny_fit_mode', 'canny_close_v', 'canny_nwindows',
+    'canny_col_k', 'canny_col_floor', 'canny_min_inliers', 'canny_line_draw_w',
+    'canny_hough_rho', 'canny_hough_thresh', 'canny_angle_band',
+    'canny_use_depth', 'canny_height_tol',
     # yolopv2 (ONNX) pipeline params — model_path/providers/threads/fp16 take
     # effect at warmup; lane_thresh/min_area/pre_resize are re-read every frame.
     'yolopv2_model_path', 'yolopv2_providers', 'yolopv2_lane_thresh',
@@ -244,6 +256,225 @@ class PerceptionNode(Node):
             ),
         )
         self.declare_parameter('process_at_full_res', False)
+
+        # -------- Canny pipeline params (pipeline:='canny') --------
+        # Color-gated auto-Canny + cached-homography IPM + sliding-window
+        # polyfit. Reuses adaptive.py's exposure-invariant HLS-L white-paint core
+        # as the candidate generator, AND'd (never OR'd) with median-derived
+        # auto-Canny so asphalt texture cannot flood in, then a resolution-
+        # relative shape filter + optional bird's-eye line-fit. See
+        # pipelines/canny.py. Kernels/blockSize are odd-coerced in the pipeline
+        # (even RAISES in cv2 and would stall _on_synced).
+        self.declare_parameter(
+            'canny_block_size', 21,
+            ParameterDescriptor(
+                description='adaptiveThreshold Gaussian neighborhood for the '
+                            'white-paint core (odd, >1; odd-coerced in pipeline)',
+                integer_range=[IntegerRange(from_value=3, to_value=199, step=2)],
+            ),
+        )
+        self.declare_parameter(
+            'canny_C', -8.0,
+            ParameterDescriptor(
+                description='adaptiveThreshold C; negative marks bright lines '
+                            '(T=local_mean+|C|). Do NOT raise (erodes faint line).',
+                floating_point_range=[FloatingPointRange(
+                    from_value=-50.0, to_value=50.0, step=0.0)],
+            ),
+        )
+        self.declare_parameter(
+            'canny_blur', 9,
+            ParameterDescriptor(
+                description='Gaussian pre-blur kernel on L (odd, coerced). '
+                            'Low-passes 1-3px asphalt-aggregate spikes.',
+                integer_range=[IntegerRange(from_value=1, to_value=15, step=2)],
+            ),
+        )
+        self.declare_parameter(
+            'canny_max_sat', 70,
+            ParameterDescriptor(
+                description='HLS-S ceiling white-paint gate; drop sat>this '
+                            '(kills orange/brown/green clutter). 255 disables.',
+                integer_range=[IntegerRange(from_value=0, to_value=255, step=1)],
+            ),
+        )
+        self.declare_parameter(
+            'canny_sigma', 0.33,
+            ParameterDescriptor(
+                description='Auto-Canny median scale: lo=(1-s)*median, '
+                            'hi=(1+s)*median. The exposure-invariance knob.',
+                floating_point_range=[FloatingPointRange(
+                    from_value=0.0, to_value=1.0, step=0.0)],
+            ),
+        )
+        self.declare_parameter(
+            'canny_aperture', 3,
+            ParameterDescriptor(
+                description='cv2.Canny apertureSize — MUST be 3/5/7 (coerced to '
+                            '3 if invalid).',
+                integer_range=[IntegerRange(from_value=3, to_value=7, step=2)],
+            ),
+        )
+        self.declare_parameter('canny_edge_and', False)
+        self.declare_parameter('canny_use_clahe', False)
+        self.declare_parameter(
+            'canny_clahe_clip', 2.0,
+            ParameterDescriptor(
+                description='createCLAHE clipLimit when canny_use_clahe; keep '
+                            '<=3.0 or it re-imports aggregate texture.',
+                floating_point_range=[FloatingPointRange(
+                    from_value=0.0, to_value=40.0, step=0.0)],
+            ),
+        )
+        self.declare_parameter(
+            'canny_min_area', 80,
+            ParameterDescriptor(
+                description='connectedComponents area floor (speckle drop). Do '
+                            'NOT raise to reject potholes — a disk is LARGE-area.',
+                integer_range=[IntegerRange(from_value=1, to_value=2000, step=1)],
+            ),
+        )
+        self.declare_parameter(
+            'canny_elong_min', 2.5,
+            ParameterDescriptor(
+                description='Min component elongation max(w,h)/min(w,h) to keep '
+                            '(REQUIRED, AND-ed with fill_max). Real tape 2.93..3.33; '
+                            'barrel face/cone/bucket 1.1..1.4 => rejected.',
+                floating_point_range=[FloatingPointRange(
+                    from_value=1.0, to_value=50.0, step=0.0)],
+            ),
+        )
+        self.declare_parameter(
+            'canny_fill_max', 0.10,
+            ParameterDescriptor(
+                description='Max bbox fill area/(w*h) to keep (REQUIRED, AND-ed '
+                            'with elong_min). Real tape 0.035..0.056; a thin white '
+                            'POLE is 0.13..0.14 (elongated but dense) => rejected.',
+                floating_point_range=[FloatingPointRange(
+                    from_value=0.0, to_value=1.0, step=0.0)],
+            ),
+        )
+        self.declare_parameter(
+            'canny_longaxis_min', 0,
+            ParameterDescriptor(
+                description='NO-OP (retained for param parity). The longaxis '
+                            'OR-escape was removed — it admitted compact obstacle '
+                            'blobs by bbox size. Acceptance is elong AND fill only.',
+                integer_range=[IntegerRange(from_value=0, to_value=2000, step=1)],
+            ),
+        )
+        self.declare_parameter(
+            'canny_longaxis_min_base', 45,
+            ParameterDescriptor(
+                description='NO-OP (retained for param parity). Acceptance is '
+                            'strictly elong>=elong_min AND fill<=fill_max.',
+                integer_range=[IntegerRange(from_value=1, to_value=2000, step=1)],
+            ),
+        )
+        self.declare_parameter('canny_use_ipm', False)
+        self.declare_parameter(
+            'canny_ipm_src',
+            [0.42, 0.42, 0.58, 0.42, 1.0, 1.0, 0.0, 1.0],
+        )
+        self.declare_parameter(
+            'canny_bev_w', 300,
+            ParameterDescriptor(
+                description="Bird's-eye width px (S7). Downscaled BEV keeps "
+                            'warp+window cheap on the Jetson.',
+                integer_range=[IntegerRange(from_value=64, to_value=1024, step=1)],
+            ),
+        )
+        self.declare_parameter(
+            'canny_bev_h', 400,
+            ParameterDescriptor(
+                description="Bird's-eye height px (S7). Taller-than-wide so a "
+                            'real line is a long near-vertical column.',
+                integer_range=[IntegerRange(from_value=64, to_value=1024, step=1)],
+            ),
+        )
+        self.declare_parameter('canny_fit_mode', 'window')
+        self.declare_parameter(
+            'canny_close_v', 15,
+            ParameterDescriptor(
+                description='Vertical-only MORPH_CLOSE SE height in BEV to bridge '
+                            'dashed/worn line gaps along the line. 1 disables.',
+                integer_range=[IntegerRange(from_value=1, to_value=99, step=2)],
+            ),
+        )
+        self.declare_parameter(
+            'canny_nwindows', 10,
+            ParameterDescriptor(
+                description='Sliding-window count bottom->top (S8 window fitter).',
+                integer_range=[IntegerRange(from_value=2, to_value=30, step=1)],
+            ),
+        )
+        self.declare_parameter(
+            'canny_col_k', 3.0,
+            ParameterDescriptor(
+                description='Column-histogram keep threshold: keep cols with '
+                            'colsum>=k*median. Real line peak ~6x median.',
+                floating_point_range=[FloatingPointRange(
+                    from_value=0.0, to_value=20.0, step=0.0)],
+            ),
+        )
+        self.declare_parameter(
+            'canny_col_floor', 8,
+            ParameterDescriptor(
+                description='Absolute min column sum px so a near-empty frame\'s '
+                            'tiny median does not admit noise.',
+                integer_range=[IntegerRange(from_value=0, to_value=1000, step=1)],
+            ),
+        )
+        self.declare_parameter(
+            'canny_min_inliers', 150,
+            ParameterDescriptor(
+                description='Min collected inlier px per side to accept a polyfit '
+                            '(prevents hallucinating across a barrel-occluded gap).',
+                integer_range=[IntegerRange(from_value=1, to_value=5000, step=1)],
+            ),
+        )
+        self.declare_parameter(
+            'canny_line_draw_w', 7,
+            ParameterDescriptor(
+                description='Rasterized lane stroke width at REFERENCE res; '
+                            'scaled by sc=h/300 (clamped >=3).',
+                integer_range=[IntegerRange(from_value=1, to_value=50, step=1)],
+            ),
+        )
+        self.declare_parameter(
+            'canny_hough_rho', 2,
+            ParameterDescriptor(
+                description="HoughLinesP rho px (canny_fit_mode='hough'). "
+                            'Coarser rho tolerates BEV warp jitter.',
+                integer_range=[IntegerRange(from_value=1, to_value=20, step=1)],
+            ),
+        )
+        self.declare_parameter(
+            'canny_hough_thresh', 40,
+            ParameterDescriptor(
+                description='HoughLinesP vote threshold (S8 alt).',
+                integer_range=[IntegerRange(from_value=1, to_value=500, step=1)],
+            ),
+        )
+        self.declare_parameter(
+            'canny_angle_band', 35,
+            ParameterDescriptor(
+                description='AGC: keep BEV segments within +-this deg of vertical '
+                            '(90). Rejects non-vertical curb/crack/smear lines.',
+                integer_range=[IntegerRange(from_value=1, to_value=90, step=1)],
+            ),
+        )
+        self.declare_parameter('canny_use_depth', True)
+        self.declare_parameter(
+            'canny_height_tol', 0.15,
+            ParameterDescriptor(
+                description='S9 depth gate: drop a lane px >this (m) above '
+                            'expected ground (raised face). WIDE for the ramp. '
+                            'DEAD until run() is fed depth.',
+                floating_point_range=[FloatingPointRange(
+                    from_value=0.0, to_value=2.0, step=0.0)],
+            ),
+        )
 
         # -------- YOLOPv2 (ONNX) pipeline params --------
         # Learned lane-line segmentation (pipeline:='yolopv2'). The model is the
