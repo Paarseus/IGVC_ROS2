@@ -99,13 +99,13 @@ class WebRTCNode(Node):
 
     def _build(self, width: int, height: int, encoding: str):
         gst_format, _, cpu_convert = ENCODINGS[encoding]
-        fps = Gst.Fraction(int(round(self.frame_rate * 1000)), 1000)
+        fps_num, fps_den = int(round(self.frame_rate * 1000)), 1000
         convert = 'videoconvert ! video/x-raw,format=BGRx ! ' if cpu_convert else ''
         desc = (
             'appsrc name=src is-live=true format=time do-timestamp=true '
             'block=false max-buffers=1 leaky-type=downstream '
             f'caps=video/x-raw,format={gst_format},width={width},'
-            f'height={height},framerate={fps.num}/{fps.denom} ! '
+            f'height={height},framerate={fps_num}/{fps_den} ! '
             f'{convert}'
             'nvvidconv ! video/x-raw(memory:NVMM),format=NV12 ! '
             'nvv4l2h264enc profile=0 control-rate=1 '
