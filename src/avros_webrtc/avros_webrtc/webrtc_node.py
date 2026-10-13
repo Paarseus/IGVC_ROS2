@@ -15,6 +15,8 @@ Subscribes to the RAW image only. Never subscribe to the ZED
 ZED process (the CPU budget that already starved MPPI on 2026-05-29).
 """
 
+import time
+
 import numpy as np
 
 import gi
@@ -28,6 +30,7 @@ from rclpy.qos import (  # noqa: E402
     QoSProfile, DurabilityPolicy, ReliabilityPolicy, HistoryPolicy
 )
 from sensor_msgs.msg import Image  # noqa: E402
+from std_msgs.msg import Bool, Float32  # noqa: E402
 
 
 # Latest frame only, never back-pressure the ZED wrapper (it publishes
@@ -70,6 +73,15 @@ class WebRTCNode(Node):
         # and fast first frame for a newly connected browser.
         self.declare_parameter('idr_interval', 8)
         self.declare_parameter('restart_backoff_s', 2.0)
+        # Shared scale from rate_controller (std_msgs/Float32); the live
+        # NVENC bitrate is bitrate_bps * scale. Empty = fixed bitrate.
+        self.declare_parameter('bitrate_scale_topic', '/webrtc/bitrate_scale')
+        # Side cameras: when rate_controller sets /webrtc/sides_enabled
+        # false, send one frame every paused_interval_s instead of the
+        # full rate. Still frames (not nothing) keep the RTSP/WebRTC
+        # session alive, so the browser needs no reconnect on resume.
+        self.declare_parameter('pausable', False)
+        self.declare_parameter('paused_interval_s', 2.0)
 
         self.image_topic = self.get_parameter('image_topic').value
         self.rtsp_url = self.get_parameter('rtsp_url').value
@@ -84,9 +96,22 @@ class WebRTCNode(Node):
         self._shape = None          # (width, height, encoding) of pipeline
         self._retry_at = None       # rclpy Time; None = may build now
         self._frames = 0
+        self._enc = None
+        self._scale = 1.0
+        self._applied = None        # bitrate currently set on the encoder
 
         self.create_subscription(
             Image, self.image_topic, self._on_image, SENSOR_QOS)
+        scale_topic = self.get_parameter('bitrate_scale_topic').value
+        if scale_topic:
+            self.create_subscription(Float32, scale_topic, self._on_scale, 1)
+        self._paused = False
+        self._paused_interval = float(
+            self.get_parameter('paused_interval_s').value)
+        self._last_push = 0.0
+        if self.get_parameter('pausable').value:
+            self.create_subscription(
+                Bool, '/webrtc/sides_enabled', self._on_sides, 1)
         self.create_timer(0.2, self._poll_bus)
         self.create_timer(30.0, self._log_stats)
 
@@ -108,8 +133,8 @@ class WebRTCNode(Node):
             f'height={height},framerate={fps_num}/{fps_den} ! '
             f'{convert}'
             'nvvidconv ! video/x-raw(memory:NVMM),format=NV12 ! '
-            'nvv4l2h264enc profile=0 control-rate=1 '
-            f'bitrate={self.bitrate} '
+            'nvv4l2h264enc name=enc profile=0 control-rate=1 '
+            f'bitrate={self._target_bitrate()} '
             f'iframeinterval={self.idr_interval} '
             f'idrinterval={self.idr_interval} '
             'insert-sps-pps=true insert-vui=true poc-type=2 '
@@ -123,17 +148,48 @@ class WebRTCNode(Node):
             pipeline.set_state(Gst.State.NULL)
             raise RuntimeError('pipeline failed to start')
         self._pipeline, self._appsrc = pipeline, appsrc
+        self._enc = pipeline.get_by_name('enc')
+        self._applied = self._target_bitrate()
         self._shape = (width, height, encoding)
         self.get_logger().info(
             f'Streaming {width}x{height} {encoding} @ {self.frame_rate:g} Hz'
             + (' (CPU videoconvert)' if cpu_convert else '')
         )
 
+    def _target_bitrate(self) -> int:
+        return int(self.bitrate * self._scale)
+
+    def _on_scale(self, msg: Float32):
+        # Clamp so a bad message can't stall or flood the encoder.
+        self._scale = min(4.0, max(0.05, float(msg.data)))
+        target = self._target_bitrate()
+        if self._enc is None or self._applied is None:
+            return
+        if abs(target - self._applied) < 0.03 * self._applied:
+            return
+        # Documented as READY-only, but on JetPack 6 nvv4l2h264enc applies
+        # a new bitrate live within ~1 s (measured 2026-10-12).
+        self._enc.set_property('bitrate', target)
+        self.get_logger().info(
+            f'bitrate {self._applied // 1000} -> {target // 1000} kbps '
+            f'(scale {self._scale:.2f})')
+        self._applied = target
+
+    def _on_sides(self, msg: Bool):
+        paused = not msg.data
+        if paused != self._paused:
+            self.get_logger().warn(
+                f'paused: 1 frame / {self._paused_interval:g} s' if paused
+                else 'resumed: full frame rate')
+        self._paused = paused
+
     def _teardown(self, reason: str):
         if self._pipeline is not None:
             self._pipeline.set_state(Gst.State.NULL)
         self._pipeline = None
         self._appsrc = None
+        self._enc = None
+        self._applied = None
         self._shape = None
         self._retry_at = self.get_clock().now() + Duration(
             seconds=self.backoff)
@@ -186,6 +242,11 @@ class WebRTCNode(Node):
                 self._teardown('build failed')
                 return
 
+        now = time.monotonic()
+        if self._paused and now - self._last_push < self._paused_interval:
+            return
+        self._last_push = now
+
         bpp = ENCODINGS[msg.encoding][1]
         row = msg.width * bpp
         data = np.frombuffer(msg.data, dtype=np.uint8)
@@ -197,6 +258,7 @@ class WebRTCNode(Node):
     def _log_stats(self):
         self.get_logger().info(
             f'{self._frames} frames pushed in last 30 s'
+            + (f', {self._applied // 1000} kbps' if self._applied else '')
             + ('' if self._pipeline is not None else ' (pipeline down)'))
         self._frames = 0
 

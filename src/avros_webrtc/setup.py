@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'webrtc_node = avros_webrtc.webrtc_node:main',
+            'rate_controller = avros_webrtc.rate_controller:main',
         ],
     },
 )
