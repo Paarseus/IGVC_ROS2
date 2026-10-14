@@ -7,13 +7,19 @@ Launches:
   - NTRIP client for RTK corrections (optional)
 """
 
+import fcntl
 import os
+import socket
+import struct
+import urllib.parse
+import urllib.request
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
     IncludeLaunchDescription,
+    OpaqueFunction,
     SetEnvironmentVariable,
 )
 from launch.conditions import IfCondition
@@ -21,6 +27,48 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+
+
+def _iface_ip(iface):
+    """IPv4 address currently assigned to a network interface, or None."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        try:
+            packed = fcntl.ioctl(
+                sock.fileno(), 0x8915,  # SIOCGIFADDR
+                struct.pack('256s', iface.encode()[:15]))
+            return socket.inet_ntoa(packed[20:24])
+        except OSError:
+            return None
+
+
+def _point_lidar(context, *_args, **_kwargs):
+    """Make the VLP-16 stream (unicast) to this machine's current IP.
+
+    The sensor stores its UDP destination. When it is on broadcast
+    (255.255.255.255) every packet arrives twice and out of order, which makes
+    the driver's cut_angle logic emit thin partial scans (100+ msgs/s) instead of
+    one full 360 deg scan at 10 Hz. Re-pointing it on every launch keeps it on
+    unicast across sensor power cycles and DHCP address changes.
+    """
+    cfg = context.launch_configurations
+    if (cfg['enable_velodyne'].lower() != 'true'
+            or cfg['set_lidar_host'].lower() != 'true'):
+        return []
+    lidar_ip, iface = cfg['lidar_ip'], cfg['lidar_iface']
+    host = _iface_ip(iface)
+    if host is None:
+        print(f'[sensors.launch] {iface} has no IPv4 address; '
+              'not touching the lidar destination')
+        return []
+    try:
+        data = urllib.parse.urlencode(
+            {'addr': host, 'dport': 2368, 'tport': 8308}).encode()
+        urllib.request.urlopen(
+            f'http://{lidar_ip}/cgi/setting/host', data, timeout=3).read()
+        print(f'[sensors.launch] lidar {lidar_ip} now streams to {host}:2368')
+    except Exception as exc:  # sensor unreachable: keep launching
+        print(f'[sensors.launch] could not set lidar destination: {exc}')
+    return []
 
 
 def generate_launch_description():
@@ -66,6 +114,21 @@ def generate_launch_description():
         ),
 
         DeclareLaunchArgument(
+            'set_lidar_host', default_value='true',
+            description="Point the VLP-16's UDP destination (unicast) at this "
+                        "machine's current IP on lidar_iface before starting the "
+                        'driver. Avoids broadcast duplicates / fragmented scans.'
+        ),
+        DeclareLaunchArgument(
+            'lidar_ip', default_value='192.168.13.11',
+            description='VLP-16 IP address (its web interface)'
+        ),
+        DeclareLaunchArgument(
+            'lidar_iface', default_value='eno1',
+            description='Network interface the VLP-16 is connected to'
+        ),
+
+        DeclareLaunchArgument(
             'enable_zed_front', default_value='false',
             description='Enable front ZED X camera (requires ZED SDK + ZED Link Quad)'
         ),
@@ -92,6 +155,8 @@ def generate_launch_description():
             }],
             output='screen',
         ),
+
+        OpaqueFunction(function=_point_lidar),
 
         # Velodyne VLP-16 driver
         Node(

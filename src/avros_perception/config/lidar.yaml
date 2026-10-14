@@ -1,0 +1,30 @@
+lidar_preprocessor:
+  ros__parameters:
+    input_topic: /velodyne_points
+    sensor_frame: velodyne
+    target_frame: base_link
+    range_min: 0.7
+    # Single authority for max distance: matches STVL obstacle_range (15 m) in
+    # nav2_params_igvc_autonav.yaml. Points beyond it would be dropped by STVL anyway.
+    range_max: 15.0
+    # VLP-16's 16 lasers already span exactly -15/+15 deg; this is a
+    # safety net, not an active crop, unless the sensor changes.
+    vertical_fov_min_deg: -15.0
+    vertical_fov_max_deg: 15.0
+    downsample_voxel_size: 0.1
+    ransac_iterations: 50
+    ransac_candidate_band: 0.5
+    ransac_distance_threshold: 0.1
+    # base_link is at ground level in IGVC_ROS2 (IMU 0.5556 m above it, Velodyne ~0.71 m),
+    # so this keeps obstacles between 0.2 m and 2.0 m above ground.
+    height_band_min: 0.2
+    height_band_max: 2.0
+    sensor_timeout_sec: 0.5
+    # Merge the driver's partial-revolution fragments over this many seconds
+    # (header-stamp time) before processing. With the sensor sending unicast the
+    # driver already emits one full 360-degree scan per message at 10 Hz, so
+    # merging is OFF (0 = process every incoming cloud on its own). A window
+    # >= the scan period would merge two scans and halve the output rate. If the
+    # sensor falls back to broadcast (duplicate, out-of-order packets) the driver
+    # emits thin fragments again: set this to ~0.08 until that is fixed.
+    merge_window_sec: 0.0

@@ -21,7 +21,7 @@ setup(
     zip_safe=True,
     maintainer='AV Lab',
     maintainer_email='avlab@cpp.edu',
-    description='Camera perception bridge: ZED X images to kiwicampus contract',
+    description='Camera + LiDAR perception: ZED X semantic bridge and Velodyne obstacle preprocessing',
     license='MIT',
     extras_require={
         'test': [
@@ -30,7 +30,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'perception_node = avros_perception.perception_node:main'
+            'perception_node = avros_perception.perception_node:main',
+            'lidar_preprocessor = avros_perception.lidar_preprocessor:main'
         ],
     },
 )

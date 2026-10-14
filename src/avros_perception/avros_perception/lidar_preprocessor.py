@@ -6,13 +6,15 @@ values so they're testable without a live ROS node or TF listener.
 LidarPreprocessorNode wires them to subscriptions/publishers/TF.
 """
 
+import os
+import resource
 from typing import Optional, Tuple
 
 import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
-from geometry_msgs.msg import PointStamped, TransformStamped
+from geometry_msgs.msg import TransformStamped
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Bool, Header
@@ -30,14 +32,12 @@ from tf2_ros import (
 
 def pointcloud2_to_xyz_array(msg: PointCloud2, skip_nans: bool = True) -> np.ndarray:
     """Extract an (N, 3) xyz array from a PointCloud2, dropping NaN rows."""
-    points = point_cloud2.read_points(
-        msg, field_names=("x", "y", "z"), skip_nans=False
-    )
-    arr = np.array([[p[0], p[1], p[2]] for p in points], dtype=np.float64)
-    if arr.size == 0:
+    cloud = point_cloud2.read_points(msg, field_names=("x", "y", "z"), skip_nans=False)
+    if cloud.shape[0] == 0:
         return np.empty((0, 3), dtype=np.float64)
+    arr = np.stack((cloud["x"], cloud["y"], cloud["z"]), axis=1).astype(np.float64)
     if skip_nans:
-        arr = arr[~np.isnan(arr).any(axis=1)]
+        arr = arr[np.isfinite(arr).all(axis=1)]
     return arr
 
 
@@ -81,11 +81,14 @@ def vertical_fov_filter(
 
 
 def downsample_voxel(points_xyz: np.ndarray, voxel_size: float) -> np.ndarray:
-    """Reduce to one representative point per voxel_size cube."""
+    """Reduce to one representative point (the first seen) per voxel_size cube."""
     if points_xyz.shape[0] == 0:
         return points_xyz
     keys = np.floor(points_xyz / voxel_size).astype(np.int64)
-    _, first_indices = np.unique(keys, axis=0, return_index=True)
+    keys -= keys.min(axis=0)
+    span = keys.max(axis=0) + 1
+    packed = (keys[:, 0] * span[1] + keys[:, 1]) * span[2] + keys[:, 2]
+    _, first_indices = np.unique(packed, return_index=True)
     return points_xyz[np.sort(first_indices)]
 
 
@@ -120,31 +123,23 @@ def fit_ground_plane_ransac(
     if candidate_indices.shape[0] < 3:
         candidate_indices = np.arange(n)
 
-    best_coeffs = None
-    best_count = -1
-
-    for _ in range(iterations):
-        sample_idx = rng.choice(candidate_indices, size=3, replace=False)
-        p1, p2, p3 = points_xyz[sample_idx]
-        v1 = p2 - p1
-        v2 = p3 - p1
-        normal = np.cross(v1, v2)
-        norm = np.linalg.norm(normal)
-        if norm < 1e-9:
-            continue
-        normal = normal / norm
-        d = -np.dot(normal, p1)
-        coeffs = np.array([normal[0], normal[1], normal[2], d])
-
-        dist = np.abs(points_xyz @ coeffs[:3] + coeffs[3])
-        count = int(np.sum(dist <= distance_threshold))
-
-        if count > best_count:
-            best_count = count
-            best_coeffs = coeffs
-
-    if best_coeffs is None:
+    # Draw all hypotheses at once; duplicate picks give a zero normal and are dropped.
+    sample = candidate_indices[
+        rng.integers(0, candidate_indices.shape[0], size=(iterations, 3))
+    ]
+    p1, p2, p3 = (points_xyz[sample[:, k]] for k in range(3))
+    normals = np.cross(p2 - p1, p3 - p1)
+    norms = np.linalg.norm(normals, axis=1)
+    valid = norms >= 1e-9
+    if not valid.any():
         return None, inlier_mask
+    normals = normals[valid] / norms[valid, None]
+    d = -np.einsum("ij,ij->i", normals, p1[valid])
+
+    dist = np.abs(points_xyz @ normals.T + d)  # (n, valid hypotheses)
+    counts = (dist <= distance_threshold).sum(axis=0)
+    best = int(np.argmax(counts))  # first maximum, like the original strict '>'
+    best_coeffs = np.array([*normals[best], d[best]])
 
     dist = np.abs(points_xyz @ best_coeffs[:3] + best_coeffs[3])
     inlier_mask = dist <= distance_threshold
@@ -313,6 +308,11 @@ class LidarPreprocessorNode(Node):
         self.declare_parameter("height_band_min", -0.8)
         self.declare_parameter("height_band_max", 3.0)
         self.declare_parameter("sensor_timeout_sec", 0.5)
+        # The Velodyne driver can emit many small partial-revolution clouds. Fragments
+        # are filtered on arrival and merged over this window (header-stamp time, one
+        # revolution at 600 rpm = 0.1 s) before the expensive stages run once.
+        # 0 disables merging: every incoming cloud is processed on its own.
+        self.declare_parameter("merge_window_sec", 0.08)
 
         # Self-footprint exclusion box, in base_link. Defaults are the union
         # bounding box of IGVC_ROS2's measured chassis geometry (main body +
@@ -351,13 +351,13 @@ class LidarPreprocessorNode(Node):
         self.obstacles_pub = self.create_publisher(
             PointCloud2, "/perception/lidar/obstacles", 10
         )
-        self.origin_pub = self.create_publisher(
-            PointStamped, "/perception/lidar/origin", 10
-        )
         self.health_pub = self.create_publisher(Bool, "/perception/lidar/health", 10)
 
         self._last_msg_time: Optional[float] = None
         self._smoothed_ground_plane: Optional[np.ndarray] = None
+        self._fragments = []  # sensor-frame (range/FOV filtered) point arrays
+        self._window_start: Optional[float] = None
+        self._last_stamp = None
         self._timeout_timer = self.create_timer(0.2, self._check_timeout)
 
     def _check_timeout(self):
@@ -367,20 +367,16 @@ class LidarPreprocessorNode(Node):
             self.health_pub.publish(Bool(data=False))
 
     def _cloud_callback(self, msg: PointCloud2):
-        now_sec = self.get_clock().now().nanoseconds / 1e9
-        self._last_msg_time = now_sec
+        """Filter an incoming (possibly partial) cloud and merge it into the window."""
+        self._last_msg_time = self.get_clock().now().nanoseconds / 1e9
+        stamp = msg.header.stamp
+        t = stamp.sec + stamp.nanosec * 1e-9
+        window = self.get_parameter("merge_window_sec").value
 
-        try:
-            tf = self.tf_buffer.lookup_transform(
-                self.target_frame, self.sensor_frame, msg.header.stamp
-            )
-        except (LookupException, ExtrapolationException, ConnectivityException) as exc:
-            self.get_logger().warn(
-                f"TF lookup {self.target_frame}<-{self.sensor_frame} failed: {exc}",
-                throttle_duration_sec=2.0,
-            )
-            self.health_pub.publish(Bool(data=False))
-            return
+        # Stamps going backwards (bag loop / sim reset): drop the stale window.
+        if self._window_start is not None and t < self._window_start:
+            self._fragments = []
+            self._window_start = None
 
         points = pointcloud2_to_xyz_array(msg)
         points = range_filter(
@@ -393,6 +389,36 @@ class LidarPreprocessorNode(Node):
             self.get_parameter("vertical_fov_min_deg").value,
             self.get_parameter("vertical_fov_max_deg").value,
         )
+        if points.shape[0]:
+            self._fragments.append(points)
+        if self._window_start is None:
+            self._window_start = t
+        self._last_stamp = stamp
+
+        if t - self._window_start >= window:
+            merged = (
+                np.concatenate(self._fragments)
+                if self._fragments
+                else np.empty((0, 3), dtype=np.float64)
+            )
+            self._fragments = []
+            self._window_start = None
+            self._process(merged, stamp)
+
+    def _process(self, points: np.ndarray, stamp):
+        """Downsample, transform, remove body and ground, and publish obstacles."""
+        try:
+            tf = self.tf_buffer.lookup_transform(
+                self.target_frame, self.sensor_frame, stamp
+            )
+        except (LookupException, ExtrapolationException, ConnectivityException) as exc:
+            self.get_logger().warn(
+                f"TF lookup {self.target_frame}<-{self.sensor_frame} failed: {exc}",
+                throttle_duration_sec=2.0,
+            )
+            self.health_pub.publish(Bool(data=False))
+            return
+
         points = downsample_voxel(
             points, self.get_parameter("downsample_voxel_size").value
         )
@@ -445,23 +471,32 @@ class LidarPreprocessorNode(Node):
         )
 
         header = Header()
-        header.stamp = msg.header.stamp
+        header.stamp = stamp
         header.frame_id = self.target_frame
 
-        cloud_msg = point_cloud2.create_cloud_xyz32(header, obstacles.tolist())
+        cloud_msg = point_cloud2.create_cloud_xyz32(header, obstacles)
         self.obstacles_pub.publish(cloud_msg)
-
-        origin_point = PointStamped()
-        origin_point.header = header
-        origin_point.point.x = matrix[0, 3]
-        origin_point.point.y = matrix[1, 3]
-        origin_point.point.z = matrix[2, 3]
-        self.origin_pub.publish(origin_point)
 
         self.health_pub.publish(Bool(data=True))
 
 
+def _cap_memory():
+    """Cap this process's address space so a runaway allocation fails alone.
+
+    The node normally uses under 1 GB of address space. On 2026-10-09 it once grew
+    to ~56 GB within a couple of minutes and was OOM-killed by the kernel (cause not
+    found, not reproducible), which puts the rest of the robot's processes at risk.
+    With the cap it raises MemoryError (and a traceback) instead. Override with
+    AVROS_LIDAR_MAX_VMEM_GB; 0 disables the cap.
+    """
+    gb = float(os.environ.get('AVROS_LIDAR_MAX_VMEM_GB', '4'))
+    if gb > 0:
+        limit = int(gb * 2 ** 30)
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+
+
 def main(args=None):
+    _cap_memory()
     rclpy.init(args=args)
     node = LidarPreprocessorNode()
     try:

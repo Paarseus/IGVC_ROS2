@@ -10,8 +10,9 @@ Visualization Manager:
     - Class: rviz_default_plugins/TF
       Name: TF
       Enabled: true
+      Show Names: true
     - Class: rviz_default_plugins/PointCloud2
-      Name: LidarObstacles
+      Name: LidarObstacles (preprocessed)
       Topic:
         Value: /perception/lidar/obstacles
         Depth: 5
@@ -19,51 +20,50 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Best Effort
       Enabled: true
-      Color: 255; 255; 0
-      Size (m): 0.05
-    - Class: rviz_default_plugins/PointCloud2
-      Name: Voxels
-      Topic:
-        Value: /perception/lidar/voxels
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Best Effort
-      Enabled: false
-      Color: 255; 0; 0
       Color Transformer: FlatColor
-      Size (m): 0.25
-      Style: Boxes
+      Color: 255; 255; 0
+      Size (m): 0.03
+      Style: Points
     - Class: rviz_default_plugins/PointCloud2
-      Name: VoxelsInflated
+      Name: STVL Voxels (marked)
       Topic:
-        Value: /perception/lidar/voxels_inflated
-        Depth: 5
+        Value: /local_costmap/voxel_grid
+        Depth: 1
         Durability Policy: Volatile
         History Policy: Keep Last
-        Reliability Policy: Best Effort
-      Enabled: false
-      Style: Boxes
-      Size (m): 0.25
-    - Class: rviz_default_plugins/MarkerArray
-      Name: VoxelMarkers
-      Topic:
-        Value: /perception/lidar/voxel_markers
+        Reliability Policy: Reliable
       Enabled: true
+      Color Transformer: FlatColor
+      Color: 255; 60; 60
+      Size (m): 0.1
+      Style: Boxes
+      Alpha: 0.8
     - Class: rviz_default_plugins/Map
-      Name: ObstacleCostmap2D
+      Name: LocalCostmap
       Topic:
-        Value: /perception/lidar/obstacle_costmap_2d
-      Enabled: false
+        Value: /local_costmap/costmap
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Enabled: true
+      Color Scheme: costmap
+      Alpha: 0.5
+      Draw Behind: true
   Global Options:
-    Fixed Frame: base_link
+    # odom: STVL voxel_grid is published in the costmap global frame (odom, confirmed).
+    Fixed Frame: odom
+    Frame Rate: 15
   Tools:
     - Class: rviz_default_plugins/Interact
     - Class: rviz_default_plugins/MoveCamera
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 20
+      Target Frame: base_link
+      Distance: 12
+      Pitch: 0.7
+      Yaw: 3.14
       Focal Point:
         X: 0
         Y: 0
