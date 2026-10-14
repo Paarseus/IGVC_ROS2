@@ -1,24 +1,25 @@
-"""Launch Webots simulation with the LiDAR voxel-mapping stack + RViz.
+"""Launch Webots simulation with the LiDAR preprocessing + STVL voxel bench + RViz.
 
-For exercising avros_lidar's voxel_mapper (including its optional GPU/CUDA
-raycasting path, see voxel_grid.py's use_gpu_raycast) end-to-end without a
-real Velodyne attached. Includes:
+Exercises avros_perception's lidar_preprocessor and the bench STVL costmap
+(3D voxels) end-to-end without a real Velodyne attached. Includes:
   - Base sim.launch.py (Webots cpp_campus world + vehicle + robot_state_publisher,
     which publishes the full TF tree incl. base_link->velodyne/imu_link)
-  - lidar_preprocessor + voxel_mapper_node via avros_lidar's lidar.launch.py,
-    with enable_sensors:=false (no real Velodyne driver / duplicate TF --
-    Webots already provides both) and lidar_input_topic pointed at Webots'
-    actual LiDAR topic (see below)
-  - RViz (avros_lidar's lidar.rviz config), showing /perception/lidar/voxel_markers
-    and /perception/lidar/obstacle_costmap_2d
+  - avros_bringup lidar.launch.py (preprocessor + bench costmap + RViz), with
+    enable_sensors:=false (no real Velodyne driver / duplicate TF -- Webots
+    already provides both) and lidar_input_topic pointed at Webots' LiDAR topic
+  - RViz (avros_bringup lidar.rviz), showing /perception/lidar/obstacles and
+    the STVL /local_costmap/voxel_grid
 
 Webots' Lidar device plugin appends /point_cloud to the configured topic
-name, so /velodyne_points -> /velodyne_points/point_cloud (same quirk
-sim_navigation.launch.py works around for Nav2's costmaps).
+name, so /velodyne_points -> /velodyne_points/point_cloud.
+
+NOTE: the bench costmap publishes static odom->base_link / map->odom. If
+sim.launch.py also publishes odom->base_link (sim odometry), the two will
+conflict: use avros_perception's lidar.launch.py directly with the sim's own
+Nav2 costmap instead of lidar.launch.py.
 
 Usage:
   ros2 launch avros_sim sim_lidar.launch.py
-  ros2 launch avros_sim sim_lidar.launch.py use_gpu_raycast:=false  # CPU path, for comparison
 """
 
 import os
@@ -32,12 +33,9 @@ from launch.substitutions import LaunchConfiguration
 
 def generate_launch_description():
     sim_pkg = get_package_share_directory('avros_sim')
-    lidar_pkg = get_package_share_directory('avros_lidar')
+    bringup_pkg = get_package_share_directory('avros_bringup')
 
     return LaunchDescription([
-        DeclareLaunchArgument(
-            'use_gpu_raycast', default_value='true',
-            description='Run voxel_mapper raycasting on the GPU (CUDA via numba)'),
         DeclareLaunchArgument(
             'rviz', default_value='true', description='Launch RViz'),
 
@@ -48,11 +46,10 @@ def generate_launch_description():
 
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
-                os.path.join(lidar_pkg, 'launch', 'lidar.launch.py')),
+                os.path.join(bringup_pkg, 'launch', 'lidar.launch.py')),
             launch_arguments={
                 'use_sim_time': 'true',
                 'enable_sensors': 'false',
-                'use_gpu_raycast': LaunchConfiguration('use_gpu_raycast'),
                 'rviz': LaunchConfiguration('rviz'),
                 'lidar_input_topic': '/velodyne_points/point_cloud',
             }.items(),

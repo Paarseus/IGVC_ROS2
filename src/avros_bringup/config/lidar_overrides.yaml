@@ -1,0 +1,8 @@
+# Bench-only overlay for launch/lidar.launch.py.
+# Loaded AFTER nav2_params_igvc_autonav.yaml (later files win per key), so the STVL
+# settings in the shared file (topic, height band, 15 m range, ...) are used as is.
+# The only difference: no ZED cameras in the bench test, so drop the semantic layer.
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      plugins: ["stvl_layer", "inflation_layer"]

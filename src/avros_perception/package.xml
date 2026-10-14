@@ -3,7 +3,7 @@
 <package format="3">
   <name>avros_perception</name>
   <version>0.0.0</version>
-  <description>Camera perception bridge: ZED X images to kiwicampus semantic_segmentation_layer contract</description>
+  <description>Camera + LiDAR perception: ZED X images to the kiwicampus semantic_segmentation_layer contract, and Velodyne obstacle preprocessing for Nav2 STVL</description>
   <maintainer email="avlab@cpp.edu">AV Lab</maintainer>
   <license>MIT</license>
 
@@ -11,6 +11,9 @@
   <depend>sensor_msgs</depend>
   <depend>vision_msgs</depend>
   <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>sensor_msgs_py</depend>
   <depend>cv_bridge</depend>
   <depend>message_filters</depend>
   <depend>python3-numpy</depend>

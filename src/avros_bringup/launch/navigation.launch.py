@@ -198,6 +198,14 @@ def generate_launch_description():
                         'Disable for bench/no-drive testing: enable_mission_manager:=false'
         ),
 
+        DeclareLaunchArgument(
+            'enable_lidar_preprocessor', default_value='true',
+            description='Start avros_perception lidar_preprocessor. Nav2 STVL (local + '
+                        'global) now reads /perception/lidar/obstacles instead of '
+                        '/velodyne_points, so keep this true unless something else '
+                        'publishes that topic.'
+        ),
+
         # Localization (sensors + EKF + navsat)
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
@@ -224,6 +232,16 @@ def generate_launch_description():
                 'cameras': LaunchConfiguration('perception_cameras'),
             }.items(),
             condition=IfCondition(LaunchConfiguration('enable_perception')),
+        ),
+
+        # avros_perception — LiDAR preprocessing for STVL (range/FOV filter, body + ground removal)
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource([
+                get_package_share_directory('avros_perception'),
+                '/launch/lidar_preprocessor.launch.py',
+            ]),
+            launch_arguments={'use_sim_time': use_sim_time}.items(),
+            condition=IfCondition(LaunchConfiguration('enable_lidar_preprocessor')),
         ),
 
         # Actuator bridge
