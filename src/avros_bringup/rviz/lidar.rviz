@@ -1,0 +1,73 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+      Show Names: true
+    - Class: rviz_default_plugins/PointCloud2
+      Name: LidarObstacles (preprocessed)
+      Topic:
+        Value: /perception/lidar/obstacles
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+      Enabled: true
+      Color Transformer: FlatColor
+      Color: 255; 255; 0
+      Size (m): 0.03
+      Style: Points
+    - Class: rviz_default_plugins/PointCloud2
+      Name: STVL Voxels (marked)
+      Topic:
+        Value: /local_costmap/voxel_grid
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Enabled: true
+      Color Transformer: FlatColor
+      Color: 255; 60; 60
+      Size (m): 0.1
+      Style: Boxes
+      Alpha: 0.8
+    - Class: rviz_default_plugins/Map
+      Name: LocalCostmap
+      Topic:
+        Value: /local_costmap/costmap
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Enabled: true
+      Color Scheme: costmap
+      Alpha: 0.5
+      Draw Behind: true
+  Global Options:
+    # odom: STVL voxel_grid is published in the costmap global frame (odom, confirmed).
+    Fixed Frame: odom
+    Frame Rate: 15
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Target Frame: base_link
+      Distance: 12
+      Pitch: 0.7
+      Yaw: 3.14
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+Window Geometry:
+  Height: 900
+  Width: 1400

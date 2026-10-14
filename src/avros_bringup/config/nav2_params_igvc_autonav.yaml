@@ -312,13 +312,13 @@ local_costmap:
         decay_model: 0             # 0=linear, 1=exponential, -1=persistent
         voxel_size: 0.1            # 10 cm voxels
         publish_voxel_map: true    # /.../stvl_layer/voxel_marked_cloud + voxel_grid
-        mark_threshold: 1            # 2026-05-29: 0->1. Needs >=2 returns/voxel to mark; kills single-hit scan-skew ghosts (A/B on bag: rotation far-ring excess +49%->+11%) AND flicker, with no decay tradeoff.
+        mark_threshold: 2            # 2026-05-29: 0->1. Needs >=2 returns/voxel to mark; kills single-hit scan-skew ghosts (A/B on bag: rotation far-ring excess +49%->+11%) AND flicker, with no decay tradeoff.
         update_footprint_enabled: true
         combination_method: 1      # Max (matches voxel_layer default)
         mapping_mode: false        # ephemeral local costmap (not building a map)
-        observation_sources: velodyne_points
-        velodyne_points:
-          topic: /velodyne_points
+        observation_sources: lidar_obstacles
+        lidar_obstacles:
+          topic: /perception/lidar/obstacles   # 2026-10-09: avros_perception lidar_preprocessor output (was /velodyne_points)
           sensor_frame: "velodyne"   # 2026-05-31: pin STVL clearing/frustum origin to the robot (velodyne) regardless of cloud header.frame_id. Default ("") would fall back to the cloud frame; with deskew re-enabled this insures clearing stays robot-centric even if the cloud comes out in odom. measurement_buffer.cpp:97-98 (origin_frame = sensor_frame ?: cloud.header.frame_id).
           data_type: PointCloud2
           marking: true
@@ -340,16 +340,16 @@ local_costmap:
           #   1-2     : 8%  people / posts
           #   >2      : 35% buildings / trees / high structures
           # Set to 0.3 if grass is taller than 0.2 m at the test site.
-          min_obstacle_height: 0.4   # 2026-05-29: 0.2->0.4. Tight barrel mid-band [0.4,0.8]; filters ground/low returns.
-          max_obstacle_height: 1.0   # IGVC-AUTONAV 2026-06-01: mark full ~0.9m drum body. [prior 0.8:] 2026-05-29: ->0.8. Tight barrel mid-band [0.4,0.8]; fewer points (faster) + fewer phantoms.
-          obstacle_range: 8.0            # 2026-05-29: 15->8. Local avoidance only needs ~8 m; cuts the 9-15 m scan-skew far-ring + processes fewer points.
+          min_obstacle_height: 0.2   # 2026-10-09: pass-through. lidar_preprocessor (avros_perception/config/lidar.yaml height_band 0.2..2.0, ground removed) is the authority; STVL must not clip it again. [prior 0.4]
+          max_obstacle_height: 0.8   # 2026-10-09: pass-through (see min). [prior 1.0 local / 0.8 global]
+          obstacle_range: 15.0       # 2026-10-09: single distance authority, = lidar_preprocessor range_max (lidar.yaml). [prior 8 local / 10 global]
           # VLP-16 hourglass FOV for frustum-accelerated decay
           model_type: 1                  # 1 = 3D LiDAR; 0 = depth camera
           vertical_fov_angle: 0.523      # VLP-16 +/-15 deg
           # 2026-05-19: widen the near cone so close LOW voxels register as
           # in-frustum -> get fast frustum-accelerated decay instead of the
           # slow 5s timeout (was the near-front smear cause).
-          vertical_fov_padding: 0.1
+          vertical_fov_padding: 0.4
           horizontal_fov_angle: 6.283    # 360 deg
           # decay_acceleration: accelerate decay of in-frustum voxels that get
           # no confirming return (units 1/s^2). 2026-05-21: 10.0->5.0 — at 10 it
@@ -359,7 +359,7 @@ local_costmap:
           # FOV but un-reconfirmed this rotation decayed too fast for VLP-16's
           # 16-beam sparsity). At accel=2, a voxel missed for 2s decays only
           # ~2.67s instead of ~6.67s, giving more cycles for re-confirmation.
-          decay_acceleration: 0.5    # IGVC-AUTONAV 2026-06-01: adopt Jetson-LIVE 0.5 (was laptop-committed 2.0). Slower frustum decay = barrels persist while the robot maneuvers AROUND them -> no corner-cut Sideswipe (II.4 -5 ft); still clears once truly gone via voxel_decay.
+          decay_acceleration: 1.0    # IGVC-AUTONAV 2026-06-01: adopt Jetson-LIVE 0.5 (was laptop-committed 2.0). Slower frustum decay = barrels persist while the robot maneuvers AROUND them -> no corner-cut Sideswipe (II.4 -5 ft); still clears once truly gone via voxel_decay.
           clear_after_reading: true
 
       # kiwicampus/semantic_segmentation_layer — consumes the avros_perception 3-topic contract
@@ -571,16 +571,16 @@ global_costmap:
         update_footprint_enabled: true
         combination_method: 1
         mapping_mode: false
-        observation_sources: velodyne_points
-        velodyne_points:
-          topic: /velodyne_points
+        observation_sources: lidar_obstacles
+        lidar_obstacles:
+          topic: /perception/lidar/obstacles   # 2026-10-09: avros_perception lidar_preprocessor output (was /velodyne_points)
           sensor_frame: "velodyne"   # 2026-05-31: pin STVL clearing origin to the robot (velodyne); global_frame=map, so without this the origin would resolve to map-position of the cloud frame. measurement_buffer.cpp:97-98. See local source + velodyne.yaml deskew note.
           data_type: PointCloud2
           marking: true
           clearing: true
-          min_obstacle_height: 0.4   # 2026-05-29: 0.2->0.4. Tight barrel mid-band [0.4,0.8]; filters ground/low returns.
-          max_obstacle_height: 0.8   # 2026-05-29: ->0.8. Tight barrel mid-band [0.4,0.8]; fewer points (faster) + fewer phantoms.
-          obstacle_range: 10.0           # 2026-05-29: 20->10. Faster; global only needs nearby obstacles for planning.
+          min_obstacle_height: 0.1   # 2026-10-09: pass-through. lidar_preprocessor (avros_perception/config/lidar.yaml height_band 0.2..2.0, ground removed) is the authority; STVL must not clip it again. [prior 0.4]
+          max_obstacle_height: 2.1   # 2026-10-09: pass-through (see min). [prior 1.0 local / 0.8 global]
+          obstacle_range: 15.0       # 2026-10-09: single distance authority, = lidar_preprocessor range_max (lidar.yaml). [prior 8 local / 10 global]
           model_type: 1                  # 3D LiDAR (frustum-accelerated decay)
           vertical_fov_angle: 0.523      # VLP-16 +/-15 deg
           vertical_fov_padding: 0.1      # 2026-05-19: widen near cone (match local)
