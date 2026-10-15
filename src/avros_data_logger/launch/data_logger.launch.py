@@ -10,7 +10,9 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('rgb_camera_index', default_value='-1'),
         DeclareLaunchArgument('thermal_camera_index', default_value='-1'),
-        DeclareLaunchArgument('episode_id', default_value='1'),
+        DeclareLaunchArgument(
+            'episode_id', default_value='0',
+            description='Optional fixed ID; 0 generates an ID per recording'),
         DeclareLaunchArgument('output_directory', default_value='data_logger'),
         DeclareLaunchArgument('capture_rate_hz', default_value='10.0'),
         DeclareLaunchArgument('auto_contrast', default_value='true'),

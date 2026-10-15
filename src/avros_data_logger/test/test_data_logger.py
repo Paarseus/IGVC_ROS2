@@ -58,7 +58,7 @@ def test_image_names_are_matching_and_zero_padded():
 
     assert names == (
         'rgb_000012_20261001T143015.123456Z.jpg',
-        'thermal_000012_20261001T143015.123456Z.jpg',
+        'thermal_000012_20261001T143015.123456Z.png',
     )
 
 

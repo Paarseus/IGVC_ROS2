@@ -84,11 +84,11 @@ def _open_camera(index: int):
 
 
 def _image_names(count: int, stamp_date: str):
-    """Return matching RGB and thermal filenames for one capture."""
+    """Return matching RGB and raw thermal filenames for one capture."""
     padded_count = f'{count:0{IMAGE_COUNT_WIDTH}d}'
     return (
         f'rgb_{padded_count}_{stamp_date}.jpg',
-        f'thermal_{padded_count}_{stamp_date}.jpg',
+        f'thermal_{padded_count}_{stamp_date}.png',
     )
 
 
@@ -224,7 +224,7 @@ class DataLoggerNode(Node):
         super().__init__('avros_dataLogger')
 
         self.declare_parameter('output_directory', 'data_logger')
-        self.declare_parameter('episode_id', 1)
+        self.declare_parameter('episode_id', 0)
         self.declare_parameter('rgb_camera_index', RGB_CAMERA_INDEX)
         self.declare_parameter('thermal_camera_index', THERMAL_CAMERA_INDEX)
         self.declare_parameter('imu_topic', '/imu/data')
@@ -255,7 +255,10 @@ class DataLoggerNode(Node):
         self._gnss_file, self._gnss_writer = self._open_csv(
             self._output / 'gnss_log.csv', GNSS_COLUMNS)
 
-        self._episode_id = int(self.get_parameter('episode_id').value)
+        configured_episode = int(self.get_parameter('episode_id').value)
+        self._auto_episode_id = configured_episode <= 0
+        self._episode_id = ('' if self._auto_episode_id
+                            else str(configured_episode))
         self._run_start_ns = self.get_clock().now().nanoseconds
         self._rate_hz = float(self.get_parameter('capture_rate_hz').value)
         if self._rate_hz <= 0.0:
@@ -423,8 +426,9 @@ class DataLoggerNode(Node):
             rgb_ok, rgb = self._rgb_camera.read()
         if self._thermal_camera is not None:
             thermal_ok, thermal = self._thermal_camera.read()
+        thermal_raw = thermal if thermal_ok else None
         if thermal_ok:
-            thermal = self._thermal_to_bgr(thermal)
+            thermal = self._thermal_to_display(thermal_raw)
         if self._auto_contrast_enabled:
             if rgb_ok:
                 rgb = self._auto_contrast(rgb)
@@ -459,7 +463,7 @@ class DataLoggerNode(Node):
             self.get_logger().error(f'Failed to write {rgb_name}')
             rgb_name = ''
         if thermal_ok and not cv2.imwrite(
-                str(self._thermal_dir / thermal_name), thermal, flags):
+                str(self._thermal_dir / thermal_name), thermal_raw):
             self.get_logger().error(f'Failed to write {thermal_name}')
             thermal_name = ''
         if not rgb_name and not thermal_name:
@@ -531,6 +535,8 @@ class DataLoggerNode(Node):
         """Start writing data after browser confirmation."""
         with self._lock:
             if not self._recording:
+                if self._auto_episode_id:
+                    self._episode_id = self._new_episode_id()
                 self._run_start_ns = self.get_clock().now().nanoseconds
                 self._last_capture_stamp_ns = None
                 self._recording = True
@@ -546,16 +552,23 @@ class DataLoggerNode(Node):
                 self.get_logger().info('Recording stopped from web interface')
 
     @staticmethod
-    def _thermal_to_bgr(image):
+    def _thermal_to_display(image):
+        """Create a display copy without changing the stored thermal frame."""
         if image is None:
             raise ValueError('thermal image is empty')
         if image.dtype != 'uint8':
-            image = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX).astype('uint8')
+            image = cv2.normalize(
+                image, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
         if len(image.shape) == 2:
             return cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
         if image.shape[2] == 4:
             return cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
         return image
+
+    @staticmethod
+    def _new_episode_id():
+        """Create a unique, sortable episode ID for a recording session."""
+        return datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')
 
     @staticmethod
     def _make_camera_row(count, episode_id, stamp_ns, date, time_seconds,

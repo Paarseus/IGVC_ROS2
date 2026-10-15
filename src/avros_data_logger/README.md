@@ -16,6 +16,10 @@ conversion to an 8-bit displayable image. This improves local contrast in
 uneven lighting, but it cannot recover details that are completely saturated
 by direct sunlight.
 
+Thermal data is saved before display processing as PNG. If OpenCV receives a
+16-bit single-channel thermal frame, that 16-bit frame is preserved. The
+browser preview uses a separate 8-bit, auto-contrasted copy.
+
 ## Output Structure
 
 Each run writes to `data_logger` by default:
@@ -26,7 +30,7 @@ data_logger/
 │   ├── rgb/
 │   │   └── rgb_000012_20261001T143015.123456Z.jpg
 │   └── thermal/
-│       └── thermal_000012_20261001T143015.123456Z.jpg
+│       └── thermal_000012_20261001T143015.123456Z.png
 ├── camera_log.csv
 ├── imu_log.csv
 └── gnss_log.csv
@@ -169,8 +173,9 @@ ros2 run avros_data_logger avros_dataLogger --ros-args \
 
 ## Episode IDs
 
-Each camera-log row contains an `episode_id`. The value is supplied when
-starting the logger, and the default ID is `1`:
+Each camera-log row contains an `episode_id`. By default, the logger generates
+a UTC timestamp ID when **Start Recording** is pressed. This creates a new ID
+for every recording session and prevents TCN windows from crossing sessions.
 
 ```bash
 ros2 run avros_data_logger avros_dataLogger --ros-args \
@@ -178,8 +183,8 @@ ros2 run avros_data_logger avros_dataLogger --ros-args \
   -p output_directory:=/path/to/episode_2
 ```
 
-This allows later dataset tools to group or split samples by episode. The
-logger does not currently detect driving start/stop events automatically.
+The default value is `0`, which means automatic episode IDs. To use a fixed
+ID intentionally, pass a positive value such as `episode_id:=2`.
 
 ## Timestamp and Synchronization Behavior
 
