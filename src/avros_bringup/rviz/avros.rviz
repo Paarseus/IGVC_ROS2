@@ -20,9 +20,15 @@ Visualization Manager:
         Value: /robot_description
     - Class: rviz_default_plugins/PointCloud2
       Enabled: true
-      Name: Velodyne
+      # Name: Velodyne   (VLP-16 retired 2026-11-04; topic was /velodyne_points)
+      Name: Ouster OS1
       Topic:
-        Value: /velodyne_points
+        # Value: /velodyne_points
+        Value: /ouster/points
+        Reliability Policy: Best Effort   # ouster_ros publishes sensor-data QoS
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
       Size (m): 0.05
       Color Transformer: Intensity
       Use Fixed Frame: true

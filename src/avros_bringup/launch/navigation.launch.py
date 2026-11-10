@@ -160,8 +160,17 @@ def generate_launch_description():
         ),
 
         DeclareLaunchArgument(
-            'enable_velodyne', default_value='true',
-            description='Enable Velodyne VLP-16 LiDAR'
+            'enable_ouster', default_value='true',
+            description='Enable Ouster OS1-64 Rev 7 LiDAR (primary LiDAR since 2026-11-04)'
+        ),
+        # 2026-11-04: VLP-16 retired (replaced by Ouster OS1); default true -> false.
+        # DeclareLaunchArgument(
+        #     'enable_velodyne', default_value='true',
+        #     description='Enable Velodyne VLP-16 LiDAR'
+        # ),
+        DeclareLaunchArgument(
+            'enable_velodyne', default_value='false',
+            description='Enable Velodyne VLP-16 LiDAR (retired 2026-11-04)'
         ),
 
         DeclareLaunchArgument(
@@ -214,6 +223,7 @@ def generate_launch_description():
             launch_arguments={
                 'use_sim_time': use_sim_time,
                 'enable_ntrip': LaunchConfiguration('enable_ntrip'),
+                'enable_ouster': LaunchConfiguration('enable_ouster'),
                 'enable_velodyne': LaunchConfiguration('enable_velodyne'),
                 'enable_zed_front': LaunchConfiguration('enable_zed_front'),
                 'enable_zed_left': LaunchConfiguration('enable_zed_left'),

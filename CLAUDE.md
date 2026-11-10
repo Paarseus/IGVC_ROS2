@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Migration of the AV2.1-API autonomous vehicle codebase to ROS2 (Humble). Five custom packages + upstream drivers (Velodyne, ZED, Xsens) + Nav2 + robot_localization.
+Migration of the AV2.1-API autonomous vehicle codebase to ROS2 (Humble). Five custom packages + upstream drivers (Ouster OS1 LiDAR — replaced the Velodyne VLP-16 on 2026-11-04, ZED, Xsens) + Nav2 + robot_localization.
 
 **Naming:** the GitHub repo is `IGVC_ROS2` (https://github.com/Paarseus/IGVC_ROS2). The live Jetson workspace lives at `~/IGVC/`. The older `~/AVROS/` directory on the Jetson is a dead feature branch — do **not** use it; all work goes through `~/IGVC/`.
 
@@ -74,7 +74,7 @@ ros2 topic pub --once /avros/actuator_command avros_msgs/msg/ActuatorCommand \
 | `avros_navigation` | ament_python | `generate_graph.py`: offline OSMnx → nav2_route GeoJSON graph tool |
 | `avros_perception` | ament_python | `perception_node`: ZED X RGB/cloud → swappable Pipeline (stub/HSV/ONNX) → mono8 mask + organized cloud + LabelInfo for `kiwicampus/semantic_segmentation_layer` |
 
-No `avros_sensors` — upstream drivers used directly. Source dependencies are managed via `avros.repos` (vcstool manifest) and git-ignored. `vcs import src < avros.repos` clones the Xsens monorepo (`xsens_mti_ros2_driver` + `ntrip`), `zed-ros2-wrapper`, and `semantic_segmentation_layer` (kiwicampus, humble branch — requires patch, see `scripts/apply_kiwicampus_patches.sh`). Velodyne uses `ros-humble-velodyne` (apt).
+No `avros_sensors` — upstream drivers used directly. Source dependencies are managed via `avros.repos` (vcstool manifest) and git-ignored. `vcs import src < avros.repos` clones the Xsens monorepo (`xsens_mti_ros2_driver` + `ntrip`), `zed-ros2-wrapper`, and `semantic_segmentation_layer` (kiwicampus, humble branch — requires patch, see `scripts/apply_kiwicampus_patches.sh`). Ouster uses `ros-humble-ouster-ros` (apt). The retired Velodyne uses `ros-humble-velodyne` (apt, still installed).
 
 ---
 
@@ -83,14 +83,26 @@ No `avros_sensors` — upstream drivers used directly. Source dependencies are m
 | IP | Device | MAC | Notes |
 |----|--------|-----|-------|
 | 192.168.13.10 | Jetson Orin | — | Compute platform, runs all ROS2 nodes |
-| 192.168.13.11 | Velodyne VLP-16 | 60:76:88:38:0F:20 | Reconfigured from factory 192.168.1.201 |
+| 192.168.13.100 | Ouster OS1-64 Rev 7 | bc:0f:a7:00:f0:4c | DHCP; mDNS `os-122516000493.local` (used by the driver) |
+| 192.168.13.11 | Velodyne VLP-16 (retired 2026-11-04) | 60:76:88:38:0F:20 | Reconfigured from factory 192.168.1.201 |
 | 192.168.13.31 | Gateway/router | — | Network gateway |
 
 ---
 
 ## Sensors
 
-### Velodyne VLP-16
+### Ouster OS1-64 Rev 7 (primary LiDAR since 2026-11-04)
+
+- **Sensor:** OS-1-64-U13-SR, PN OS1-071-64U-ASR, SN 122516000493, FW v3.1.0. 64 beams uniform, +21.05/-21.39 deg vertical
+- **Package:** `ros-humble-ouster-ros` 0.15.x (apt, official)
+- **Config:** `avros_bringup/config/ouster.yaml` (1024x10, RNG15_RFL8_NIR8 low-data profile — RNG19 crashes the apt driver on FW 3.1, see yaml, `TIME_FROM_ROS_TIME`, `proc_mask: PCL|IMU`)
+- **Launch:** `sensors.launch.py enable_ouster:=true` (default) `ouster_hostname:=os-122516000493.local`. The node is `/ouster/os_driver` (lifecycle; auto configure→activate). Unlike upstream `driver.launch.py`, an unreachable sensor does NOT shut down the whole launch.
+- **Topics:** `/ouster/points` (10 Hz, frame `os_sensor`, best-effort QoS), `/ouster/imu`, `/ouster/metadata`
+- **TF:** URDF `base_link → os_sensor` (TODO: measure; assumed on the VLP-16 mount). The driver publishes `os_sensor → os_lidar/os_imu`.
+- **Consumers:** `lidar_preprocessor` (`avros_perception/config/lidar.yaml`) → `/perception/lidar/obstacles` → STVL (`sensor_frame: os_sensor`)
+- **Switching back to the VLP-16:** `enable_velodyne:=true enable_ouster:=false`, and swap the commented `velodyne` lines back into `lidar.yaml` and the two STVL `lidar_obstacles` sources in `nav2_params_igvc_autonav.yaml`
+
+### Velodyne VLP-16 (RETIRED 2026-11-04 — kept for fallback, disabled by default)
 
 - **Package:** `ros-humble-velodyne` (apt, official)
 - **Config:** `avros_bringup/config/velodyne.yaml`
@@ -160,7 +172,10 @@ map                                    ← ekf_filter_node_map (global EKF)
  └── odom                              ← ekf_filter_node_odom (local EKF)
       └── base_link                    ← robot_state_publisher (URDF)
            ├── imu_link                ← static (URDF) — TODO: measure mount position
-           ├── velodyne                ← static (URDF) — TODO: measure mount position
+           ├── os_sensor               ← static (URDF) — TODO: measure mount position
+           │    ├── os_lidar           ← static (ouster driver)
+           │    └── os_imu             ← static (ouster driver)
+           ├── velodyne                ← static (URDF) — retired sensor, frame kept for sim
            ├── zed_front_camera_link   ← static (URDF, via zed_macro.urdf.xacro) — TODO: measure mount
            │    ├── zed_front_camera_center
            │    ├── zed_front_left_camera_frame
@@ -183,7 +198,8 @@ Sensor mount positions in URDF (`avros.urdf.xacro`) are approximate — measure 
 | `/avros/actuator_state` | `avros_msgs/ActuatorState` | actuator_node @ 20 Hz |
 | `/avros/actuator_command` | `avros_msgs/ActuatorCommand` | webui_node (direct control) / e-stop |
 | `/plan_route` | `nav2_msgs/action/ComputeRoute` | route_server (nav2_route) |
-| `/velodyne_points` | `sensor_msgs/PointCloud2` | velodyne_convert_node (~70 Hz) |
+| `/ouster/points` | `sensor_msgs/PointCloud2` | ouster os_driver (10 Hz, frame os_sensor) |
+| `/velodyne_points` | `sensor_msgs/PointCloud2` | velodyne_convert_node (~70 Hz) — retired |
 | `/velodyne_packets` | `velodyne_msgs/VelodyneScan` | velodyne_driver_node (~32 Hz) |
 | `/imu/data` | `sensor_msgs/Imu` | xsens_mti_node (100 Hz) |
 | `/gnss` | `sensor_msgs/NavSatFix` | xsens_mti_node |
@@ -342,7 +358,7 @@ NoMachine 9.4.14 `.deb` from `web9001.nomachine.com/download/9.4/` (Arm for Jets
 
 | Launch File | What it starts |
 |-------------|---------------|
-| `sensors.launch.py` | robot_state_publisher + velodyne driver/convert + **zed_front (conditional)** + xsens + ntrip |
+| `sensors.launch.py` | robot_state_publisher + ouster os_driver (velodyne driver/convert off by default) + **zed_front (conditional)** + xsens + ntrip |
 | `actuator.launch.py` | actuator_node only |
 | `teleop.launch.py` | actuator_node + teleop_twist_keyboard |
 | `webui.launch.py` | actuator_node + webui_node |
@@ -357,7 +373,8 @@ NoMachine 9.4.14 `.deb` from `web9001.nomachine.com/download/9.4/` (Arm for Jets
 | Config | Used By |
 |--------|---------|
 | `actuator_params.yaml` | actuator_node — serial port, track width + `wheel_separation_multiplier` (Mandow skid correction), speed/accel limits, IMU heading-hold gains, SparkMAX PID gains (pushed to Teensy on startup AND on `ros2 param set` change) |
-| `velodyne.yaml` | velodyne_driver_node + velodyne_convert_node |
+| `ouster.yaml` | ouster os_driver (primary LiDAR) |
+| `velodyne.yaml` | velodyne_driver_node + velodyne_convert_node (retired) |
 | `xsens.yaml` | xsens_mti_node — IMU/GNSS, lever arm, output rate |
 | `webui_params.yaml` | webui_node — port, SSL, max throttle |
 | `ekf.yaml` | dual robot_localization EKF — **both EKFs fuse `/imu/data` + `/wheel_odom` (vx,vyaw)**; odom EKF additionally fuses ZED yaw-differential; map EKF additionally fuses `/odometry/gps` (differential, 4σ Mahalanobis gate). IMU has 5σ pose+twist rejection on both EKFs (Xsens stuck-bias gate, 2026-05-26). |

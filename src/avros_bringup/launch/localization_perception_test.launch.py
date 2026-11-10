@@ -69,6 +69,7 @@ def generate_launch_description():
             ),
             launch_arguments={
                 'use_sim_time': use_sim_time,
+                'enable_ouster': 'false',
                 'enable_velodyne': 'false',
                 'enable_zed_front': 'true',
             }.items(),

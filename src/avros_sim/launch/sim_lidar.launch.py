@@ -52,6 +52,9 @@ def generate_launch_description():
                 'enable_sensors': 'false',
                 'rviz': LaunchConfiguration('rviz'),
                 'lidar_input_topic': '/velodyne_points/point_cloud',
+                # Webots still simulates a VelodynePuck in the `velodyne` frame
+                # (the real robot moved to the Ouster OS1 on 2026-11-04).
+                'lidar_sensor_frame': 'velodyne',
             }.items(),
         ),
     ])

@@ -2,7 +2,8 @@
 Individual LiDAR launch: see the STVL 3D voxels in RViz without the full Nav2 stack.
 
 Starts:
-  - sensors.launch.py with only the Velodyne enabled (optional: enable_sensors)
+  - sensors.launch.py with only the Ouster OS1 enabled (optional: enable_sensors)
+    (was the Velodyne VLP-16 until 2026-11-04)
   - avros_perception lidar_preprocessor -> /perception/lidar/obstacles
   - static odom->base_link and map->odom stand-ins (robot is stationary)
   - Nav2 controller_server (creates the local costmap incl. the STVL layer) using
@@ -12,7 +13,7 @@ Starts:
 
 Do not run together with localization.launch.py / navigation.launch.py: the static
 odom->base_link here would fight the EKF. Use enable_sensors:=false when the
-Velodyne driver is already running (never run two drivers).
+LiDAR driver is already running (never run two drivers).
 
 Usage:
   ros2 launch avros_bringup lidar.launch.py
@@ -42,6 +43,9 @@ def _rviz(context, *_args, **_kwargs):
     env = {}
     if cfg['rviz_display']:
         env['DISPLAY'] = cfg['rviz_display']
+    elif not os.environ.get('DISPLAY'):
+        # Launched over SSH: fall back to the NoMachine desktop session.
+        env['DISPLAY'] = ':1001'
     if cfg['software_gl'].lower() == 'true':
         env.update({
             'LIBGL_ALWAYS_SOFTWARE': '1',
@@ -81,14 +85,22 @@ def generate_launch_description():
             'use_sim_time', default_value='false', description='Use simulation clock'),
         DeclareLaunchArgument(
             'enable_sensors', default_value='true',
-            description='Start sensors.launch.py (Velodyne driver, URDF TF). '
+            description='Start sensors.launch.py (Ouster driver, URDF TF). '
                         'false if the drivers are already running'),
         DeclareLaunchArgument(
             'enable_ntrip', default_value='false',
             description='Start the NTRIP client (RTK corrections for the Xsens GNSS)'),
+        # 2026-11-04: Ouster OS1 replaces the VLP-16.
+        # DeclareLaunchArgument(
+        #     'lidar_input_topic', default_value='/velodyne_points',
+        #     description="lidar_preprocessor input. Webots: '/velodyne_points/point_cloud'"),
         DeclareLaunchArgument(
-            'lidar_input_topic', default_value='/velodyne_points',
-            description="lidar_preprocessor input. Webots: '/velodyne_points/point_cloud'"),
+            'lidar_input_topic', default_value='/ouster/points',
+            description="lidar_preprocessor input. VLP-16: '/velodyne_points', "
+                        "Webots: '/velodyne_points/point_cloud'"),
+        DeclareLaunchArgument(
+            'lidar_sensor_frame', default_value='os_sensor',
+            description="Frame the input cloud is stamped in. VLP-16 / Webots: 'velodyne'"),
         DeclareLaunchArgument(
             'rviz', default_value='true', description='Launch RViz'),
         DeclareLaunchArgument(
@@ -104,7 +116,9 @@ def generate_launch_description():
             launch_arguments={
                 'use_sim_time': use_sim_time,
                 'enable_ntrip': LaunchConfiguration('enable_ntrip'),
-                'enable_velodyne': 'true',
+                # 'enable_velodyne': 'true',   # VLP-16, retired 2026-11-04
+                'enable_velodyne': 'false',
+                'enable_ouster': 'true',
             }.items(),
             condition=IfCondition(LaunchConfiguration('enable_sensors')),
         ),
@@ -115,6 +129,7 @@ def generate_launch_description():
             launch_arguments={
                 'use_sim_time': use_sim_time,
                 'lidar_input_topic': LaunchConfiguration('lidar_input_topic'),
+                'lidar_sensor_frame': LaunchConfiguration('lidar_sensor_frame'),
             }.items(),
         ),
 

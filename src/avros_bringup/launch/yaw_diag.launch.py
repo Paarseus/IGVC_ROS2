@@ -67,6 +67,11 @@ def generate_launch_description():
         ),
 
         DeclareLaunchArgument(
+            'enable_ouster', default_value='false',
+            description='Enable Ouster OS1 LiDAR. Default false for '
+                        'yaw-diag tests (no obstacle data needed).'
+        ),
+        DeclareLaunchArgument(
             'enable_velodyne', default_value='false',
             description='Enable Velodyne VLP-16 LiDAR. Default false for '
                         'yaw-diag tests (no obstacle data needed).'
@@ -100,6 +105,7 @@ def generate_launch_description():
             launch_arguments={
                 'use_sim_time': use_sim_time,
                 'enable_ntrip': LaunchConfiguration('enable_ntrip'),
+                'enable_ouster': LaunchConfiguration('enable_ouster'),
                 'enable_velodyne': LaunchConfiguration('enable_velodyne'),
                 'enable_zed_front': LaunchConfiguration('enable_zed_front'),
                 'enable_zed_left': LaunchConfiguration('enable_zed_left'),

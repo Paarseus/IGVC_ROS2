@@ -3,6 +3,7 @@ from avros_perception.pipelines.base import Pipeline, PipelineResult
 from avros_perception.pipelines.hsv import HSVPipeline
 from avros_perception.pipelines.sooner25 import Sooner25Pipeline
 from avros_perception.pipelines.stub import StubPipeline
+from avros_perception.pipelines.white_ridge import WhiteRidgePipeline
 from avros_perception.pipelines.yolopv2 import YolopV2Pipeline
 
 __all__ = [
@@ -13,6 +14,7 @@ __all__ = [
     'Sooner25Pipeline',
     'AdaptivePipeline',
     'YolopV2Pipeline',
+    'WhiteRidgePipeline',
     'PIPELINES',
     'build_pipeline',
 ]
@@ -23,6 +25,7 @@ PIPELINES = {
     'sooner25': Sooner25Pipeline,
     'adaptive': AdaptivePipeline,
     'yolopv2': YolopV2Pipeline,
+    'white_ridge': WhiteRidgePipeline,
 }
 
 

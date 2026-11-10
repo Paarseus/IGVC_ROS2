@@ -1,7 +1,10 @@
 lidar_preprocessor:
   ros__parameters:
-    input_topic: /velodyne_points
-    sensor_frame: velodyne
+    # 2026-11-04: Ouster OS1-64 Rev 7 replaces the Velodyne VLP-16.
+    # input_topic: /velodyne_points
+    # sensor_frame: velodyne
+    input_topic: /ouster/points
+    sensor_frame: os_sensor
     target_frame: base_link
     range_min: 0.7
     # Single authority for max distance: matches STVL obstacle_range (15 m) in
@@ -9,13 +12,18 @@ lidar_preprocessor:
     range_max: 15.0
     # VLP-16's 16 lasers already span exactly -15/+15 deg; this is a
     # safety net, not an active crop, unless the sensor changes.
-    vertical_fov_min_deg: -15.0
-    vertical_fov_max_deg: 15.0
+    # vertical_fov_min_deg: -15.0   # VLP-16
+    # vertical_fov_max_deg: 15.0    # VLP-16
+    # OS1-64 Rev 7 (uniform) beams span +21.05 .. -21.39 deg measured from os_lidar,
+    # which is 38 mm above os_sensor (the frame this filter runs in), so allow a
+    # little margin. Still a safety net, not a crop.
+    vertical_fov_min_deg: -22.5
+    vertical_fov_max_deg: 22.5
     downsample_voxel_size: 0.1
     ransac_iterations: 50
     ransac_candidate_band: 0.5
     ransac_distance_threshold: 0.1
-    # base_link is at ground level in IGVC_ROS2 (IMU 0.5556 m above it, Velodyne ~0.71 m),
+    # base_link is at ground level in IGVC_ROS2 (IMU 0.5556 m above it, LiDAR ~0.71 m),
     # so this keeps obstacles between 0.2 m and 2.0 m above ground.
     height_band_min: 0.2
     height_band_max: 2.0
@@ -28,3 +36,13 @@ lidar_preprocessor:
     # sensor falls back to broadcast (duplicate, out-of-order packets) the driver
     # emits thin fragments again: set this to ~0.08 until that is fixed.
     merge_window_sec: 0.0
+    # 2026-11-06: motion deskew. The VLP-16 driver deskewed against odom; ouster_ros
+    # does not, so without this a 0.1 s scan taken while turning at wz 1.5 rad/s is
+    # smeared by ~8.6 deg (up to ~0.75 m at 5 m). Uses the per-point `t` field
+    # (ns since scan start) and TF os_sensor@t -> odom -> os_sensor@stamp, one
+    # lookup per time bucket. Clouds without `t` (Webots) pass through unchanged.
+    # Bench (lidar.launch.py, static odom->base_link) = identity, harmless.
+    deskew_enable: true
+    deskew_fixed_frame: odom
+    deskew_time_field: t
+    deskew_buckets: 16

@@ -1,0 +1,81 @@
+# Ouster OS1-64 Rev 7 configuration (replaces the Velodyne VLP-16 as the primary LiDAR)
+# Package: ros-humble-ouster-ros (apt, official Ouster driver, 0.15.x)
+#
+# Sensor, as checked over its HTTP API on 2026-11-04:
+#   prod_line  OS-1-64-U13-SR (OS1, 64 beams, uniform, 42.4 deg vertical FOV, beams +21.05 .. -21.39 deg)
+#   part no.   OS1-071-64U-ASR    serial 122516000493
+#   firmware   ousteros v3.1.0
+#   network    eno1, DHCP 192.168.13.100, mDNS os-122516000493.local
+#
+# Topics (namespace /ouster):
+#   /ouster/points    sensor_msgs/PointCloud2, 10 Hz, frame os_sensor
+#   /ouster/imu       sensor_msgs/Imu (the sensor's own IMU; NOT fused, the Xsens is the IMU of record)
+#   /ouster/metadata  std_msgs/String (sensor calibration JSON, latched)
+#
+# Frames: URDF publishes base_link -> os_sensor. The driver publishes the static
+# os_sensor -> os_lidar and os_sensor -> os_imu transforms from the sensor's own
+# calibration (pub_static_tf), so the URDF must NOT define os_lidar/os_imu.
+#
+# Every key is listed in /opt/ros/humble/share/ouster_ros/config/driver_params.yaml
+# (with docs). Only the ones that differ from the defaults, or that matter to us, are set here.
+
+ouster/os_driver:
+  ros__parameters:
+    # Hostname works across DHCP lease changes (resolved by avahi/nss-mdns).
+    # Overridden by the `ouster_hostname` launch arg in sensors.launch.py.
+    sensor_hostname: 'os-122516000493.local'
+    # Empty = the driver points the sensor's UDP stream (unicast) at this machine
+    # automatically on every start. Replaces the Velodyne-specific _point_lidar
+    # hook in sensors.launch.py.
+    udp_dest: ''
+    lidar_port: 7502
+    imu_port: 7503
+
+    # 1024 columns x 64 beams at 10 Hz = 65,536 points/scan. Use 512x10 to halve
+    # the point count (and CPU in lidar_preprocessor) if the Jetson gets loaded.
+    lidar_mode: '1024x10'
+    # Stamp with the Jetson clock at the first packet of each scan. The sensor runs
+    # on its internal oscillator (no PTP/GPS sync), so its own timestamps start at
+    # sensor boot rather than epoch. STVL, the TF lookups and the semantic layer
+    # all need wall-clock stamps (see docs/CHANGELOG_2026-04-29.md section 5).
+    timestamp_mode: 'TIME_FROM_ROS_TIME'
+    # Low-data profile: range (8 mm resolution), reflectivity, near-IR. No `signal`
+    # channel, so the cloud's `intensity` field is 0. lidar_preprocessor only reads x/y/z.
+    # 2026-11-04: RNG19_RFL8_SIG16_NIR16 (the sensor's previous setting) CRASHES the
+    # apt ouster-ros 0.15.1 / SDK 0.16.2 on activation with this FW 3.1.0 sensor:
+    #   terminate ... std::out_of_range: Field 'WINDOW' not found in LidarScan.
+    # (its point-cloud code expects the WINDOW field that RNG19 only carries on FW 3.2+;
+    # point_type original/native/xyzir all crash, RNG15_RFL8_NIR8 is fine at 10.0 Hz).
+    # To use RNG19 again: update the sensor to FW 3.2+ or build ouster-ros from source.
+    udp_profile_lidar: 'RNG15_RFL8_NIR8'
+
+    sensor_frame: os_sensor
+    lidar_frame: os_lidar
+    imu_frame: os_imu
+    # Publish in os_sensor (X forward, Z up, origin at the base of the sensor) rather
+    # than os_lidar (rotated 180 deg about Z, so X points out the connector).
+    point_cloud_frame: os_sensor
+    pub_static_tf: true
+
+    # Only what the stack uses: the cloud plus the sensor IMU (handy for checking
+    # mount tilt). Add IMG for range/signal images in Foxglove, SCAN for a LaserScan.
+    proc_mask: 'PCL|IMU'
+    # 'native' = exactly the fields the UDP profile carries, plus t and ring. With
+    # RNG15_RFL8_NIR8: x, y, z, t, range, reflectivity, near_ir, ring. ('original'
+    # warns it is incompatible with the low-data profile.) lidar_preprocessor only
+    # reads x/y/z. NOTE: Ouster ring 0 = TOP beam (Velodyne ring 0 = bottom).
+    point_type: native
+    organized: true
+    destagger: true
+    # Range filtering is done by lidar_preprocessor (range_min/range_max in
+    # avros_perception/config/lidar.yaml) so there is a single authority.
+    min_range: 0.0
+    max_range: 1000.0
+
+    # Sensor-data QoS (best effort). Set true only if recording with an old rosbag2.
+    use_system_default_qos: false
+
+    # Survive sensor power cycles without tearing down the launch.
+    attempt_reconnect: true
+    dormant_period_between_reconnects: 1.0
+    persist_config: false

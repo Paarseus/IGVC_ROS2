@@ -1,7 +1,7 @@
 """
 Launch the LiDAR preprocessor (feeds /perception/lidar/obstacles to Nav2 STVL).
 
-Drivers, static TFs and the Velodyne sensor setup live in avros_bringup
+Drivers, static TFs and the LiDAR (Ouster OS1; VLP-16 until 2026-11-04) setup live in avros_bringup
 (sensors.launch.py); this file starts only the preprocessing node.
 """
 
@@ -38,11 +38,21 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'use_sim_time', default_value='false',
             description='Use simulation clock'),
+        # 2026-11-04: Ouster OS1 replaces the VLP-16.
+        # DeclareLaunchArgument(
+        #     'lidar_input_topic', default_value='/velodyne_points',
+        #     description="lidar_preprocessor input. Webots publishes "
+        #                 "'/velodyne_points/point_cloud' (suffix added by "
+        #                 'webots_ros2_driver)'),
         DeclareLaunchArgument(
-            'lidar_input_topic', default_value='/velodyne_points',
-            description="lidar_preprocessor input. Webots publishes "
-                        "'/velodyne_points/point_cloud' (suffix added by "
-                        'webots_ros2_driver)'),
+            'lidar_input_topic', default_value='/ouster/points',
+            description="lidar_preprocessor input. VLP-16: '/velodyne_points'. "
+                        "Webots publishes '/velodyne_points/point_cloud' "
+                        '(suffix added by webots_ros2_driver)'),
+        DeclareLaunchArgument(
+            'lidar_sensor_frame', default_value='os_sensor',
+            description="Frame of the input cloud (range/FOV filters run in it). "
+                        "VLP-16 and Webots: 'velodyne'"),
         Node(
             package='avros_perception',
             executable='lidar_preprocessor',
@@ -50,6 +60,7 @@ def generate_launch_description():
             parameters=[config, {
                 'use_sim_time': LaunchConfiguration('use_sim_time'),
                 'input_topic': LaunchConfiguration('lidar_input_topic'),
+                'sensor_frame': LaunchConfiguration('lidar_sensor_frame'),
             }],
             # Tiny matrices: numpy's BLAS thread pool only adds contention on a busy CPU.
             additional_env={'OPENBLAS_NUM_THREADS': '1', 'OMP_NUM_THREADS': '1'},

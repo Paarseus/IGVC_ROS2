@@ -132,7 +132,42 @@
   </joint>
 
   <!-- ============================================================ -->
-  <!-- LiDAR: Velodyne VLP-16                                      -->
+  <!-- LiDAR: Ouster OS1-64 Rev 7 (primary LiDAR since 2026-11-04)  -->
+  <!-- Only os_sensor is defined here. The ouster_ros driver        -->
+  <!-- publishes os_sensor -> os_lidar (+38.195 mm Z, 180 deg yaw)  -->
+  <!-- and os_sensor -> os_imu itself from the sensor calibration,  -->
+  <!-- so do NOT add those links here (duplicate TF).               -->
+  <!-- os_sensor: origin = center of the sensor BASE, +X = away     -->
+  <!-- from the cable connector (connector is on -X), Z up.          -->
+  <!-- TODO(measure): mount pose. Assumed to sit on the VLP-16's    -->
+  <!-- mount plate: same X/Y, and Z = VLP-16 optical-center Z       -->
+  <!-- minus 37.7 mm (VLP-16 optical center height above its base). -->
+  <!-- If the connector faces FORWARD on the robot, set rpy yaw=pi. -->
+  <!-- ============================================================ -->
+  <link name="os_sensor">
+    <visual>
+      <origin xyz="0 0 0.0385" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.0435" length="0.077"/>
+      </geometry>
+      <material name="dark_grey"/>
+    </visual>
+  </link>
+  <joint name="os_sensor_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="os_sensor"/>
+    <!-- 2026-11-06: yaw = pi. Live scan showed the chassis self-hits on the sensor -X
+         (connector) side, 0.19-0.65 m out = the robot FRONT, so the connector and the
+         Ouster logo face forward. xyz still the VLP-16-derived estimate (not measured). -->
+    <origin xyz="0.089 0.0 ${xsens_height + 0.159 - 0.0377}" rpy="0 0 ${pi}"/>
+  </joint>
+
+  <!-- ============================================================ -->
+  <!-- LiDAR: Velodyne VLP-16  (RETIRED 2026-11-04 -> Ouster above) -->
+  <!-- Link kept on purpose: the Webots sim (avros_sim) still       -->
+  <!-- publishes its VelodynePuck cloud in the `velodyne` frame,    -->
+  <!-- and enable_velodyne:=true still needs it. It is only a       -->
+  <!-- static TF frame; nothing consumes it in the real-robot stack.-->
   <!-- TODO: Measure exact mount position on real vehicle           -->
   <!-- ============================================================ -->
   <link name="velodyne">

@@ -2,7 +2,9 @@
 
 Launches:
   - robot_state_publisher (URDF -> static TF)
-  - velodyne VLP-16 driver + pointcloud transform
+  - Ouster OS1-64 Rev 7 driver (primary LiDAR, 2026-11-04) -> /ouster/points
+  # - velodyne VLP-16 driver + pointcloud transform  (retired 2026-11-04; still
+  #   available with enable_velodyne:=true enable_ouster:=false)
   - xsens MTi-680G IMU/GNSS
   - NTRIP client for RTK corrections (optional)
 """
@@ -14,18 +16,25 @@ import struct
 import urllib.parse
 import urllib.request
 
+import lifecycle_msgs.msg
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    EmitEvent,
     IncludeLaunchDescription,
+    LogInfo,
     OpaqueFunction,
+    RegisterEventHandler,
     SetEnvironmentVariable,
 )
 from launch.conditions import IfCondition
+from launch.events import matches_action
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration
-from launch_ros.actions import Node
+from launch_ros.actions import LifecycleNode, Node
+from launch_ros.event_handlers import OnStateTransition
+from launch_ros.events.lifecycle import ChangeState
 from launch_ros.parameter_descriptions import ParameterValue
 
 
@@ -71,11 +80,68 @@ def _point_lidar(context, *_args, **_kwargs):
     return []
 
 
+def _ouster_driver():
+    """Ouster os_driver lifecycle node plus its configure -> activate sequence.
+
+    Mirrors ouster_ros/launch/driver.launch.py, minus two things: (1) no RViz, and
+    (2) no "Shutdown on finalized" handler. Upstream shuts down the WHOLE launch if
+    the sensor can't be reached, which would take Nav2/EKF down with it. Here we
+    only log, and `attempt_reconnect` in ouster.yaml handles power cycles.
+    """
+    pkg_dir = get_package_share_directory('avros_bringup')
+    ouster_config = os.path.join(pkg_dir, 'config', 'ouster.yaml')
+    enabled = IfCondition(LaunchConfiguration('enable_ouster'))
+
+    os_driver = LifecycleNode(
+        package='ouster_ros',
+        executable='os_driver',
+        name='os_driver',
+        namespace='ouster',
+        parameters=[ouster_config, {
+            'sensor_hostname': LaunchConfiguration('ouster_hostname'),
+        }],
+        output='screen',
+        condition=enabled,
+    )
+    configure = EmitEvent(
+        event=ChangeState(
+            lifecycle_node_matcher=matches_action(os_driver),
+            transition_id=lifecycle_msgs.msg.Transition.TRANSITION_CONFIGURE,
+        ),
+        condition=enabled,
+    )
+    activate = RegisterEventHandler(
+        OnStateTransition(
+            target_lifecycle_node=os_driver, goal_state='inactive',
+            entities=[
+                LogInfo(msg='[sensors.launch] ouster os_driver activating...'),
+                EmitEvent(event=ChangeState(
+                    lifecycle_node_matcher=matches_action(os_driver),
+                    transition_id=lifecycle_msgs.msg.Transition.TRANSITION_ACTIVATE,
+                )),
+            ],
+            handle_once=True,
+        ),
+        condition=enabled,
+    )
+    finalized = RegisterEventHandler(
+        OnStateTransition(
+            target_lifecycle_node=os_driver, goal_state='finalized',
+            entities=[LogInfo(
+                msg='[sensors.launch] ouster os_driver could not reach the sensor '
+                    '(check power / eno1 / ouster_hostname). Rest of the stack '
+                    'keeps running WITHOUT LiDAR.')],
+        ),
+        condition=enabled,
+    )
+    return [os_driver, configure, activate, finalized]
+
+
 def generate_launch_description():
     pkg_dir = get_package_share_directory('avros_bringup')
     urdf_file = os.path.join(pkg_dir, 'urdf', 'avros.urdf.xacro')
     cyclonedds_file = os.path.join(pkg_dir, 'config', 'cyclonedds.xml')
-    velodyne_config = os.path.join(pkg_dir, 'config', 'velodyne.yaml')
+    velodyne_config = os.path.join(pkg_dir, 'config', 'velodyne.yaml')  # VLP-16 (retired 2026-11-04)
     zed_front_config = os.path.join(pkg_dir, 'config', 'zed_front.yaml')
     zed_left_config = os.path.join(pkg_dir, 'config', 'zed_left.yaml')
     zed_right_config = os.path.join(pkg_dir, 'config', 'zed_right.yaml')
@@ -109,8 +175,27 @@ def generate_launch_description():
         ),
 
         DeclareLaunchArgument(
-            'enable_velodyne', default_value='true',
-            description='Enable Velodyne VLP-16 LiDAR'
+            'enable_ouster', default_value='true',
+            description='Enable Ouster OS1-64 Rev 7 LiDAR (primary LiDAR since '
+                        '2026-11-04) -> /ouster/points'
+        ),
+        DeclareLaunchArgument(
+            'ouster_hostname', default_value='os-122516000493.local',
+            description='Ouster hostname or IP (DHCP lease was 192.168.13.100 on eno1)'
+        ),
+
+        # 2026-11-04: VLP-16 replaced by the Ouster OS1. Default flipped to false;
+        # driver nodes below are kept so the VLP-16 can be brought back with
+        # enable_velodyne:=true enable_ouster:=false (and the VLP-16 lines
+        # un-commented in avros_perception/config/lidar.yaml + nav2 STVL sources).
+        # DeclareLaunchArgument(
+        #     'enable_velodyne', default_value='true',
+        #     description='Enable Velodyne VLP-16 LiDAR'
+        # ),
+        DeclareLaunchArgument(
+            'enable_velodyne', default_value='false',
+            description='Enable Velodyne VLP-16 LiDAR (retired 2026-11-04, '
+                        'replaced by the Ouster OS1)'
         ),
 
         DeclareLaunchArgument(
@@ -156,6 +241,10 @@ def generate_launch_description():
             output='screen',
         ),
 
+        # Ouster OS1-64 Rev 7 (primary LiDAR). Config: config/ouster.yaml
+        *_ouster_driver(),
+
+        # ---- Velodyne VLP-16 (retired 2026-11-04, gated by enable_velodyne=false) ----
         OpaqueFunction(function=_point_lidar),
 
         # Velodyne VLP-16 driver

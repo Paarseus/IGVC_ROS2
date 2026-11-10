@@ -31,11 +31,12 @@ navsat_transform:
     # Past datums (for reference):
     #   CPP campus      : [34.059270, -117.820934, 0.0]   (cpp_campus_graph.geojson is anchored here)
     #   SW Michigan test: [42.40154,  -86.283748, 0.0]    (2026-05-26 field testing)
+    #   IGVC 2026 (Oakland U) practice course: [42.667925, -83.218195, 0.0]   (2026-05-28)
     #
     # Long-term fix: see issue tracker for "navsat auto-datum helper node" — a
     # one-shot Python node that reads /gnss and calls /datum service. Or per
     # Phase B (issue #12), decommissioning navsat_transform entirely in favor
     # of gnss_carrot_node moots this whole concern.
-    datum: [42.667925, -83.218195, 0.0]   # [lat_deg, lon_deg, heading_rad] — 2026-05-28 PM practice course (sampled live from chassis GPS, set via /datum service then persisted here). Update per session site change. DO NOT put altitude here; 3rd slot is heading_rad.
+    datum: [34.05930007, -117.82186044, 0.0]   # [lat_deg, lon_deg, heading_rad] — 2026-09-25 CPP test spot: 40 s mean of /gnss while MTi rtk_status=2 (RTK FIXED, EarthScope PSDM_RTCM3P3), 160 samples, 7.8 cm max wander. Update per session site change. DO NOT put altitude here; 3rd slot is heading_rad.
     publish_filtered_gps: true
     broadcast_cartesian_transform: false   # EKF #2 publishes map -> odom; navsat broadcast would create TF loop

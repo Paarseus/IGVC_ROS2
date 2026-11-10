@@ -73,6 +73,7 @@ bt_navigator:
 controller_server:
   ros__parameters:
     controller_frequency: 20.0
+    odom_topic: /odometry/filtered   # navtest 2026-10-02: MPPI default is "odom" (nothing publishes it)
     min_x_velocity_threshold: 0.01
     min_y_velocity_threshold: 0.0
     min_theta_velocity_threshold: 0.01
@@ -124,14 +125,14 @@ controller_server:
       # this higher than what the motors can deliver causes rollout trajectories
       # MPPI believes-in-but-cannot-execute, which hurts tracking.
       # Raise to 1.5 after bench-fixing kOutputMax via REV Hardware Client.
-      vx_max: 0.7             # IGVC-AUTONAV 2026-06-01: KEEP the field-VALIDATED Jetson-live 0.7 m/s (1.57 mph), NOT the laptop-committed 1.5 (which was never deployed — reverted to 0.7 uncommitted). 0.7 still clears the IGVC 1 mph (0.447 m/s) average DQ floor with the freeze fixed, and the freeze fix is the real win; do NOT chase top-speed score until an asphalt speed test validates higher. vx_min stays -0.6. prune_distance 5.0 >> reach@0.7 (0.7*2.8=1.96 m) so cruise is NOT prune-pinned. To go faster post-validation: raise here (configure-time -> restart). Chassis can deliver ~1.5 (measured ~1.69) on better traction; accel ramp-limited by actuator 0.3 m/s² brown-out cap regardless.
+      vx_max: 0.35             # IGVC-AUTONAV 2026-06-01: KEEP the field-VALIDATED Jetson-live 0.7 m/s (1.57 mph), NOT the laptop-committed 1.5 (which was never deployed — reverted to 0.7 uncommitted). 0.7 still clears the IGVC 1 mph (0.447 m/s) average DQ floor with the freeze fixed, and the freeze fix is the real win; do NOT chase top-speed score until an asphalt speed test validates higher. vx_min stays -0.6. prune_distance 5.0 >> reach@0.7 (0.7*2.8=1.96 m) so cruise is NOT prune-pinned. To go faster post-validation: raise here (configure-time -> restart). Chassis can deliver ~1.5 (measured ~1.69) on better traction; accel ramp-limited by actuator 0.3 m/s² brown-out cap regardless.
       vx_min: 0.0             # 2026-06-01: -0.6->0.0 — FORBID cruise reverse. The robot drove straight BACKWARD ~10 s toward a behind-goal; PreferForwardCritic (weight 5) alone did NOT prevent it, so this is a hard forward-only cruise limit. Stuck-backout is still available via the recovery BackUp behavior (0.25 m last-resort, separate from cruise). Does NOT stop an in-place turn-around to a behind-goal — keep waypoints AHEAD (place robot facing down-course).
       vy_max: 0.5             # not used on diff-drive but required field
       # wz_max: actuator clamps angular at max_angular_rps=1.5 (raised from
       # 1.0 on 2026-05-12); grass slip caps achievable ω at ~0.7 rad/s peak.
       # Keeping wz_max high here lets MPPI sample full range — actuator
       # will clamp downstream.
-      wz_max: 1.9             # rad/s
+      wz_max: 1.5             # rad/s
       # Acceleration limits (2026-05-19): matched to actuator_params.yaml slew
       # caps so MPPI samples trajectories the chassis can actually deliver.
       # Mismatch (defaults are 3.0/3.5) causes MPPI to plan accels reality
@@ -319,7 +320,8 @@ local_costmap:
         observation_sources: lidar_obstacles
         lidar_obstacles:
           topic: /perception/lidar/obstacles   # 2026-10-09: avros_perception lidar_preprocessor output (was /velodyne_points)
-          sensor_frame: "velodyne"   # 2026-05-31: pin STVL clearing/frustum origin to the robot (velodyne) regardless of cloud header.frame_id. Default ("") would fall back to the cloud frame; with deskew re-enabled this insures clearing stays robot-centric even if the cloud comes out in odom. measurement_buffer.cpp:97-98 (origin_frame = sensor_frame ?: cloud.header.frame_id).
+          # sensor_frame: "velodyne"   # 2026-05-31: pin STVL clearing/frustum origin to the robot (velodyne) regardless of cloud header.frame_id. Default ("") would fall back to the cloud frame; with deskew re-enabled this insures clearing stays robot-centric even if the cloud comes out in odom. measurement_buffer.cpp:97-98 (origin_frame = sensor_frame ?: cloud.header.frame_id).   [VLP-16, retired 2026-11-04]
+          sensor_frame: "os_sensor"   # 2026-11-04: Ouster OS1-64 Rev 7 replaces the VLP-16. os_sensor = URDF mount frame (driver adds os_lidar 38 mm above). Same robot-centric clearing rationale as the velodyne note above.
           data_type: PointCloud2
           marking: true
           clearing: true
@@ -345,7 +347,8 @@ local_costmap:
           obstacle_range: 15.0       # 2026-10-09: single distance authority, = lidar_preprocessor range_max (lidar.yaml). [prior 8 local / 10 global]
           # VLP-16 hourglass FOV for frustum-accelerated decay
           model_type: 1                  # 1 = 3D LiDAR; 0 = depth camera
-          vertical_fov_angle: 0.523      # VLP-16 +/-15 deg
+          # vertical_fov_angle: 0.523      # VLP-16 +/-15 deg   [retired 2026-11-04]
+          vertical_fov_angle: 0.741      # 2026-11-04: OS1-64 Rev 7 uniform, +21.05/-21.39 deg = 42.4 deg
           # 2026-05-19: widen the near cone so close LOW voxels register as
           # in-frustum -> get fast frustum-accelerated decay instead of the
           # slow 5s timeout (was the near-front smear cause).
@@ -574,7 +577,8 @@ global_costmap:
         observation_sources: lidar_obstacles
         lidar_obstacles:
           topic: /perception/lidar/obstacles   # 2026-10-09: avros_perception lidar_preprocessor output (was /velodyne_points)
-          sensor_frame: "velodyne"   # 2026-05-31: pin STVL clearing origin to the robot (velodyne); global_frame=map, so without this the origin would resolve to map-position of the cloud frame. measurement_buffer.cpp:97-98. See local source + velodyne.yaml deskew note.
+          # sensor_frame: "velodyne"   # 2026-05-31: pin STVL clearing origin to the robot (velodyne); global_frame=map, so without this the origin would resolve to map-position of the cloud frame. measurement_buffer.cpp:97-98. See local source + velodyne.yaml deskew note.   [VLP-16, retired 2026-11-04]
+          sensor_frame: "os_sensor"   # 2026-11-04: Ouster OS1-64 Rev 7 replaces the VLP-16. os_sensor = URDF mount frame (driver adds os_lidar 38 mm above). Same robot-centric clearing rationale as the velodyne note above.
           data_type: PointCloud2
           marking: true
           clearing: true
@@ -582,7 +586,8 @@ global_costmap:
           max_obstacle_height: 2.1   # 2026-10-09: pass-through (see min). [prior 1.0 local / 0.8 global]
           obstacle_range: 15.0       # 2026-10-09: single distance authority, = lidar_preprocessor range_max (lidar.yaml). [prior 8 local / 10 global]
           model_type: 1                  # 3D LiDAR (frustum-accelerated decay)
-          vertical_fov_angle: 0.523      # VLP-16 +/-15 deg
+          # vertical_fov_angle: 0.523      # VLP-16 +/-15 deg   [retired 2026-11-04]
+          vertical_fov_angle: 0.741      # 2026-11-04: OS1-64 Rev 7 uniform, +21.05/-21.39 deg = 42.4 deg
           vertical_fov_padding: 0.1      # 2026-05-19: widen near cone (match local)
           horizontal_fov_angle: 6.283    # 360 deg
           decay_acceleration: 0.5       # IGVC-AUTONAV 2026-06-01: adopt Jetson-LIVE 0.5 (match local; barrel persistence while maneuvering). [prior 2.0:] 2026-05-21: 10->5; 2026-05-27: 5->2 (further anti-flicker, see local comment)

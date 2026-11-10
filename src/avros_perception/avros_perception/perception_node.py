@@ -74,6 +74,11 @@ _PIPELINE_PARAM_NAMES = (
     'yolopv2_model_path', 'yolopv2_providers', 'yolopv2_lane_thresh',
     'yolopv2_min_area', 'yolopv2_pre_resize', 'yolopv2_fp16',
     'yolopv2_intra_op_threads', 'yolopv2_trt_cache',
+    # white_ridge (calibration is per camera; the pipeline picks its own)
+    'ridge_calib_front', 'ridge_calib_left', 'ridge_calib_right',
+    'ridge_proc_width', 'ridge_max_range_m', 'ridge_t_high', 'ridge_t_low',
+    'ridge_side_log', 'ridge_w_min', 'ridge_w_max', 'ridge_min_len_m',
+    'ridge_use_depth', 'ridge_obj_height_m', 'ridge_depth_vote',
 )
 
 _HSV_BOUND_NAMES = frozenset((
@@ -87,6 +92,16 @@ _HSV_BOUND_PAIRS = (
     ('barrel_low', 'barrel_high'),
     ('pothole_low', 'pothole_high'),
 )
+
+
+def cloud_forward_depth(cloud):
+    """Organized PointCloud2 -> (H, W) float32 of its x field: forward
+    (optical-axis) distance in the ZED camera frame; NaN where no depth."""
+    off = next(f.offset for f in cloud.fields if f.name == 'x')
+    raw = np.frombuffer(cloud.data, np.uint8).reshape(cloud.height, cloud.row_step)
+    raw = raw[:, :cloud.width * cloud.point_step].reshape(
+        cloud.height, cloud.width, cloud.point_step)
+    return np.ascontiguousarray(raw[:, :, off:off + 4]).view(np.float32)[:, :, 0]
 
 
 class PerceptionNode(Node):
@@ -245,6 +260,23 @@ class PerceptionNode(Node):
         )
         self.declare_parameter('process_at_full_res', False)
 
+        # -------- white_ridge pipeline params --------
+        # ridge_calib_<cam> = [fx, fy, cx, cy, ref_width, height_m, pitch_deg]
+        # for the camera this node serves (intrinsics at ref_width px wide).
+        for c in ('front', 'left', 'right'):
+            self.declare_parameter(f'ridge_calib_{c}', [0.0])
+        self.declare_parameter('ridge_proc_width', 480)
+        self.declare_parameter('ridge_max_range_m', 12.0)
+        self.declare_parameter('ridge_t_high', 0.22)
+        self.declare_parameter('ridge_t_low', 0.10)
+        self.declare_parameter('ridge_side_log', 0.10)
+        self.declare_parameter('ridge_w_min', 0.025)
+        self.declare_parameter('ridge_w_max', 0.15)
+        self.declare_parameter('ridge_min_len_m', 0.30)
+        self.declare_parameter('ridge_use_depth', True)
+        self.declare_parameter('ridge_obj_height_m', 0.05)
+        self.declare_parameter('ridge_depth_vote', 0.3)
+
         # -------- YOLOPv2 (ONNX) pipeline params --------
         # Learned lane-line segmentation (pipeline:='yolopv2'). The model is the
         # YOLOPv2 lane head exported to ONNX (1x3x384x640 -> 1x1x384x640). Build
@@ -321,6 +353,8 @@ class PerceptionNode(Node):
         self._pipeline_params = {
             n: self.get_parameter(n).value for n in _PIPELINE_PARAM_NAMES
         }
+        # read-only: lets a pipeline pick per-camera calibration
+        self._pipeline_params['camera_name'] = cam
         self._pipeline = build_pipeline(
             pipeline_name, self._pipeline_params, self.get_logger()
         )
@@ -438,7 +472,10 @@ class PerceptionNode(Node):
             )
         proc_h, proc_w = bgr.shape[:2]
 
-        result = self._pipeline.run(bgr)
+        depth = None
+        if getattr(self._pipeline, 'wants_depth', False):
+            depth = cloud_forward_depth(cloud)
+        result = self._pipeline.run(bgr, depth=depth)
         if result.mask.shape != (proc_h, proc_w):
             self.get_logger().error(
                 f'pipeline produced mask shape {result.mask.shape} != image {(proc_h, proc_w)}'

@@ -7,7 +7,7 @@ velodyne_driver_node:
     device_ip: "192.168.13.11"     # Reconfigured from factory 192.168.1.201
     port: 2368                     # Factory default data port
     model: "VLP16"
-    rpm: 600.0
+    rpm: 900.0
     frame_id: "velodyne"
     gps_time: false
     time_offset: 0.0

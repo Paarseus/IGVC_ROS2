@@ -1,5 +1,5 @@
 """
-LiDAR point-cloud preprocessing: filter, downsample, transform, remove ground.
+LiDAR point-cloud preprocessing: deskew, filter, downsample, transform, remove ground.
 
 Pure functions are module-level and take/return numpy arrays or plain
 values so they're testable without a live ROS node or TF listener.
@@ -8,11 +8,13 @@ LidarPreprocessorNode wires them to subscriptions/publishers/TF.
 
 import os
 import resource
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import rclpy
+from rclpy.duration import Duration
 from rclpy.node import Node
+from rclpy.time import Time
 from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from geometry_msgs.msg import TransformStamped
 from sensor_msgs.msg import PointCloud2
@@ -41,21 +43,94 @@ def pointcloud2_to_xyz_array(msg: PointCloud2, skip_nans: bool = True) -> np.nda
     return arr
 
 
+def pointcloud2_to_xyz_t_arrays(
+    msg: PointCloud2, time_field: str = "t", time_scale: float = 1e-9
+) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+    """
+    Extract (N, 3) xyz and (N,) per-point time offsets in seconds.
+
+    The offsets are relative to the cloud's header stamp. For ouster_ros
+    `native` clouds `t` is uint32 nanoseconds since the start of the scan,
+    hence time_scale=1e-9. Returns (xyz, None) if the cloud has no
+    time_field (e.g. the Webots sim cloud), so callers can skip deskew.
+    NaN rows are dropped from both arrays.
+    """
+    if time_field not in [f.name for f in msg.fields]:
+        return pointcloud2_to_xyz_array(msg), None
+    cloud = point_cloud2.read_points(
+        msg, field_names=("x", "y", "z", time_field), skip_nans=False
+    )
+    if cloud.shape[0] == 0:
+        return np.empty((0, 3), dtype=np.float64), np.empty(0, dtype=np.float64)
+    xyz = np.stack((cloud["x"], cloud["y"], cloud["z"]), axis=1).astype(np.float64)
+    t_rel = cloud[time_field].astype(np.float64) * time_scale
+    finite = np.isfinite(xyz).all(axis=1)
+    return xyz[finite], t_rel[finite]
+
+
+def range_mask(
+    points_xyz: np.ndarray, min_range: float, max_range: float
+) -> np.ndarray:
+    """Boolean mask of points whose distance from the sensor origin is in range."""
+    dist = np.linalg.norm(points_xyz, axis=1)
+    return (dist >= min_range) & (dist <= max_range)
+
+
 def range_filter(
     points_xyz: np.ndarray, min_range: float, max_range: float
 ) -> np.ndarray:
     """
     Keep points whose distance from the sensor origin (0,0,0) is in range.
 
-    Must be called on points still in the sensor's own frame (e.g. `velodyne`)
+    Must be called on points still in the sensor's own frame (e.g. `os_sensor`)
     -- filtering after transforming into base_link would measure range from
     the wrong origin, since the sensor is offset from base_link.
     """
     if points_xyz.shape[0] == 0:
         return points_xyz
-    dist = np.linalg.norm(points_xyz, axis=1)
-    mask = (dist >= min_range) & (dist <= max_range)
-    return points_xyz[mask]
+    return points_xyz[range_mask(points_xyz, min_range, max_range)]
+
+
+def deskew_buckets(
+    t_rel: np.ndarray, n_buckets: int
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Split the scan's time span into n_buckets equal slices.
+
+    Returns (bucket index per point, bucket centre times in seconds). One TF
+    lookup per bucket instead of per point: with 16 buckets over a 0.1 s scan
+    a point is at most ~3 ms from its bucket centre, i.e. <0.3 deg of yaw at
+    1.5 rad/s (~2 cm at 5 m).
+    """
+    n = t_rel.shape[0]
+    if n == 0:
+        return np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.float64)
+    t0 = float(t_rel.min())
+    span = float(t_rel.max()) - t0
+    if span <= 0.0 or n_buckets <= 1:
+        return np.zeros(n, dtype=np.int64), np.array([t0 + 0.5 * span])
+    width = span / n_buckets
+    idx = np.minimum(((t_rel - t0) / width).astype(np.int64), n_buckets - 1)
+    centres = t0 + (np.arange(n_buckets) + 0.5) * width
+    return idx, centres
+
+
+def deskew_points(
+    points_xyz: np.ndarray, bucket_idx: np.ndarray, matrices: List[np.ndarray]
+) -> np.ndarray:
+    """
+    Move every point into the sensor pose at the reference (header) time.
+
+    matrices[k] is the 4x4 transform from the sensor frame at bucket k's time
+    to the sensor frame at the reference time; it is applied to the points
+    whose bucket_idx is k.
+    """
+    out = np.empty_like(points_xyz)
+    for k, m in enumerate(matrices):
+        sel = bucket_idx == k
+        if sel.any():
+            out[sel] = points_xyz[sel] @ m[:3, :3].T + m[:3, 3]
+    return out
 
 
 def vertical_fov_filter(
@@ -292,8 +367,11 @@ class LidarPreprocessorNode(Node):
     def __init__(self):
         super().__init__("lidar_preprocessor")
 
-        self.declare_parameter("input_topic", "/velodyne_points")
-        self.declare_parameter("sensor_frame", "velodyne")
+        # 2026-11-04: Ouster OS1 replaced the VLP-16 (was /velodyne_points, velodyne).
+        # self.declare_parameter("input_topic", "/velodyne_points")
+        # self.declare_parameter("sensor_frame", "velodyne")
+        self.declare_parameter("input_topic", "/ouster/points")
+        self.declare_parameter("sensor_frame", "os_sensor")
         self.declare_parameter("target_frame", "base_link")
         self.declare_parameter("range_min", 0.5)
         self.declare_parameter("range_max", 50.0)
@@ -313,6 +391,15 @@ class LidarPreprocessorNode(Node):
         # revolution at 600 rpm = 0.1 s) before the expensive stages run once.
         # 0 disables merging: every incoming cloud is processed on its own.
         self.declare_parameter("merge_window_sec", 0.08)
+        # Motion deskew (2026-11-06). The VLP-16 driver deskewed per packet against
+        # odom; ouster_ros does not, so a 0.1 s scan taken while turning at 1.5 rad/s
+        # is smeared by ~8.6 deg. Each point is moved into the sensor pose at the
+        # header stamp using its per-point time field and TF (sensor_frame through
+        # deskew_fixed_frame). Skipped automatically for clouds without the field.
+        self.declare_parameter("deskew_enable", True)
+        self.declare_parameter("deskew_fixed_frame", "odom")
+        self.declare_parameter("deskew_time_field", "t")
+        self.declare_parameter("deskew_buckets", 16)
 
         # Self-footprint exclusion box, in base_link. Defaults are the union
         # bounding box of IGVC_ROS2's measured chassis geometry (main body +
@@ -378,12 +465,22 @@ class LidarPreprocessorNode(Node):
             self._fragments = []
             self._window_start = None
 
-        points = pointcloud2_to_xyz_array(msg)
-        points = range_filter(
+        if self.get_parameter("deskew_enable").value:
+            points, t_rel = pointcloud2_to_xyz_t_arrays(
+                msg, self.get_parameter("deskew_time_field").value
+            )
+        else:
+            points, t_rel = pointcloud2_to_xyz_array(msg), None
+        # Range-filter BEFORE deskew: no-return points sit at (0,0,0) and must
+        # not be moved off the origin by the deskew transform.
+        keep = range_mask(
             points,
             self.get_parameter("range_min").value,
             self.get_parameter("range_max").value,
         )
+        points = points[keep]
+        if t_rel is not None and points.shape[0]:
+            points = self._deskew(points, t_rel[keep], stamp)
         points = vertical_fov_filter(
             points,
             self.get_parameter("vertical_fov_min_deg").value,
@@ -404,6 +501,44 @@ class LidarPreprocessorNode(Node):
             self._fragments = []
             self._window_start = None
             self._process(merged, stamp)
+
+    def _deskew(self, points: np.ndarray, t_rel: np.ndarray, stamp) -> np.ndarray:
+        """Move each point into the sensor pose at `stamp`; unchanged if TF is missing."""
+        idx, centres = deskew_buckets(
+            t_rel, int(self.get_parameter("deskew_buckets").value)
+        )
+        fixed = self.get_parameter("deskew_fixed_frame").value
+        ref_time = Time.from_msg(stamp)
+        matrices = []
+        for centre in centres:
+            src_time = ref_time + Duration(nanoseconds=int(round(centre * 1e9)))
+            try:
+                tf = self.tf_buffer.lookup_transform_full(
+                    self.sensor_frame, ref_time, self.sensor_frame, src_time, fixed
+                )
+            except ExtrapolationException:
+                # The end of the scan can be newer than the latest odom TF (EKF
+                # lag). Use the latest pose for those buckets: error ~ the lag.
+                try:
+                    tf = self.tf_buffer.lookup_transform_full(
+                        self.sensor_frame, ref_time, self.sensor_frame, Time(), fixed
+                    )
+                except (LookupException, ExtrapolationException,
+                        ConnectivityException) as exc:
+                    self._warn_deskew(exc)
+                    return points
+            except (LookupException, ConnectivityException) as exc:
+                self._warn_deskew(exc)
+                return points
+            matrices.append(transform_matrix_from_stamped(tf))
+        return deskew_points(points, idx, matrices)
+
+    def _warn_deskew(self, exc):
+        self.get_logger().warn(
+            f"deskew skipped (no {self.get_parameter('deskew_fixed_frame').value}"
+            f"<-{self.sensor_frame} TF over the scan): {exc}",
+            throttle_duration_sec=5.0,
+        )
 
     def _process(self, points: np.ndarray, stamp):
         """Downsample, transform, remove body and ground, and publish obstacles."""

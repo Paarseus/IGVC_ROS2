@@ -18,8 +18,12 @@
   <exec_depend>avros_perception</exec_depend>
   <exec_depend>robot_localization</exec_depend>
   <exec_depend>nav2_bringup</exec_depend>
-  <exec_depend>velodyne_driver</exec_depend>
-  <exec_depend>velodyne_pointcloud</exec_depend>
+  <exec_depend>ouster_ros</exec_depend>
+  <exec_depend>lifecycle_msgs</exec_depend>
+  <!-- VLP-16 retired 2026-11-04 (replaced by Ouster OS1). Still installed via apt
+       (ros-humble-velodyne) and launchable with enable_velodyne:=true. -->
+  <!-- <exec_depend>velodyne_driver</exec_depend> -->
+  <!-- <exec_depend>velodyne_pointcloud</exec_depend> -->
   <exec_depend>ntrip</exec_depend>
   <exec_depend>teleop_twist_keyboard</exec_depend>
   <exec_depend>avros_webui</exec_depend>

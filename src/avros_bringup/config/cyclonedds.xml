@@ -5,7 +5,7 @@
   <Domain>
     <General>
       <Interfaces>
-        <NetworkInterface autodetermine="true"/>
+        <NetworkInterface name="eno1"/>  <!-- 2026-10-20: pinned; with eduroam WiFi up, autodetermine could pick the WiFi and split ROS from the robot network -->
       </Interfaces>
       <AllowMulticast>default</AllowMulticast>
     </General>
