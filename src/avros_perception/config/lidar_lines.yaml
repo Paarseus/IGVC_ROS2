@@ -1,0 +1,62 @@
+# LiDAR white-line detector (avros_perception/lidar_line_detector.py).
+# Ouster OS1-64 reflectivity, per-ring contrast against the local asphalt.
+# 2026-11-09: initial values are UNTUNED guesses; tune on an asphalt bag with
+#   scripts/lidar_lines/bag_to_bev.py <bag>  (prints reflectivity stats + writes PNGs)
+# and/or live in RViz (/perception/lidar/line_debug/ground, colour by intensity =
+# reflectivity / background).
+lidar_line_detector:
+  ros__parameters:
+    input_topic: /ouster/points
+    sensor_frame: os_sensor
+    target_frame: base_link
+
+    # Same motion deskew as lidar_preprocessor (per-point `t`, odom TF).
+    # Without odom TF (bench) it falls back to no deskew.
+    deskew_enable: true
+    deskew_fixed_frame: odom
+    deskew_buckets: 16
+
+    publish_debug: true
+    # Line points kept in odom this long (s) -> /perception/lidar/lines_accumulated.
+    # Fills the ~1.7 m blind ring around the robot as it drives. 0 = off.
+    accumulate_sec: 2.0
+    accumulate_frame: odom
+    accumulate_voxel: 0.04
+
+    # Ignore the first 10 in (0.254 m) from the LiDAR (3D range from os_sensor).
+    range_min: 0.254
+    range_max: 15.0
+    # Only the front 180 deg (base_link: 0 = vehicle front = Ouster-logo side,
+    # +90 = left). Everything behind the robot is ignored. 360 = no crop.
+    fov_deg: 180.0
+    fov_center_deg: 0.0
+
+    plane_fit_band: 0.2
+    plane_fit_max_dist: 10.0
+    plane_fit_stride: 4
+    ransac_iterations: 60
+    ransac_distance_threshold: 0.06
+    plane_smoothing_alpha: 0.3
+    plane_max_tilt_deg: 10.0
+    plane_max_offset: 0.15
+    ground_tolerance: 0.08
+    obstacle_rows: 4
+    obstacle_height_m: 0.12
+    obstacle_clearance_m: 0.35
+
+    # Same chassis box as lidar_preprocessor.
+    footprint_x_min: -0.23
+    footprint_x_max: 0.78
+    footprint_y_min: -0.46
+    footprint_y_max: 0.46
+
+    background_window: 61
+    background_outlier_ratio: 1.5
+    background_min_support: 8
+
+    min_reflectivity: 20.0
+    contrast_ratio: 2.0
+    contrast_delta: 12.0
+
+    min_run_points: 2
+    max_run_width_m: 2.5

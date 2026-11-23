@@ -1,0 +1,113 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid (1 m)
+      Enabled: true
+      Cell Size: 1
+      Plane Cell Count: 30
+      Color: 90; 90; 90
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: false
+    - Class: rviz_default_plugins/RobotModel
+      Name: RobotModel
+      Enabled: true
+      Description Topic:
+        Value: /robot_description
+    # Raw Ouster cloud, coloured by reflectivity. Off by default (busy); turn on
+    # to compare against what the detector kept.
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Ouster raw (reflectivity)
+      Topic:
+        Value: /ouster/points
+        Depth: 2
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+      Enabled: false
+      Color Transformer: Intensity
+      Channel Name: reflectivity
+      Use rainbow: true
+      Autocompute Intensity Bounds: false
+      Min Intensity: 0
+      Max Intensity: 100
+      Size (Pixels): 2
+      Style: Points
+      Alpha: 0.6
+    # Ground points, intensity = reflectivity / ring background. Paint should
+    # stand out at >= contrast_ratio (2.0); asphalt sits near 1.
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Ground contrast (refl / background)
+      Topic:
+        Value: /perception/lidar/line_debug/ground
+        Depth: 2
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+      Enabled: true
+      Color Transformer: Intensity
+      Channel Name: intensity
+      Use rainbow: false
+      Min Color: 0; 0; 0
+      Max Color: 255; 255; 255
+      Autocompute Intensity Bounds: false
+      Min Intensity: 0.5
+      Max Intensity: 3.0
+      Size (Pixels): 3
+      Style: Points
+      Alpha: 1
+    # Accumulated detections (odom). Needs odom TF (EKF running); off on the bench.
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Lines accumulated (odom)
+      Topic:
+        Value: /perception/lidar/lines_accumulated
+        Depth: 2
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+      Enabled: false
+      Color Transformer: FlatColor
+      Color: 0; 170; 255
+      Size (m): 0.05
+      Style: Flat Squares
+      Alpha: 0.8
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Detected lines
+      Topic:
+        Value: /perception/lidar/lines
+        Depth: 2
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+      Enabled: true
+      Color Transformer: FlatColor
+      Color: 0; 255; 0
+      Size (m): 0.08
+      Style: Flat Squares
+      Alpha: 1
+  Global Options:
+    # base_link works with only sensors.launch.py running (no EKF / odom).
+    # Switch to odom when localization is up to watch lines stay put while driving.
+    Fixed Frame: base_link
+    Background Color: 30; 30; 40
+    Frame Rate: 15
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Measure
+  Views:
+    Current:
+      # Bird's-eye view, +x (forward) up. Scroll to zoom, middle-drag to pan.
+      Class: rviz_default_plugins/TopDownOrtho
+      Target Frame: base_link
+      Scale: 40
+      Angle: 1.5708
+      X: 4
+      Y: 0
+Window Geometry:
+  Height: 900
+  Width: 1400

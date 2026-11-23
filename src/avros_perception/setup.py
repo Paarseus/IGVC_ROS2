@@ -31,7 +31,8 @@ setup(
     entry_points={
         'console_scripts': [
             'perception_node = avros_perception.perception_node:main',
-            'lidar_preprocessor = avros_perception.lidar_preprocessor:main'
+            'lidar_preprocessor = avros_perception.lidar_preprocessor:main',
+            'lidar_line_detector = avros_perception.lidar_line_detector:main',
         ],
     },
 )
