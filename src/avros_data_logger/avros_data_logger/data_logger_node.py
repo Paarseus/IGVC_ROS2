@@ -3,6 +3,7 @@
 import csv
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from collections import deque
 from datetime import datetime, timezone
@@ -15,7 +16,7 @@ from cv_bridge import CvBridge
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import Image, Imu, NavSatFix
+from sensor_msgs.msg import Image, Imu, NavSatFix, NavSatStatus
 from avros_msgs.msg import ActuatorCommand
 
 
@@ -101,6 +102,9 @@ main { display: flex; flex-direction: column; gap: 12px; padding: 12px; }
 .label { position: absolute; top: 8px; left: 8px; background: #000b;
          padding: 5px 8px; z-index: 1; }
 .unavailable { color: #aaa; font-size: 22px; }
+.status-bar { display: flex; gap: 12px; padding: 0 12px; }
+.status { flex: 1; padding: 10px 12px; background: #282828; }
+.status-label { color: #aaa; margin-right: 8px; }
 </style>
 </head>
 <body>
@@ -110,6 +114,12 @@ main { display: flex; flex-direction: column; gap: 12px; padding: 12px; }
   <button id="stop" onclick="setRecording(false)" disabled>Stop Recording</button>
   <span id="recording">Preview only — recording has not started</span>
 </controls>
+<section class="status-bar">
+  <div class="status"><span class="status-label">GNSS</span>
+    <span id="gnss-status">Unavailable</span></div>
+  <div class="status"><span class="status-label">RTK</span>
+    <span id="rtk-status">Unavailable</span></div>
+</section>
 <main>
   <section class="panel"><span class="label">RGB</span>
     <img id="rgb" alt="RGB camera"><span id="rgb-unavailable" class="unavailable">Unavailable</span>
@@ -126,6 +136,9 @@ function updateFrame(name, available) {
   message.style.display = available ? 'none' : 'block';
   if (available) image.src = '/frame/' + name + '.jpg?t=' + Date.now();
 }
+function updateStatus(name, value) {
+  document.getElementById(name + '-status').textContent = value;
+}
 async function setRecording(enabled) {
   await fetch(enabled ? '/record/start' : '/record/stop', {method: 'POST'});
   await refresh();
@@ -141,9 +154,13 @@ async function refresh() {
       ? 'Recording active' : 'Preview only — recording has stopped';
     updateFrame('rgb', status.rgb_available);
     updateFrame('thermal', status.thermal_available);
+    updateStatus('gnss', status.gnss_status);
+    updateStatus('rtk', status.rtk_status);
   } catch (error) {
     updateFrame('rgb', false);
     updateFrame('thermal', false);
+    updateStatus('gnss', 'Unavailable');
+    updateStatus('rtk', 'Unavailable');
   }
 }
 refresh();
@@ -273,6 +290,9 @@ class DataLoggerNode(Node):
         self._preview_lock = Lock()
         self._preview_rgb = None
         self._preview_thermal = None
+        self._gnss_last_update = None
+        self._gnss_status = 'Unavailable'
+        self._rtk_status = 'Unavailable'
         self._preview_server = None
         self._preview_thread = None
 
@@ -362,6 +382,7 @@ class DataLoggerNode(Node):
             self._imu_file.flush()
 
     def _on_gnss(self, msg: NavSatFix) -> None:
+        self._update_gnss_status(msg)
         if not getattr(self, '_recording', True):
             return
         stamp_ns = self._stamp_ns(msg)
@@ -381,6 +402,20 @@ class DataLoggerNode(Node):
         with self._lock:
             self._gnss_writer.writerow(row)
             self._gnss_file.flush()
+
+    def _update_gnss_status(self, msg: NavSatFix) -> None:
+        """Update UI quality indicators from standard NavSatFix status."""
+        self._gnss_last_update = time.monotonic()
+        fix_status = int(msg.status.status)
+        if fix_status < NavSatStatus.STATUS_FIX:
+            self._gnss_status = 'Unavailable'
+            self._rtk_status = 'Unavailable'
+        elif fix_status < NavSatStatus.STATUS_GBAS_FIX:
+            self._gnss_status = 'Unstable'
+            self._rtk_status = 'Unstable'
+        else:
+            self._gnss_status = 'Stable'
+            self._rtk_status = 'Stable'
 
     @staticmethod
     def _covariance_fields(prefix: str, values):
@@ -523,11 +558,20 @@ class DataLoggerNode(Node):
 
     def _preview_status(self):
         with self._preview_lock:
+            if (self._gnss_last_update is None or
+                    time.monotonic() - self._gnss_last_update > 2.0):
+                gnss_status = 'Unavailable'
+                rtk_status = 'Unavailable'
+            else:
+                gnss_status = self._gnss_status
+                rtk_status = self._rtk_status
             return {
                 'image_count': self._id,
                 'recording': self._recording,
                 'rgb_available': self._preview_rgb is not None,
                 'thermal_available': self._preview_thermal is not None,
+                'gnss_status': gnss_status,
+                'rtk_status': rtk_status,
             }
 
     def _preview_frame(self, camera_name):

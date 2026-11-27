@@ -1,7 +1,7 @@
 import csv
 from threading import Lock
 
-from sensor_msgs.msg import Imu, NavSatFix
+from sensor_msgs.msg import Imu, NavSatFix, NavSatStatus
 
 from avros_data_logger.data_logger_node import (
     CAMERA_COLUMNS,
@@ -92,3 +92,23 @@ def test_every_gnss_message_is_written(tmp_path):
     assert rows[0]['timestamp_ns'] == '8000000000'
     assert rows[0]['latitude'] == '34.0'
     assert rows[0]['position_covariance_0'] == '0.5'
+
+
+def test_gnss_ui_status_maps_fix_quality():
+    node = DataLoggerNode.__new__(DataLoggerNode)
+    message = NavSatFix()
+
+    message.status.status = NavSatStatus.STATUS_NO_FIX
+    node._update_gnss_status(message)
+    assert node._gnss_status == 'Unavailable'
+    assert node._rtk_status == 'Unavailable'
+
+    message.status.status = NavSatStatus.STATUS_FIX
+    node._update_gnss_status(message)
+    assert node._gnss_status == 'Unstable'
+    assert node._rtk_status == 'Unstable'
+
+    message.status.status = NavSatStatus.STATUS_GBAS_FIX
+    node._update_gnss_status(message)
+    assert node._gnss_status == 'Stable'
+    assert node._rtk_status == 'Stable'
