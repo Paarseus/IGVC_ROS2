@@ -106,6 +106,17 @@ main { display: flex; flex-direction: column; gap: 12px; padding: 12px; }
 .status-bar { display: flex; gap: 12px; padding: 0 12px; }
 .status { flex: 1; padding: 10px 12px; background: #282828; }
 .status-label { color: #aaa; margin-right: 8px; }
+.help-wrap { position: relative; display: inline-block; margin-left: 4px; }
+.help-icon { display: inline-flex; align-items: center; justify-content: center;
+             width: 15px; height: 15px; border: 1px solid #aaa;
+             border-radius: 50%; color: #aaa; font-size: 11px; cursor: help; }
+.help-text { visibility: hidden; opacity: 0; position: absolute; z-index: 3;
+             left: 20px; top: -8px; width: 265px; padding: 9px 10px;
+             background: #101010; border: 1px solid #555; color: #eee;
+             font-size: 13px; line-height: 1.45; transition: opacity .15s; }
+.help-wrap:hover .help-text, .help-wrap:focus-within .help-text {
+  visibility: visible; opacity: 1;
+}
 </style>
 </head>
 <body>
@@ -119,7 +130,16 @@ main { display: flex; flex-direction: column; gap: 12px; padding: 12px; }
   <div class="status"><span class="status-label">GNSS</span>
     <span id="gnss-status">Unavailable</span></div>
   <div class="status"><span class="status-label">RTK</span>
-    <span id="rtk-status">Unavailable</span></div>
+    <span id="rtk-status">Unavailable</span>
+    <span class="help-wrap">
+      <span class="help-icon" tabindex="0" aria-label="GNSS and RTK status meanings">?</span>
+      <span class="help-text">
+        Unavailable: no fix or stale data<br>
+        Unstable: standalone, DGPS, or RTK float<br>
+        Stable: RTK fixed
+      </span>
+    </span>
+  </div>
 </section>
 <main>
   <section class="panel"><span class="label">RGB</span>
