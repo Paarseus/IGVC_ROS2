@@ -46,7 +46,13 @@ class CameraBridgeNode(Node):
         if device is None or device == -1 or device == '':
             self.get_logger().info(f'{name} camera disabled')
             return None
-        camera = cv2.VideoCapture(device)
+        # UVC devices on Linux are V4L2 devices.  Explicitly selecting this
+        # backend avoids OpenCV trying to construct a GStreamer pipeline for
+        # /dev/videoN, which can fail before the camera mode is negotiated.
+        camera = cv2.VideoCapture(device, cv2.CAP_V4L2)
+        if not camera.isOpened():
+            camera.release()
+            raise RuntimeError(f'Could not open {name} camera: {device}')
         width = int(self.get_parameter(width_parameter).value)
         height = int(self.get_parameter(height_parameter).value)
         if width > 0:

@@ -13,6 +13,8 @@ def generate_launch_description():
         DeclareLaunchArgument('thermal_topic', default_value='/thermal_camera/image_raw'),
         DeclareLaunchArgument('imu_topic', default_value='/imu/data'),
         DeclareLaunchArgument('pair_tolerance_ms', default_value='10.0'),
+        DeclareLaunchArgument('web_preview', default_value='true'),
+        DeclareLaunchArgument('web_port', default_value='8080'),
         Node(
             package='avros_data_logger',
             executable='avros_dataLogger',
@@ -24,6 +26,8 @@ def generate_launch_description():
                 'thermal_topic': LaunchConfiguration('thermal_topic'),
                 'imu_topic': LaunchConfiguration('imu_topic'),
                 'pair_tolerance_ms': LaunchConfiguration('pair_tolerance_ms'),
+                'web_preview': LaunchConfiguration('web_preview'),
+                'web_port': LaunchConfiguration('web_port'),
             }],
         ),
     ])

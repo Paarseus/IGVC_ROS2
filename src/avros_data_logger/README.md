@@ -8,7 +8,7 @@
 - Imitation-learning datasets from images paired with control commands
 - Visual-inertial/GNSS processing from the original-rate IMU and GNSS logs
 
-The included `avros_camera_bridge` publishes two UVC cameras as ROS `sensor_msgs/Image` topics using the device settings in `config/cameras.yaml`. The logger subscribes to those topics, pairs frames by their ROS timestamps, and saves RGB and thermal frames losslessly as PNG. IMU, GNSS, odometry, and actuator values are received from ROS 2 topics.
+The included `avros_camera_bridge` publishes two UVC cameras as ROS `sensor_msgs/Image` topics using the device settings in `config/cameras.yaml`. The logger subscribes to those topics, displays the latest frames in its local web UI, pairs frames by their ROS timestamps when recording is enabled, and saves RGB and thermal frames. IMU, GNSS, odometry, and actuator values are received from ROS 2 topics.
 
 The recording path does not apply contrast enhancement, resize, or JPEG
 compression. RGB and thermal frames are saved as lossless PNG files with
@@ -91,6 +91,11 @@ ros2 launch avros_data_logger cameras.launch.py
 ros2 launch avros_data_logger data_logger.launch.py
 ```
 
+The logger UI is available at `http://127.0.0.1:8080` by default. The preview
+can run before recording; use the Start/Stop buttons to control image and
+sensor logging. `rgb_topic` and `thermal_topic` must match the topics emitted
+by the camera bridge.
+
 The logger uses `/imu/data` at its existing 100 Hz rate. `pair_tolerance_ms`
 controls the maximum RGB/thermal timestamp difference; the default is 10 ms.
 
@@ -138,14 +143,17 @@ The camera log uses the nearest recent command and odometry message. The IMU and
 
 ## Testing
 
-After building the workspace, run the package tests with:
+After building the workspace, run the unit tests with:
 
 ```bash
-colcon test --packages-select avros_data_logger
-colcon test-result --verbose
+python3 -m pytest -q src/avros_data_logger/test/test_data_logger.py
 ```
 
-The tests cover camera-device opening behavior, zero-padded image names, CSV headers, and writing individual IMU and GNSS messages. They do not require physical cameras because camera access is mocked.
+For a no-camera UI/data-path test, publish synthetic `sensor_msgs/Image`
+messages on `/rgb_camera/image_raw` and `/thermal_camera/image_raw`, open the
+UI, press Start Recording, and verify that paired image files and rows appear
+in `camera_log.csv`. The camera bridge itself can be tested with the same
+topics by launching `cameras.launch.py` first.
 
 ## Ending a Run
 

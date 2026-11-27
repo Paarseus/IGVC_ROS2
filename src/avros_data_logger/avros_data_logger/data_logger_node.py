@@ -11,18 +11,15 @@ from threading import Lock
 
 import cv2
 import rclpy
+from cv_bridge import CvBridge
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import Imu, NavSatFix
+from sensor_msgs.msg import Image, Imu, NavSatFix
 from avros_msgs.msg import ActuatorCommand
 
 
-# Default RGB index; -1 disables RGB until a ROS parameter is supplied.
-RGB_CAMERA_INDEX = -1
-# Default thermal index; -1 disables thermal until a ROS parameter is supplied.
-THERMAL_CAMERA_INDEX = -1
-# Number of image pairs to capture per second.
+# Number of image pairs to record per second.
 CAPTURE_RATE_HZ = 10.0
 # Number of digits used for zero-padding image counters.
 IMAGE_COUNT_WIDTH = 6
@@ -225,8 +222,9 @@ class DataLoggerNode(Node):
 
         self.declare_parameter('output_directory', 'data_logger')
         self.declare_parameter('episode_id', 0)
-        self.declare_parameter('rgb_camera_index', RGB_CAMERA_INDEX)
-        self.declare_parameter('thermal_camera_index', THERMAL_CAMERA_INDEX)
+        self.declare_parameter('rgb_topic', '/rgb_camera/image_raw')
+        self.declare_parameter('thermal_topic', '/thermal_camera/image_raw')
+        self.declare_parameter('pair_tolerance_ms', 10.0)
         self.declare_parameter('imu_topic', '/imu/data')
         self.declare_parameter('command_topic', '/avros/actuator_command')
         self.declare_parameter('gps_topic', '/gnss')
@@ -286,14 +284,12 @@ class DataLoggerNode(Node):
         self._preview_server = None
         self._preview_thread = None
 
-        self._rgb_camera = self._try_open_camera(
-            self.get_parameter('rgb_camera_index').value, 'RGB')
-        self._thermal_camera = self._try_open_camera(
-            self.get_parameter('thermal_camera_index').value, 'thermal')
-        if self._rgb_camera is None and self._thermal_camera is None:
-            self.get_logger().warning('No camera opened; image logging is disabled')
-
         self._lock = Lock()
+        self._bridge = CvBridge()
+        self._rgb_queue = deque(maxlen=30)
+        self._thermal_queue = deque(maxlen=30)
+        self._slop_ns = int(float(
+            self.get_parameter('pair_tolerance_ms').value) * 1e6)
         self._last_capture_stamp_ns = None
         self._id = 0
         self._closed = False
@@ -303,6 +299,12 @@ class DataLoggerNode(Node):
         self._command_history = deque(maxlen=200)
         self._odom_history = deque(maxlen=200)
 
+        self.create_subscription(
+            Image, str(self.get_parameter('rgb_topic').value), self._on_rgb,
+            qos_profile_sensor_data)
+        self.create_subscription(
+            Image, str(self.get_parameter('thermal_topic').value),
+            self._on_thermal, qos_profile_sensor_data)
         self.create_subscription(
             Imu, str(self.get_parameter('imu_topic').value), self._on_imu,
             qos_profile_sensor_data)
@@ -315,12 +317,10 @@ class DataLoggerNode(Node):
         self.create_subscription(
             ActuatorCommand, str(self.get_parameter('command_topic').value),
             self._on_command, qos_profile_sensor_data)
-        self._capture_timer = self.create_timer(
-            1.0 / self._rate_hz, self._capture_pair)
         self.get_logger().info(
-            f'Logging to {self._output} at {self._rate_hz:g} Hz; '
-            f'RGB index={self.get_parameter("rgb_camera_index").value}, '
-            f'thermal index={self.get_parameter("thermal_camera_index").value}')
+            f'Logging ROS images to {self._output} at {self._rate_hz:g} Hz; '
+            f'RGB={self.get_parameter("rgb_topic").value}, '
+            f'thermal={self.get_parameter("thermal_topic").value}')
 
     @staticmethod
     def _open_csv(path: Path, columns):
@@ -419,31 +419,44 @@ class DataLoggerNode(Node):
         candidate = min(history, key=lambda item: abs(item[0] - stamp_ns))
         return candidate[1] if abs(candidate[0] - stamp_ns) <= max_age_ns else None
 
-    def _capture_pair(self) -> None:
-        rgb_ok, rgb = (False, None)
-        thermal_ok, thermal = (False, None)
-        if self._rgb_camera is not None:
-            rgb_ok, rgb = self._rgb_camera.read()
-        if self._thermal_camera is not None:
-            thermal_ok, thermal = self._thermal_camera.read()
-        thermal_raw = thermal if thermal_ok else None
-        if thermal_ok:
-            thermal = self._thermal_to_display(thermal_raw)
-        if self._auto_contrast_enabled:
-            if rgb_ok:
-                rgb = self._auto_contrast(rgb)
-            if thermal_ok:
-                thermal = self._auto_contrast(thermal)
-        self._update_preview_frames(rgb if rgb_ok else None,
-                                     thermal if thermal_ok else None)
+    def _on_rgb(self, msg: Image) -> None:
+        try:
+            image = self._bridge.imgmsg_to_cv2(msg, 'bgr8')
+            self._update_preview_frames(self._auto_contrast(image), None)
+            self._rgb_queue.append((self._stamp_ns(msg), msg))
+            self._try_pair()
+        except Exception as exc:
+            self.get_logger().error(f'RGB image conversion failed: {exc}')
 
-        if not rgb_ok and not thermal_ok:
+    def _on_thermal(self, msg: Image) -> None:
+        try:
+            raw = self._bridge.imgmsg_to_cv2(msg, 'passthrough')
+            self._update_preview_frames(
+                None, self._auto_contrast(self._thermal_to_display(raw)))
+            self._thermal_queue.append((self._stamp_ns(msg), msg))
+            self._try_pair()
+        except Exception as exc:
+            self.get_logger().error(f'Thermal image conversion failed: {exc}')
+
+    def _try_pair(self) -> None:
+        if not self._recording or not self._rgb_queue or not self._thermal_queue:
             return
-
-        if not self._recording:
+        rgb_index, thermal_index = min(
+            ((i, j) for i, _ in enumerate(self._rgb_queue)
+             for j, _ in enumerate(self._thermal_queue)),
+            key=lambda pair: abs(self._rgb_queue[pair[0]][0] -
+                                 self._thermal_queue[pair[1]][0]))
+        rgb_stamp, rgb_msg = self._rgb_queue[rgb_index]
+        thermal_stamp, thermal_msg = self._thermal_queue[thermal_index]
+        if abs(rgb_stamp - thermal_stamp) > self._slop_ns:
+            if rgb_stamp < thermal_stamp:
+                self._rgb_queue.popleft()
+            else:
+                self._thermal_queue.popleft()
             return
-
-        pair_stamp = self.get_clock().now().nanoseconds
+        del self._rgb_queue[rgb_index]
+        del self._thermal_queue[thermal_index]
+        pair_stamp = max(rgb_stamp, thermal_stamp)
         with self._lock:
             if (self._last_capture_stamp_ns is not None and
                     pair_stamp - self._last_capture_stamp_ns < self._period_ns):
@@ -454,16 +467,23 @@ class DataLoggerNode(Node):
             odom = self._nearest(
                 self._odom_history, pair_stamp, self._max_state_age_ns)
 
+        try:
+            rgb = self._bridge.imgmsg_to_cv2(rgb_msg, 'bgr8')
+            thermal_raw = self._bridge.imgmsg_to_cv2(thermal_msg, 'passthrough')
+        except Exception as exc:
+            self.get_logger().error(f'Paired image conversion failed: {exc}')
+            return
+        if self._auto_contrast_enabled:
+            rgb = self._auto_contrast(rgb)
         count = self._id
         stamp_date = datetime.fromtimestamp(pair_stamp / 1e9, timezone.utc).strftime(
             '%Y%m%dT%H%M%S.%fZ')
         rgb_name, thermal_name = _image_names(count, stamp_date)
         flags = [cv2.IMWRITE_JPEG_QUALITY, self._jpeg_quality]
-        if rgb_ok and not cv2.imwrite(str(self._rgb_dir / rgb_name), rgb, flags):
+        if not cv2.imwrite(str(self._rgb_dir / rgb_name), rgb, flags):
             self.get_logger().error(f'Failed to write {rgb_name}')
             rgb_name = ''
-        if thermal_ok and not cv2.imwrite(
-                str(self._thermal_dir / thermal_name), thermal_raw):
+        if not cv2.imwrite(str(self._thermal_dir / thermal_name), thermal_raw):
             self.get_logger().error(f'Failed to write {thermal_name}')
             thermal_name = ''
         if not rgb_name and not thermal_name:
@@ -500,8 +520,10 @@ class DataLoggerNode(Node):
             return buffer.tobytes() if ok else None
 
         with self._preview_lock:
-            self._preview_rgb = encode(rgb)
-            self._preview_thermal = encode(thermal)
+            if rgb is not None:
+                self._preview_rgb = encode(rgb)
+            if thermal is not None:
+                self._preview_thermal = encode(thermal)
 
     def _auto_contrast(self, image):
         """Enhance local luminance contrast without changing image size."""
@@ -539,6 +561,8 @@ class DataLoggerNode(Node):
                     self._episode_id = self._new_episode_id()
                 self._run_start_ns = self.get_clock().now().nanoseconds
                 self._last_capture_stamp_ns = None
+                self._rgb_queue.clear()
+                self._thermal_queue.clear()
                 self._recording = True
                 self.get_logger().info('Recording started from web interface')
 
@@ -613,10 +637,6 @@ class DataLoggerNode(Node):
             return super().destroy_node()
         self._closed = True
         self._close_logs()
-        if self._rgb_camera is not None:
-            self._rgb_camera.release()
-        if self._thermal_camera is not None:
-            self._thermal_camera.release()
         if self._preview_server is not None:
             self._preview_server.shutdown()
             self._preview_server.server_close()
