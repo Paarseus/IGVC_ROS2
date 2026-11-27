@@ -19,8 +19,8 @@ from sensor_msgs.msg import Image, Imu, NavSatFix
 from avros_msgs.msg import ActuatorCommand
 
 
-# Number of image pairs to record per second.
-CAPTURE_RATE_HZ = 10.0
+# Maximum number of image pairs to write per second.
+RECORD_RATE_HZ = 30.0
 # Number of digits used for zero-padding image counters.
 IMAGE_COUNT_WIDTH = 6
 # Enable local contrast enhancement for camera frames by default.
@@ -70,15 +70,6 @@ GNSS_COLUMNS = [
     'position_covariance_6', 'position_covariance_7', 'position_covariance_8',
     'position_covariance_type',
 ]
-
-def _open_camera(index: int):
-    """Open an OpenCV camera and fail clearly when it is unavailable."""
-    camera = cv2.VideoCapture(int(index))
-    if not camera.isOpened():
-        camera.release()
-        raise RuntimeError(f'Could not open camera index {index}')
-    return camera
-
 
 def _image_names(count: int, stamp_date: str):
     """Return matching RGB and raw thermal filenames for one capture."""
@@ -229,7 +220,7 @@ class DataLoggerNode(Node):
         self.declare_parameter('command_topic', '/avros/actuator_command')
         self.declare_parameter('gps_topic', '/gnss')
         self.declare_parameter('odometry_topic', '/wheel_odom')
-        self.declare_parameter('capture_rate_hz', CAPTURE_RATE_HZ)
+        self.declare_parameter('record_rate_hz', RECORD_RATE_HZ)
         self.declare_parameter('state_max_age_seconds', 0.5)
         self.declare_parameter('jpeg_quality', 95)
         self.declare_parameter('auto_contrast', AUTO_CONTRAST_ENABLED)
@@ -258,10 +249,11 @@ class DataLoggerNode(Node):
         self._episode_id = ('' if self._auto_episode_id
                             else str(configured_episode))
         self._run_start_ns = self.get_clock().now().nanoseconds
-        self._rate_hz = float(self.get_parameter('capture_rate_hz').value)
-        if self._rate_hz <= 0.0:
-            raise ValueError('capture_rate_hz must be greater than zero')
-        self._period_ns = int(1e9 / self._rate_hz)
+        self._record_rate_hz = float(
+            self.get_parameter('record_rate_hz').value)
+        if self._record_rate_hz <= 0.0:
+            raise ValueError('record_rate_hz must be greater than zero')
+        self._record_period_ns = int(1e9 / self._record_rate_hz)
         self._max_state_age_ns = int(float(
             self.get_parameter('state_max_age_seconds').value) * 1e9)
         self._jpeg_quality = int(self.get_parameter('jpeg_quality').value)
@@ -318,7 +310,8 @@ class DataLoggerNode(Node):
             ActuatorCommand, str(self.get_parameter('command_topic').value),
             self._on_command, qos_profile_sensor_data)
         self.get_logger().info(
-            f'Logging ROS images to {self._output} at {self._rate_hz:g} Hz; '
+            f'Logging ROS images to {self._output} at '
+            f'{self._record_rate_hz:g} Hz max; '
             f'RGB={self.get_parameter("rgb_topic").value}, '
             f'thermal={self.get_parameter("thermal_topic").value}')
 
@@ -329,17 +322,6 @@ class DataLoggerNode(Node):
         writer.writeheader()
         file.flush()
         return file, writer
-
-    def _try_open_camera(self, index: int, name: str):
-        if int(index) < 0:
-            self.get_logger().info(
-                f'{name} camera disabled because its index parameter is {index}')
-            return None
-        try:
-            return _open_camera(index)
-        except RuntimeError as exc:
-            self.get_logger().warning(f'{name} camera unavailable: {exc}')
-            return None
 
     @staticmethod
     def _stamp_ns(msg) -> int:
@@ -459,7 +441,7 @@ class DataLoggerNode(Node):
         pair_stamp = max(rgb_stamp, thermal_stamp)
         with self._lock:
             if (self._last_capture_stamp_ns is not None and
-                    pair_stamp - self._last_capture_stamp_ns < self._period_ns):
+                    pair_stamp - self._last_capture_stamp_ns < self._record_period_ns):
                 return
             self._last_capture_stamp_ns = pair_stamp
             command = self._nearest(

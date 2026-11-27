@@ -1,7 +1,6 @@
 import csv
 from threading import Lock
 
-import cv2
 from sensor_msgs.msg import Imu, NavSatFix
 
 from avros_data_logger.data_logger_node import (
@@ -9,48 +8,8 @@ from avros_data_logger.data_logger_node import (
     GNSS_COLUMNS,
     IMU_COLUMNS,
     _image_names,
-    _open_camera,
     DataLoggerNode,
 )
-
-
-def test_camera_opening_uses_requested_index(monkeypatch):
-    calls = []
-
-    class FakeCamera:
-        def isOpened(self):
-            return True
-
-        def release(self):
-            pass
-
-    def fake_capture(index):
-        calls.append(index)
-        return FakeCamera()
-
-    monkeypatch.setattr(cv2, 'VideoCapture', fake_capture)
-    camera = _open_camera(7)
-
-    assert calls == [7]
-    assert camera.isOpened()
-
-
-def test_camera_opening_fails_for_unavailable_device(monkeypatch):
-    class FakeCamera:
-        def isOpened(self):
-            return False
-
-        def release(self):
-            self.released = True
-
-    monkeypatch.setattr(cv2, 'VideoCapture', lambda index: FakeCamera())
-
-    try:
-        _open_camera(4)
-    except RuntimeError as exc:
-        assert 'camera index 4' in str(exc)
-    else:
-        raise AssertionError('Unavailable camera should raise RuntimeError')
 
 
 def test_image_names_are_matching_and_zero_padded():
