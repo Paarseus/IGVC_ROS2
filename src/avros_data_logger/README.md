@@ -45,6 +45,11 @@ One row is written for each saved RGB/thermal image pair. It contains:
   emergency stop is active, or throttle and brake are both zero
 - `speed_mps` and `yaw_rate_rps` from odometry
 
+`rgb_stamp_ns` and `thermal_stamp_ns` are the original ROS timestamps from
+the two image messages. `pair_delta_ns` is their absolute difference. A small
+pair delta means the images were captured close together in time; it does not
+prove that their exposures were simultaneous.
+
 The throttle, steering, and brake values are the commanded controls used as the primary imitation-learning labels.
 
 ### `imu_log.csv`

@@ -34,6 +34,7 @@ AUTO_CONTRAST_TILE_GRID_SIZE = (8, 8)
 
 CAMERA_COLUMNS = [
     'image_count', 'episode_id', 'capture_time_utc', 'image_stamp_ns',
+    'rgb_stamp_ns', 'thermal_stamp_ns', 'pair_delta_ns',
     'time_seconds',
     'rgb_image', 'thermal_image',
     'throttle', 'steering', 'brake', 'mode', 'estop',
@@ -509,7 +510,8 @@ class DataLoggerNode(Node):
         time_seconds = (pair_stamp - self._run_start_ns) / 1e9
         row = self._make_camera_row(
             count, self._episode_id, pair_stamp, stamp_date, time_seconds,
-            rgb_name, thermal_name, command, odom)
+            rgb_name, thermal_name, command, odom,
+            rgb_stamp, thermal_stamp)
         with self._lock:
             self._camera_writer.writerow(row)
             self._camera_file.flush()
@@ -622,7 +624,8 @@ class DataLoggerNode(Node):
 
     @staticmethod
     def _make_camera_row(count, episode_id, stamp_ns, date, time_seconds,
-                         rgb_name, thermal_name, command, odom):
+                         rgb_name, thermal_name, command, odom,
+                         rgb_stamp_ns, thermal_stamp_ns):
         def value(obj, path: str, default=''):
             for part in path.split('.'):
                 if obj is None:
@@ -635,6 +638,9 @@ class DataLoggerNode(Node):
             'episode_id': episode_id,
             'capture_time_utc': date,
             'image_stamp_ns': stamp_ns,
+            'rgb_stamp_ns': rgb_stamp_ns,
+            'thermal_stamp_ns': thermal_stamp_ns,
+            'pair_delta_ns': abs(rgb_stamp_ns - thermal_stamp_ns),
             'time_seconds': time_seconds,
             'rgb_image': f'images/rgb/{rgb_name}' if rgb_name else '',
             'thermal_image': f'images/thermal/{thermal_name}' if thermal_name else '',

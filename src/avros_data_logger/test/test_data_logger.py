@@ -43,7 +43,9 @@ def test_csv_headers_are_distinct_and_complete(tmp_path):
         assert next(csv.reader(file)) == IMU_COLUMNS
     with gnss_path.open(newline='') as file:
         assert next(csv.reader(file)) == GNSS_COLUMNS
-    assert {'image_count', 'episode_id', 'time_seconds', 'rgb_image', 'thermal_image', 'steering'}.issubset(CAMERA_COLUMNS)
+    assert {'image_count', 'episode_id', 'time_seconds', 'rgb_image',
+            'thermal_image', 'steering', 'rgb_stamp_ns', 'thermal_stamp_ns',
+            'pair_delta_ns'}.issubset(CAMERA_COLUMNS)
     assert {'orientation_x', 'angular_velocity_z', 'linear_acceleration_x'}.issubset(IMU_COLUMNS)
     assert {'latitude', 'longitude', 'position_covariance_0'}.issubset(GNSS_COLUMNS)
 
