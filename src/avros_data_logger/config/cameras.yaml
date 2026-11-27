@@ -1,0 +1,14 @@
+avros_camera_bridge:
+  ros__parameters:
+    # Prefer /dev/v4l/by-id/... paths after identifying devices.
+    rgb_device: -1
+    thermal_device: -1
+    rgb_topic: /rgb_camera/image_raw
+    thermal_topic: /thermal_camera/image_raw
+    rgb_frame_id: rgb_camera_optical_frame
+    thermal_frame_id: thermal_camera_optical_frame
+    capture_rate_hz: 30.0
+    rgb_width: 680
+    rgb_height: 480
+    thermal_width: 640
+    thermal_height: 512

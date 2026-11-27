@@ -2,23 +2,17 @@
 
 ## Purpose
 
-`avros_dataLogger` records external RGB and thermal camera images together with vehicle controls and sensor streams. The output is organized for three uses:
+`avros_dataLogger` records ROS RGB and thermal image topics together with vehicle controls and sensor streams. The output is organized for three uses:
 
 - Object-detection datasets from the saved images
 - Imitation-learning datasets from images paired with control commands
 - Visual-inertial/GNSS processing from the original-rate IMU and GNSS logs
 
-The cameras are opened directly with OpenCV because they do not have official ROS drivers. A camera is enabled only when its ROS camera-index parameter is set to a non-negative value. If one camera is unavailable, the logger skips that image and continues logging any available camera. IMU, GNSS, odometry, and actuator values are received from ROS 2 topics.
+The included `avros_camera_bridge` publishes two UVC cameras as ROS `sensor_msgs/Image` topics using the device settings in `config/cameras.yaml`. The logger subscribes to those topics, pairs frames by their ROS timestamps, and saves RGB and thermal frames losslessly as PNG. IMU, GNSS, odometry, and actuator values are received from ROS 2 topics.
 
-Camera frames use OpenCV CLAHE auto-contrast by default. RGB contrast is
-adjusted through the luminance channel, and thermal contrast is adjusted after
-conversion to an 8-bit displayable image. This improves local contrast in
-uneven lighting, but it cannot recover details that are completely saturated
-by direct sunlight.
-
-Thermal data is saved before display processing as PNG. If OpenCV receives a
-16-bit single-channel thermal frame, that 16-bit frame is preserved. The
-browser preview uses a separate 8-bit, auto-contrasted copy.
+The recording path does not apply contrast enhancement, resize, or JPEG
+compression. RGB and thermal frames are saved as lossless PNG files with
+their ROS timestamps recorded in `camera_log.csv`.
 
 ## Output Structure
 
@@ -28,15 +22,15 @@ Each run writes to `data_logger` by default:
 data_logger/
 ├── images/
 │   ├── rgb/
-│   │   └── rgb_000012_20261001T143015.123456Z.jpg
+│   │   └── rgb_000012_123456789.png
 │   └── thermal/
-│       └── thermal_000012_20261001T143015.123456Z.png
+│       └── thermal_000012_123456789.png
 ├── camera_log.csv
 ├── imu_log.csv
 └── gnss_log.csv
 ```
 
-All three CSV files are created when the node starts and are appended and flushed while the node is running. They can be inspected during the run. When enabled, the logger also serves a browser preview with RGB above thermal and a live image count.
+All three CSV files are created when the node starts and updated while the node is running.
 
 ## Data Logs
 
@@ -44,7 +38,7 @@ All three CSV files are created when the node starts and are appended and flushe
 
 One row is written for each saved RGB/thermal image pair. It contains:
 
-- Image counter, episode ID, capture timestamp, and elapsed `time_seconds`
+- RGB/thermal timestamps, receive times, pair delta, and pair validity
 - Relative paths to the RGB and thermal images
 - Throttle, steering, brake, mode, and emergency-stop state
 - `vehicle_stopped`, which is true when no fresh actuator command exists,
@@ -77,27 +71,28 @@ Every received GNSS message is written at the original topic rate. It contains:
 
 ## Configuration
 
-The camera indices and image capture rate are defined near the top of `data_logger_node.py`:
+Edit `config/cameras.yaml` to set the two camera devices. Stable
+`/dev/v4l/by-id/...` paths are preferred over numeric indexes:
 
-```python
-# Default RGB index; -1 disables RGB until a ROS parameter is supplied.
-RGB_CAMERA_INDEX = -1
-# Default thermal index; -1 disables thermal until a ROS parameter is supplied.
-THERMAL_CAMERA_INDEX = -1
-# Number of image pairs to capture per second.
-CAPTURE_RATE_HZ = 10.0
-# Number of digits used for zero-padding image counters.
-IMAGE_COUNT_WIDTH = 6
+```yaml
+rgb_device: /dev/v4l/by-id/your-rgb-camera
+thermal_device: /dev/v4l/by-id/your-thermal-camera
+rgb_width: 680
+rgb_height: 480
+thermal_width: 640
+thermal_height: 512
+capture_rate_hz: 30.0
 ```
 
-Use `v4l2-ctl --list-devices` to identify the camera indices. A value of `-1` disables that camera. Set each camera explicitly at runtime:
+Start the camera bridge and logger separately:
 
 ```bash
-ros2 run avros_data_logger avros_dataLogger --ros-args \
-  -p rgb_camera_index:=0 \
-  -p thermal_camera_index:=1 \
-  -p capture_rate_hz:=10.0
+ros2 launch avros_data_logger cameras.launch.py
+ros2 launch avros_data_logger data_logger.launch.py
 ```
+
+The logger uses `/imu/data` at its existing 100 Hz rate. `pair_tolerance_ms`
+controls the maximum RGB/thermal timestamp difference; the default is 10 ms.
 
 The default ROS topics are:
 
@@ -118,42 +113,6 @@ ros2 run avros_data_logger avros_dataLogger --ros-args \
   -p command_topic:=/avros/actuator_command
 ```
 
-Auto-contrast can be disabled if the original camera appearance is required:
-
-```bash
-ros2 launch avros_data_logger data_logger.launch.py \
-  auto_contrast:=false
-```
-
-## Browser Preview
-
-The package includes `data_logger.launch.py`. It opens the cameras and starts
-the browser preview on port `8080`, but it does not write data immediately.
-Use **Start Recording** after checking the camera panels. Use **Stop
-Recording** to stop writing while leaving the preview active.
-
-```bash
-ros2 launch avros_data_logger data_logger.launch.py \
-  rgb_camera_index:=6 \
-  thermal_camera_index:=7 \
-  episode_id:=2 \
-  output_directory:=data_logger/episode_2
-```
-
-On the Jetson, create an SSH tunnel from your computer:
-
-```bash
-ssh -L 8080:127.0.0.1:8080 dinosaur@JETSON_IP
-```
-
-Then open `http://localhost:8080` in a browser. The page shows RGB in the
-upper panel, thermal in the lower panel, black `Unavailable` panels for missing
-cameras, recording controls, and the number of captured images.
-
-The preview can be disabled with `web_preview:=false`. The bind address can be
-changed explicitly with `web_bind_address:=0.0.0.0`, but this exposes the live
-camera page to the network and should only be used intentionally.
-
 ## Building and Running
 
 From the workspace root:
@@ -170,21 +129,6 @@ Choose another output directory with:
 ros2 run avros_data_logger avros_dataLogger --ros-args \
   -p output_directory:=/path/to/run_data
 ```
-
-## Episode IDs
-
-Each camera-log row contains an `episode_id`. By default, the logger generates
-a UTC timestamp ID when **Start Recording** is pressed. This creates a new ID
-for every recording session and prevents TCN windows from crossing sessions.
-
-```bash
-ros2 run avros_data_logger avros_dataLogger --ros-args \
-  -p episode_id:=2 \
-  -p output_directory:=/path/to/episode_2
-```
-
-The default value is `0`, which means automatic episode IDs. To use a fixed
-ID intentionally, pass a positive value such as `episode_id:=2`.
 
 ## Timestamp and Synchronization Behavior
 

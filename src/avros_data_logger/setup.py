@@ -16,6 +16,7 @@ setup(
          ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
+        ('share/' + package_name + '/config', glob('config/*.yaml')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -25,7 +26,8 @@ setup(
     license='MIT',
     entry_points={
         'console_scripts': [
-            'avros_dataLogger = avros_data_logger.data_logger_node:main',
+            'avros_dataLogger = avros_data_logger.ros_data_logger_node:main',
+            'avros_camera_bridge = avros_data_logger.camera_bridge_node:main',
         ],
     },
 )
